@@ -38,10 +38,15 @@ jobs:
           path: .artifacts/release/
 
       - name: Publish npm package
-        if: ${{ startsWith(github.ref, 'refs/tags/v') && secrets.NPM_TOKEN != '' }}
+        if: ${{ startsWith(github.ref, 'refs/tags/v') }}
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: npm publish --access public
+        run: |
+          if [ -z "$NODE_AUTH_TOKEN" ]; then
+            echo "NPM_TOKEN is not configured; skipping npm publish."
+            exit 0
+          fi
+          npm publish --access public
 
       - name: Publish GitHub release artifacts
         if: ${{ startsWith(github.ref, 'refs/tags/v') }}
