@@ -162,8 +162,12 @@ honestly instead of falling back to a fake Claude path.
 ## Current Augment Caveat
 
 Augment support is wired to the documented `auggie` automation flags: `--print`, `--quiet`, `--instruction-file`,
-`--workspace-root`, `--allow-indexing`, `--wait-for-indexing`, `--dont-save-session`, `--max-turns`, and `--ask` for
-planner-only runs.
+`--workspace-root`, `--rules`, `--allow-indexing`, `--wait-for-indexing`, `--max-turns`, and `--ask` for planner-only
+runs.
+
+The defaults deliberately force workspace indexing and append srgical-specific Augment rules so the agent stays biased
+toward incremental planning, validated execution, and clear next-step handoffs. Session history is also left on so
+workspace iterations can accumulate inside Auggie instead of being treated as throwaway runs.
 
 That means successful Augment execution still depends on a real Augment CLI install, an authenticated session such as
 `auggie login` or `AUGMENT_SESSION_AUTH`, and whatever automation entitlements or local permission policies your

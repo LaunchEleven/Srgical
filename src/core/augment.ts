@@ -43,6 +43,14 @@ type SpawnCaptureFn = (
 ) => Promise<SpawnCaptureResult>;
 
 const AUGMENT_INSTALL_HINT = "install Augment CLI to enable";
+const AUGMENT_DEFAULT_RULES = `You are operating inside srgical, a local-first planning and iteration machine.
+
+Default behavior:
+- Ground decisions in the current repository state and the current .srgical files when they exist.
+- Prefer small validated steps over broad speculative rewrites.
+- Preserve a clear next-step handoff after each meaningful change.
+- Treat planning as preparation for execution, not open-ended brainstorming.
+- Keep outputs practical, explicit, and ready for the next iteration.`;
 
 let augmentCommandPromise: Promise<string> | undefined;
 let forcedAugmentCommand: string | null = null;
@@ -154,6 +162,7 @@ export function resetAugmentRuntimeForTesting(): void {
 async function runAugmentExec(options: AugmentExecOptions): Promise<AugmentExecResult> {
   const tempDir = await mkdtemp(path.join(os.tmpdir(), "srgical-augment-"));
   const promptFile = path.join(tempDir, "prompt.txt");
+  const rulesFile = path.join(tempDir, "rules.md");
   const command = await resolveAugmentCommand();
   const args = [
     "--print",
@@ -162,9 +171,10 @@ async function runAugmentExec(options: AugmentExecOptions): Promise<AugmentExecR
     options.cwd,
     "--instruction-file",
     promptFile,
+    "--rules",
+    rulesFile,
     "--allow-indexing",
-    "--wait-for-indexing",
-    "--dont-save-session"
+    "--wait-for-indexing"
   ];
 
   if (options.askMode) {
@@ -176,6 +186,7 @@ async function runAugmentExec(options: AugmentExecOptions): Promise<AugmentExecR
   }
 
   await writeFile(promptFile, options.prompt, "utf8");
+  await writeFile(rulesFile, AUGMENT_DEFAULT_RULES, "utf8");
 
   try {
     const result = await spawnAndCaptureImpl(command, args, options.cwd);

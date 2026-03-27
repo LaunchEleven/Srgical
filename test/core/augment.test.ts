@@ -109,16 +109,20 @@ test("request-planner-reply uses Augment print mode with ask permissions", async
       assert.ok(args.includes("--ask"));
       assert.equal(args[argValueIndex(args, "--workspace-root")], workspace);
       assert.ok(args.includes("--instruction-file"));
+      assert.ok(args.includes("--rules"));
       assert.ok(args.includes("--allow-indexing"));
       assert.ok(args.includes("--wait-for-indexing"));
-      assert.ok(args.includes("--dont-save-session"));
+      assert.equal(args.includes("--dont-save-session"), false);
       assert.equal(args[argValueIndex(args, "--max-turns")], "4");
 
       const prompt = await readFile(args[argValueIndex(args, "--instruction-file")], "utf8");
+      const rules = await readFile(args[argValueIndex(args, "--rules")], "utf8");
       assert.match(prompt, /You are the planning partner inside srgical/);
       assert.match(prompt, /Do not write files\./);
       assert.match(prompt, /Help me map the next step\./);
       assert.match(prompt, /Share the current repo truth\./);
+      assert.match(rules, /planning and iteration machine/);
+      assert.match(rules, /Prefer small validated steps over broad speculative rewrites\./);
 
       return {
         stdout: "Planned response from Augment.\n",
@@ -165,14 +169,17 @@ test("write-planning-pack uses Augment print mode and preserves planning-epoch s
       assert.ok(args.includes("--print"));
       assert.ok(args.includes("--quiet"));
       assert.equal(args[argValueIndex(args, "--workspace-root")], workspace);
+      assert.ok(args.includes("--rules"));
       assert.ok(args.includes("--allow-indexing"));
       assert.ok(args.includes("--wait-for-indexing"));
-      assert.ok(args.includes("--dont-save-session"));
+      assert.equal(args.includes("--dont-save-session"), false);
       assert.equal(args[argValueIndex(args, "--max-turns")], "24");
       assert.equal(args.includes("--ask"), false);
 
       const prompt = await readFile(args[argValueIndex(args, "--instruction-file")], "utf8");
+      const rules = await readFile(args[argValueIndex(args, "--rules")], "utf8");
       assert.match(prompt, /You are writing a planning pack for the current repository\./);
+      assert.match(rules, /Preserve a clear next-step handoff after each meaningful change\./);
 
       return {
         stdout: "Augment pack write complete.\n",
@@ -218,10 +225,14 @@ test("run-next-prompt uses Augment print mode and returns trimmed output", async
       assert.ok(args.includes("--print"));
       assert.ok(args.includes("--quiet"));
       assert.equal(args[argValueIndex(args, "--workspace-root")], workspace);
+      assert.ok(args.includes("--rules"));
+      assert.equal(args.includes("--dont-save-session"), false);
       assert.equal(args[argValueIndex(args, "--max-turns")], "24");
 
       const prompt = await readFile(args[argValueIndex(args, "--instruction-file")], "utf8");
+      const rules = await readFile(args[argValueIndex(args, "--rules")], "utf8");
       assert.equal(prompt, "Execute the next tracker step carefully.");
+      assert.match(rules, /Keep outputs practical, explicit, and ready for the next iteration\./);
 
       return {
         stdout: "Execution summary from Augment.\n",
