@@ -65,9 +65,10 @@ The first TUI pass already leans in that direction, and we can keep pushing it.
 
 ## Distribution
 
-The first production channel is GitHub Packages for npm, paired with GitHub Releases for downloadable release assets.
-Version intent stays in git, and GitHub Actions bumps `package.json`, writes `CHANGELOG.md`, pushes that release commit
-back to `main`, publishes the package to GitHub Packages, and creates a GitHub Release with the built tarball attached.
+The first production channels are GitHub Packages, the public npm registry, and GitHub Releases for downloadable
+release assets. Version intent stays in git, and GitHub Actions bumps `package.json`, writes `CHANGELOG.md`, pushes
+that release commit back to `main`, publishes the GitHub-scoped package, publishes the npm org package, and creates a
+GitHub Release with the built tarballs attached.
 
 For a local production-style packaging check:
 
@@ -84,8 +85,9 @@ For release work, add a changeset in your feature branch:
 npm run changeset
 ```
 
-When that branch reaches `main`, the release workflow versions the package, publishes it to GitHub Packages, and opens
-up a matching GitHub Release entry with the packaged artifacts.
+When that branch reaches `main`, the release workflow versions the package, publishes `@launcheleven/srgical` to
+GitHub Packages, publishes `@launch11/srgical` to npm, and opens a matching GitHub Release entry with the packaged
+artifacts.
 
 ## Install Prerequisites
 
@@ -100,11 +102,21 @@ node dist/index.js doctor
 `doctor` is the source of truth for local availability. If an agent CLI is missing, `srgical` reports it as missing
 instead of pretending it can run that path anyway.
 
-The published package name is `@launcheleven/srgical`. For GitHub Packages installs, consumers need an `.npmrc` entry
-for `@launcheleven` plus a token before running:
+The package publishes in two install channels:
+
+- GitHub Packages: `@launcheleven/srgical`
+- npm public registry: `@launch11/srgical`
+
+For GitHub Packages installs, consumers need an `.npmrc` entry for `@launcheleven` plus a token before running:
 
 ```bash
 npm install -g @launcheleven/srgical
+```
+
+For npm installs, consumers can use:
+
+```bash
+npm install -g @launch11/srgical
 ```
 
 ## Getting Started

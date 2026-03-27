@@ -15,14 +15,17 @@
     "build": "tsc -p tsconfig.json",
     "changeset": "changeset",
     "dev": "tsx src/index.ts",
-    "release": "npm run release:pack && changeset publish",
+    "release": "npm run release:pack && npm run publish:github && npm run publish:npm",
     "start": "node dist/index.js",
     "doctor": "tsx src/index.ts doctor",
     "test": "tsx --test test/**/*.test.ts",
     "test:coverage": "tsx --test --experimental-test-coverage test/**/*.test.ts",
     "version-packages": "changeset version",
     "prepack": "npm run build",
-    "release:pack": "node scripts/release-pack.mjs"
+    "release:pack": "node scripts/release-pack.mjs",
+    "publish:github": "changeset publish",
+    "publish:npm": "node scripts/publish-npm.mjs",
+    "release:version": "node scripts/read-package-version.mjs"
   },
   "engines": {
     "node": ">=20"

@@ -44,6 +44,16 @@ jobs:
       - name: Version packages
         run: npm run version-packages
 
+      - name: Read release version
+        id: release_version
+        run: |
+          VERSION="$(npm run --silent release:version)"
+          if [ -z "$VERSION" ]; then
+            echo "Release version was empty." >&2
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
       - name: Commit version changes
         id: version_commit
         run: |
@@ -57,17 +67,37 @@ jobs:
           git push origin HEAD:${GITHUB_REF_NAME}
           echo "created=true" >> "$GITHUB_OUTPUT"
 
+      - name: Build release artifacts
+        if: ${{ steps.version_commit.outputs.created == 'true' }}
+        run: npm run release:pack
+
       - name: Publish packages
-        id: publish
-        run: npm run release
+        if: ${{ steps.version_commit.outputs.created == 'true' }}
+        id: publish_github
+        run: npm run publish:github
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Read release version
-        id: release_version
-        run: echo "version=$(node -p 'require(\"./package.json\").version')" >> "$GITHUB_OUTPUT"
+      - name: Set up Node.js for npmjs
+        if: ${{ steps.version_commit.outputs.created == 'true' }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+          scope: "@launch11"
+
+      - name: Publish npm package
+        if: ${{ steps.version_commit.outputs.created == 'true' }}
+        id: publish_npm
+        run: npm run publish:npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_PUBLIC_PACKAGE_NAME: "@launch11/srgical"
+          NPM_PUBLIC_REGISTRY: https://registry.npmjs.org/
+          NPM_PUBLIC_ACCESS: public
 
       - name: Create git tag
+        if: ${{ steps.version_commit.outputs.created == 'true' }}
         run: |
           if git ls-remote --exit-code --tags origin "refs/tags/v${{ steps.release_version.outputs.version }}" >/dev/null 2>&1; then
             echo "Tag v${{ steps.release_version.outputs.version }} already exists on origin."
@@ -78,6 +108,7 @@ jobs:
           git push origin "v${{ steps.release_version.outputs.version }}"
 
       - name: Create GitHub release
+        if: ${{ steps.version_commit.outputs.created == 'true' }}
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ steps.release_version.outputs.version }}
@@ -85,7 +116,7 @@ jobs:
           files: .artifacts/release/*
 
       - name: Upload release artifact
-        if: ${{ success() }}
+        if: ${{ steps.version_commit.outputs.created == 'true' && success() }}
         uses: actions/upload-artifact@v4
         with:
           name: srgical-release-${{ github.run_number }}
