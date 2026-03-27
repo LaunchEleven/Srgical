@@ -8,6 +8,7 @@ on:
 
 permissions:
   contents: write
+  packages: write
 
 concurrency:
   group: release-${{ github.ref }}
@@ -26,7 +27,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22
-          registry-url: https://registry.npmjs.org
+          registry-url: https://npm.pkg.github.com
           scope: "@launcheleven"
 
       - name: Install dependencies
@@ -60,8 +61,28 @@ jobs:
         id: publish
         run: npm run release
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-          NPM_CONFIG_REGISTRY: https://registry.npmjs.org/
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Read release version
+        id: release_version
+        run: echo "version=$(node -p 'require(\"./package.json\").version')" >> "$GITHUB_OUTPUT"
+
+      - name: Create git tag
+        run: |
+          if git ls-remote --exit-code --tags origin "refs/tags/v${{ steps.release_version.outputs.version }}" >/dev/null 2>&1; then
+            echo "Tag v${{ steps.release_version.outputs.version }} already exists on origin."
+            exit 0
+          fi
+
+          git tag "v${{ steps.release_version.outputs.version }}"
+          git push origin "v${{ steps.release_version.outputs.version }}"
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.release_version.outputs.version }}
+          generate_release_notes: true
+          files: .artifacts/release/*
 
       - name: Upload release artifact
         if: ${{ success() }}

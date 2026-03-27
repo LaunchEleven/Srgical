@@ -65,9 +65,9 @@ The first TUI pass already leans in that direction, and we can keep pushing it.
 
 ## Distribution
 
-The first production channel is the public npm registry, backed by a Changesets release workflow. Version intent stays
-in git, and GitHub Actions bumps `package.json`, writes `CHANGELOG.md`, pushes that release commit back to `main`, and
-then publishes the package from the same workflow run.
+The first production channel is GitHub Packages for npm, paired with GitHub Releases for downloadable release assets.
+Version intent stays in git, and GitHub Actions bumps `package.json`, writes `CHANGELOG.md`, pushes that release commit
+back to `main`, publishes the package to GitHub Packages, and creates a GitHub Release with the built tarball attached.
 
 For a local production-style packaging check:
 
@@ -84,7 +84,8 @@ For release work, add a changeset in your feature branch:
 npm run changeset
 ```
 
-When that branch reaches `main`, the release workflow versions and publishes the new package to npm.
+When that branch reaches `main`, the release workflow versions the package, publishes it to GitHub Packages, and opens
+up a matching GitHub Release entry with the packaged artifacts.
 
 ## Install Prerequisites
 
@@ -99,7 +100,8 @@ node dist/index.js doctor
 `doctor` is the source of truth for local availability. If an agent CLI is missing, `srgical` reports it as missing
 instead of pretending it can run that path anyway.
 
-The published package name is `@launcheleven/srgical`, so production installs use:
+The published package name is `@launcheleven/srgical`. For GitHub Packages installs, consumers need an `.npmrc` entry
+for `@launcheleven` plus a token before running:
 
 ```bash
 npm install -g @launcheleven/srgical

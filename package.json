@@ -1,7 +1,7 @@
 {
   "name": "@launcheleven/srgical",
   "version": "0.0.1",
-  "description": "A sexy local-first CLI for planning and executing long AI-driven delivery sequences.",
+  "description": "A polished local-first CLI for planning and executing long AI-driven delivery sequences.",
   "files": [
     "dist",
     "README.md",
@@ -36,8 +36,7 @@
     "url": "https://github.com/LaunchEleven/Srgical/issues"
   },
   "publishConfig": {
-    "access": "public",
-    "registry": "https://registry.npmjs.org"
+    "registry": "https://npm.pkg.github.com"
   },
   "keywords": [
     "ai",
