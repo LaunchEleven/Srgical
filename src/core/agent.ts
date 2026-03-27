@@ -1,4 +1,10 @@
 import {
+  detectAugment,
+  requestPlannerReply as requestAugmentPlannerReply,
+  runNextPrompt as runAugmentNextPrompt,
+  writePlanningPack as writeAugmentPlanningPack
+} from "./augment";
+import {
   detectClaude,
   requestPlannerReply as requestClaudePlannerReply,
   runNextPrompt as runClaudeNextPrompt,
@@ -75,7 +81,26 @@ const claudeAdapter: AgentAdapter = {
   runNextPrompt: runClaudeNextPrompt
 };
 
-const defaultAgentAdapters: AgentAdapter[] = [codexAdapter, claudeAdapter];
+const augmentAdapter: AgentAdapter = {
+  id: "augment",
+  label: "Augment CLI",
+  async detectStatus(): Promise<AgentStatus> {
+    const status = await detectAugment();
+    return {
+      id: "augment",
+      label: "Augment CLI",
+      available: status.available,
+      command: status.command,
+      version: status.version,
+      error: status.error
+    };
+  },
+  requestPlannerReply: requestAugmentPlannerReply,
+  writePlanningPack: writeAugmentPlanningPack,
+  runNextPrompt: runAugmentNextPrompt
+};
+
+const defaultAgentAdapters: AgentAdapter[] = [codexAdapter, claudeAdapter, augmentAdapter];
 
 let registeredAgentAdapters: AgentAdapter[] = [...defaultAgentAdapters];
 let primaryAgentId = registeredAgentAdapters[0].id;

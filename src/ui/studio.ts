@@ -2,6 +2,7 @@ import path from "node:path";
 import blessed from "blessed";
 import {
   getPrimaryAgentAdapter,
+  getSupportedAgentAdapters,
   requestPlannerReply,
   resolvePrimaryAgent,
   runNextPrompt,
@@ -394,7 +395,7 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
         await appendMessage({
           role: "system",
           content: [
-            "Usage: `/agent codex` or `/agent claude`",
+            buildAgentUsageMessage(),
             "",
             renderAgentSelectionMessage(agentState.status, agentState.statuses)
           ].join("\n")
@@ -755,6 +756,24 @@ function renderAgentSelectionMessage(activeAgent: AgentStatus, statuses: AgentSt
     "Detected support:",
     ...statuses.map((status) => formatAgentStatusLine(status, status.id === activeAgent.id))
   ].join("\n");
+}
+
+function buildAgentUsageMessage(): string {
+  const usages = getSupportedAgentAdapters().map((adapter) => `\`/agent ${adapter.id}\``);
+
+  if (usages.length === 0) {
+    return "Usage: `/agent <id>`";
+  }
+
+  if (usages.length === 1) {
+    return `Usage: ${usages[0]}`;
+  }
+
+  if (usages.length === 2) {
+    return `Usage: ${usages[0]} or ${usages[1]}`;
+  }
+
+  return `Usage: ${usages.slice(0, -1).join(", ")}, or ${usages[usages.length - 1]}`;
 }
 
 function formatAgentStatusLine(status: AgentStatus, selected: boolean): string {

@@ -6,9 +6,9 @@ The current production release channels are GitHub Packages for npm, the public 
 Versioning is tag-driven from git history, which means the repo carries a base major/minor line and CI computes the
 next patch version during release instead of committing a version bump back to `main`.
 
-The npm package does not bundle `codex` or `claude`. Users still need at least one supported local agent CLI installed
-separately and available on `PATH`, and `srgical doctor` remains the truthful way to confirm which agents are usable on
-the current machine.
+The npm package does not bundle `codex`, `claude`, or `auggie`. Users still need at least one supported local agent CLI
+installed separately and available on `PATH`, and `srgical doctor` remains the truthful way to confirm which agents are
+usable on the current machine.
 
 ## Release Flow
 
@@ -76,8 +76,8 @@ After installing the package, run:
 srgical doctor
 ```
 
-That verifies the workspace state, shows the active agent, and reports whether `codex` and `claude` are locally
-available or missing.
+That verifies the workspace state, shows the active agent, and reports whether `codex`, `claude`, and `auggie` are
+locally available or missing.
 
 ## Artifact Strategy
 
@@ -96,7 +96,7 @@ npm install -g @launch11/srgical
 
 - Required local prerequisites after install:
   - authenticated access to GitHub Packages
-  - `codex` and/or `claude` installed separately
+  - `codex`, `claude`, and/or `auggie` installed separately
   - available on `PATH` for the current shell session
 
 - Local install smoke test from a generated tarball:

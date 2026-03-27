@@ -125,6 +125,36 @@ test("detect-primary-agent honors the stored workspace session selection", async
   assert.equal(getPrimaryAgentAdapter().id, "claude");
 });
 
+test("detect-primary-agent honors an augment workspace session selection when that adapter is registered", async (t) => {
+  const workspace = await createTempWorkspace("srgical-agent-session-augment-");
+
+  setAgentAdaptersForTesting([
+    createFakeAdapter({
+      id: "codex",
+      label: "Codex",
+      status: availableStatus("codex", "Codex")
+    }),
+    createFakeAdapter({
+      id: "claude",
+      label: "Claude Code",
+      status: availableStatus("claude", "Claude Code")
+    }),
+    createFakeAdapter({
+      id: "augment",
+      label: "Augment CLI",
+      status: availableStatus("augment", "Augment CLI")
+    })
+  ]);
+  t.after(resetAgentAdaptersForTesting);
+
+  await saveStoredActiveAgentId(workspace, "augment");
+
+  const primary = await detectPrimaryAgent(workspace);
+
+  assert.equal(primary.id, "augment");
+  assert.equal(getPrimaryAgentAdapter().id, "augment");
+});
+
 test("detect-primary-agent clears a stale stored workspace selection when that adapter is no longer registered", async (t) => {
   const workspace = await createTempWorkspace("srgical-agent-stale-");
 

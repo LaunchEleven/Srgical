@@ -27,6 +27,11 @@ test("doctor reports all supported agents and the queued next step", async (t) =
       id: "claude",
       label: "Claude Code",
       status: availableStatus("claude", "Claude Code", "1.2.3")
+    }),
+    createFakeAdapter({
+      id: "augment",
+      label: "Augment CLI",
+      status: availableStatus("augment", "Augment CLI", "2.0.0")
     })
   ]);
   t.after(resetAgentAdaptersForTesting);
@@ -61,6 +66,7 @@ test("doctor reports all supported agents and the queued next step", async (t) =
   assert.match(output, /Supported agents:/);
   assert.match(output, /- Codex \(codex\): available \(0\.113\.0\) via codex\.cmd/);
   assert.match(output, /- Claude Code \(claude\) \[active\]: available \(1\.2\.3\) via claude\.cmd/);
+  assert.match(output, /- Augment CLI \(augment\): available \(2\.0\.0\) via augment\.cmd/);
   assert.match(output, /Next Step: EXEC001 \(Execution\)/);
   assert.match(output, /Next move: run `srgical studio` to refine the plan or `srgical run-next` to execute the next step\./);
 });
@@ -79,6 +85,11 @@ test("doctor reports missing supported agents safely when no next step is queued
       id: "claude",
       label: "Claude Code",
       status: unavailableStatus("claude", "Claude Code", "missing claude")
+    }),
+    createFakeAdapter({
+      id: "augment",
+      label: "Augment CLI",
+      status: unavailableStatus("augment", "Augment CLI", "missing augment")
     })
   ]);
   t.after(resetAgentAdaptersForTesting);
@@ -103,6 +114,7 @@ test("doctor reports missing supported agents safely when no next step is queued
   assert.match(output, /Active agent: Codex \(codex\) - missing \(missing codex\)/);
   assert.match(output, /- Codex \(codex\) \[active\]: missing \(missing codex\) via codex\.cmd/);
   assert.match(output, /- Claude Code \(claude\): missing \(missing claude\) via claude\.cmd/);
+  assert.match(output, /- Augment CLI \(augment\): missing \(missing augment\) via augment\.cmd/);
   assert.match(output, /Next Step: unavailable/);
   assert.match(output, /Tracker does not currently expose a next recommended step\./);
   assert.match(output, /Next move: run `srgical studio` to queue more work or update the tracker with a new recommended step\./);

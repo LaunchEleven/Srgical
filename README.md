@@ -7,9 +7,9 @@
 3. repeatedly execute the next eligible step,
 4. force validation and handoff updates every time.
 
-The current launch slice supports both local `codex` and local `claude` CLI installs through the same `.srgical/`
-workflow. `srgical` detects which supported tools are actually installed, keeps the planning pack agent-neutral, and
-lets you choose the active agent for the current workspace session.
+The current launch slice supports local `codex`, local `claude`, and local `auggie` installs through the same
+`.srgical/` workflow. `srgical` detects which supported tools are actually installed, keeps the planning pack
+agent-neutral, and lets you choose the active agent for the current workspace session.
 
 ## Why This Exists
 
@@ -46,8 +46,11 @@ This repo currently ships the foundation for:
 - `claude`
   Supported through the same adapter seam for planning, pack writing, and execution when the local Claude Code CLI is
   installed and available on `PATH`.
+- `augment`
+  Supported through the same adapter seam by targeting the local `auggie` binary for planning, pack writing, and
+  execution when Augment CLI automation is available on the current machine.
 
-If only one supported agent is installed, `srgical` can auto-select it for the workspace session. If both are
+If only one supported agent is installed, `srgical` can auto-select it for the workspace session. If more than one is
 installed, you can keep the stored choice in the studio and still override a single execution with
 `srgical run-next --agent <id>`.
 
@@ -145,6 +148,7 @@ To override the active workspace agent for one execution only:
 ```bash
 node dist/index.js run-next --agent codex
 node dist/index.js run-next --agent claude
+node dist/index.js run-next --agent augment
 ```
 
 ## Current Claude Caveat
@@ -155,8 +159,18 @@ uses `plan` mode for planner replies and `acceptEdits` with allowlisted local to
 If the Claude CLI is not installed locally, `doctor`, the studio, and `run-next --agent claude` all report that
 honestly instead of falling back to a fake Claude path.
 
+## Current Augment Caveat
+
+Augment support is wired to the documented `auggie` automation flags: `--print`, `--quiet`, `--instruction-file`,
+`--workspace-root`, `--allow-indexing`, `--wait-for-indexing`, `--dont-save-session`, `--max-turns`, and `--ask` for
+planner-only runs.
+
+That means successful Augment execution still depends on a real Augment CLI install, an authenticated session such as
+`auggie login` or `AUGMENT_SESSION_AUTH`, and whatever automation entitlements or local permission policies your
+account requires.
+
 ## Planned Next Steps
 
 - deepen the studio experience without weakening the terminal-first workflow
-- keep dual-agent docs and validation honest as Claude runtime behavior gets more live coverage
+- keep multi-agent docs and validation honest as Claude and Augment runtime behavior get more live coverage
 - expand release outputs from npm tarballs into standalone binaries and wrapper package-manager installers

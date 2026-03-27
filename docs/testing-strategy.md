@@ -24,8 +24,9 @@ real bugs.
 
 ### Tier 3: Adapter and Agent behavior
 
-- primary-agent status detection must degrade cleanly when Codex is unavailable.
-- planner, pack-writing, and execution adapters must preserve today's Codex-first behavior.
+- primary-agent status detection must degrade cleanly when any supported adapter is unavailable.
+- planner, pack-writing, and execution adapters must preserve today's multi-agent behavior across Codex, Claude Code,
+  and Augment CLI.
 - Windows command resolution and shell-shim launching must stay covered because that path has already broken once.
 
 ### Tier 4: Release confidence

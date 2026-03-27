@@ -27,7 +27,7 @@ time.
 
 ## V1 Scope
 
-- Two launch-scope agent adapters: `codex` and `claude`
+- Three launch-scope agent adapters: `codex`, `claude`, and `augment`
 - One planning-pack format under `.srgical/`
 - One full-screen TUI for planning conversation
 - One execution command that runs the current next-step prompt through the active workspace agent
