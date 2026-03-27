@@ -1,6 +1,6 @@
 {
   "name": "@launcheleven/srgical",
-  "version": "0.0.1",
+  "version": "0.0.0",
   "description": "A polished local-first CLI for planning and executing long AI-driven delivery sequences.",
   "files": [
     "dist",
@@ -13,19 +13,17 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "changeset": "changeset",
     "dev": "tsx src/index.ts",
-    "release": "npm run release:pack && npm run publish:github && npm run publish:npm",
     "start": "node dist/index.js",
     "doctor": "tsx src/index.ts doctor",
     "test": "tsx --test test/**/*.test.ts",
     "test:coverage": "tsx --test --experimental-test-coverage test/**/*.test.ts",
-    "version-packages": "changeset version",
     "prepack": "npm run build",
     "release:pack": "node scripts/release-pack.mjs",
-    "publish:github": "changeset publish",
+    "publish:github": "node scripts/publish-github.mjs",
     "publish:npm": "node scripts/publish-npm.mjs",
-    "release:version": "node scripts/read-package-version.mjs"
+    "release:version": "node scripts/read-package-version.mjs",
+    "release:state": "node scripts/read-release-state.mjs"
   },
   "engines": {
     "node": ">=20"
@@ -55,7 +53,6 @@
     "commander": "^14.0.3"
   },
   "devDependencies": {
-    "@changesets/cli": "^2.30.0",
     "@types/blessed": "^0.1.27",
     "@types/node": "^25.5.0",
     "tsx": "^4.21.0",

@@ -1,16 +1,22 @@
 #!/usr/bin/env node
 
-import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import {
+  npmCommand,
+  packStagedPackage,
+  prepareStagedPackage,
+  resolveReleaseState,
+  root,
+  runChecked,
+  toPosixPath
+} from "./release-shared.mjs";
 
-const scriptDir = path.dirname(fileURLToPath(import.meta.url));
-const root = path.resolve(scriptDir, "..");
 const releaseDir = path.join(root, ".artifacts", "release");
-const packageJsonPath = path.join(root, "package.json");
-const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
+const githubStagingDir = path.join(root, ".artifacts", "publish", "github-packages");
+const npmStagingDir = path.join(root, ".artifacts", "publish", "npm-public");
+const releaseState = await resolveReleaseState();
 
 await rm(releaseDir, { recursive: true, force: true });
 await mkdir(releaseDir, { recursive: true });
@@ -18,52 +24,55 @@ await mkdir(releaseDir, { recursive: true });
 runChecked(npmCommand, ["run", "build"], { cwd: root });
 runChecked(process.execPath, ["dist/index.js", "doctor"], { cwd: root });
 
-const packResult = runChecked(npmCommand, ["pack", "--pack-destination", releaseDir], { cwd: root });
-const tarballName = packResult.stdout
-  .split(/\r?\n/)
-  .map((line) => line.trim())
-  .filter(Boolean)
-  .at(-1);
+await prepareStagedPackage({
+  stagingDir: githubStagingDir,
+  packageName: process.env.GITHUB_PACKAGE_NAME ?? "@launcheleven/srgical",
+  version: releaseState.version,
+  registry: process.env.GITHUB_PACKAGE_REGISTRY ?? "https://npm.pkg.github.com"
+});
 
-if (!tarballName) {
-  throw new Error("npm pack did not report the generated tarball name.");
-}
+await prepareStagedPackage({
+  stagingDir: npmStagingDir,
+  packageName: process.env.NPM_PUBLIC_PACKAGE_NAME ?? "@launch11/srgical",
+  version: releaseState.version,
+  registry: process.env.NPM_PUBLIC_REGISTRY ?? "https://registry.npmjs.org/",
+  access: process.env.NPM_PUBLIC_ACCESS ?? "public"
+});
 
-const tarballPath = path.join(releaseDir, tarballName);
-const packageJson = JSON.parse(await readFile(packageJsonPath, "utf8"));
-const tarballBuffer = await readFile(tarballPath);
-const tarballStats = await stat(tarballPath);
-const sha256 = createHash("sha256").update(tarballBuffer).digest("hex");
+const githubArtifact = await buildArtifact({
+  channel: "github-packages",
+  packageName: process.env.GITHUB_PACKAGE_NAME ?? "@launcheleven/srgical",
+  stagingDir: githubStagingDir,
+  releaseDir
+});
+
+const npmArtifact = await buildArtifact({
+  channel: "npm-public",
+  packageName: process.env.NPM_PUBLIC_PACKAGE_NAME ?? "@launch11/srgical",
+  stagingDir: npmStagingDir,
+  releaseDir
+});
+
 const generatedAt = new Date().toISOString();
-
 const manifest = {
   generatedAt,
-  package: {
-    name: packageJson.name,
-    version: packageJson.version
+  release: {
+    baseVersion: releaseState.baseVersion,
+    version: releaseState.version,
+    tag: releaseState.tag
   },
   validation: [
     "npm run build",
     "node dist/index.js doctor",
-    "npm pack --pack-destination .artifacts/release"
+    "npm pack --pack-destination .artifacts/release (staged package copies)"
   ],
-  artifacts: [
-    {
-      channel: "npm",
-      kind: "package-tarball",
-      file: tarballName,
-      relativePath: toPosixPath(path.relative(root, tarballPath)),
-      bytes: tarballStats.size,
-      sha256,
-      installExample: `npm install -g ./${toPosixPath(path.relative(root, tarballPath))}`
-    }
-  ],
+  artifacts: [githubArtifact, npmArtifact],
   plannedChannels: [
     {
       channel: "standalone-binaries",
       status: "defined",
       plan:
-        "Build Windows, macOS, and Linux binaries from tagged releases after the current Node-based workflow is stable. Publish those binaries on GitHub Releases alongside the npm tarball."
+        "Build Windows, macOS, and Linux binaries from tagged releases after the current Node-based workflow is stable. Publish those binaries on GitHub Releases alongside the npm tarballs."
     },
     {
       channel: "wrapper-package-managers",
@@ -78,83 +87,58 @@ await writeFile(path.join(releaseDir, "release-manifest.json"), `${JSON.stringif
 await writeFile(path.join(releaseDir, "release-manifest.md"), buildMarkdownManifest(manifest), "utf8");
 
 process.stdout.write(`Release bundle ready in ${toPosixPath(path.relative(root, releaseDir))}\n`);
-process.stdout.write(`- Tarball: ${tarballName}\n`);
-process.stdout.write(`- SHA256: ${sha256}\n`);
+for (const artifact of manifest.artifacts) {
+  process.stdout.write(`- ${artifact.channel}: ${artifact.file}\n`);
+  process.stdout.write(`  SHA256: ${artifact.sha256}\n`);
+}
 
-function runChecked(command, args, options) {
-  const isShellShim = command.toLowerCase().endsWith(".cmd") || command.toLowerCase().endsWith(".bat");
-  const result = isShellShim
-    ? spawnSync([quoteForShell(command), ...args.map(quoteForShell)].join(" "), {
-        ...options,
-        encoding: "utf8",
-        shell: true,
-        stdio: ["inherit", "pipe", "pipe"]
-      })
-    : spawnSync(command, args, {
-        ...options,
-        encoding: "utf8",
-        stdio: ["inherit", "pipe", "pipe"]
-      });
-
-  if (result.stdout) {
-    process.stdout.write(result.stdout);
-  }
-
-  if (result.stderr) {
-    process.stderr.write(result.stderr);
-  }
-
-  if (result.error) {
-    throw result.error;
-  }
-
-  if (result.status !== 0) {
-    throw new Error(`${command} ${args.join(" ")} failed with exit code ${result.status ?? "unknown"}.`);
-  }
+async function buildArtifact({ channel, packageName, stagingDir, releaseDir }) {
+  const { tarballName, tarballPath } = await packStagedPackage(stagingDir, releaseDir);
+  const tarballBuffer = await readFile(tarballPath);
+  const tarballStats = await stat(tarballPath);
+  const sha256 = createHash("sha256").update(tarballBuffer).digest("hex");
 
   return {
-    stdout: result.stdout ?? "",
-    stderr: result.stderr ?? ""
+    channel,
+    kind: "package-tarball",
+    packageName,
+    version: releaseState.version,
+    file: tarballName,
+    relativePath: toPosixPath(path.relative(root, tarballPath)),
+    bytes: tarballStats.size,
+    sha256,
+    installExample: `npm install -g ./${toPosixPath(path.relative(root, tarballPath))}`
   };
 }
 
 function buildMarkdownManifest(manifest) {
-  const artifact = manifest.artifacts[0];
-
   return [
     "# Release Manifest",
     "",
     `Generated: ${manifest.generatedAt}`,
-    `Package: ${manifest.package.name}@${manifest.package.version}`,
+    `Base version: ${manifest.release.baseVersion}`,
+    `Computed release version: ${manifest.release.version}`,
+    `Release tag: ${manifest.release.tag}`,
     "",
     "## Validated Commands",
     "",
     ...manifest.validation.map((command) => `- \`${command}\``),
     "",
-    "## Produced Artifact",
+    "## Produced Artifacts",
     "",
-    `- File: \`${artifact.file}\``,
-    `- Relative path: \`${artifact.relativePath}\``,
-    `- Size: ${artifact.bytes} bytes`,
-    `- SHA256: \`${artifact.sha256}\``,
-    `- Install test: \`${artifact.installExample}\``,
-    "",
+    ...manifest.artifacts.flatMap((artifact) => [
+      `- Channel: ${artifact.channel}`,
+      `- Package: \`${artifact.packageName}@${artifact.version}\``,
+      `- File: \`${artifact.file}\``,
+      `- Relative path: \`${artifact.relativePath}\``,
+      `- Size: ${artifact.bytes} bytes`,
+      `- SHA256: \`${artifact.sha256}\``,
+      `- Install test: \`${artifact.installExample}\``,
+      ""
+    ]),
     "## Defined Future Channels",
     "",
     ...manifest.plannedChannels.map((channel) => `- ${channel.channel}: ${channel.plan}`),
     ""
   ].join("\n");
-}
-
-function toPosixPath(value) {
-  return value.split(path.sep).join("/");
-}
-
-function quoteForShell(value) {
-  if (/^[A-Za-z0-9_:\\/.=-]+$/.test(value)) {
-    return value;
-  }
-
-  const escaped = value.replace(/"/g, '""');
-  return `"${escaped}"`;
 }

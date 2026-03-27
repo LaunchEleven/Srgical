@@ -23,6 +23,9 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Fetch tags
+        run: git fetch --force --tags
+
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
@@ -41,54 +44,23 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-      - name: Version packages
-        run: npm run version-packages
-
-      - name: Read release version
+      - name: Read release state
         id: release_version
-        run: |
-          VERSION="$(npm run --silent release:version)"
-          if [ -z "$VERSION" ]; then
-            echo "Release version was empty." >&2
-            exit 1
-          fi
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-
-      - name: Check release tag
-        id: release_state
-        run: |
-          if git ls-remote --exit-code --tags origin "refs/tags/v${{ steps.release_version.outputs.version }}" >/dev/null 2>&1; then
-            echo "tagged=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "tagged=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Commit version changes
-        id: version_commit
-        run: |
-          if git diff --quiet; then
-            echo "created=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          git add -A package.json package-lock.json CHANGELOG.md .changeset
-          git commit -m "chore: release packages [skip ci]"
-          git push origin HEAD:${GITHUB_REF_NAME}
-          echo "created=true" >> "$GITHUB_OUTPUT"
+        run: npm run --silent release:state >> "$GITHUB_OUTPUT"
 
       - name: Build release artifacts
-        if: ${{ steps.version_commit.outputs.created == 'true' || steps.release_state.outputs.tagged != 'true' }}
+        if: ${{ steps.release_version.outputs.already_tagged != 'true' }}
         run: npm run release:pack
 
-      - name: Publish packages
-        if: ${{ steps.version_commit.outputs.created == 'true' || steps.release_state.outputs.tagged != 'true' }}
+      - name: Publish GitHub package
+        if: ${{ steps.release_version.outputs.already_tagged != 'true' }}
         id: publish_github
         run: npm run publish:github
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Node.js for npmjs
-        if: ${{ steps.version_commit.outputs.created == 'true' || steps.release_state.outputs.tagged != 'true' }}
+        if: ${{ steps.release_version.outputs.already_tagged != 'true' }}
         uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -96,7 +68,7 @@ jobs:
           scope: "@launch11"
 
       - name: Publish npm package
-        if: ${{ steps.version_commit.outputs.created == 'true' || steps.release_state.outputs.tagged != 'true' }}
+        if: ${{ steps.release_version.outputs.already_tagged != 'true' }}
         id: publish_npm
         run: npm run publish:npm
         env:
@@ -106,26 +78,21 @@ jobs:
           NPM_PUBLIC_ACCESS: public
 
       - name: Create git tag
-        if: ${{ steps.version_commit.outputs.created == 'true' || steps.release_state.outputs.tagged != 'true' }}
+        if: ${{ steps.release_version.outputs.already_tagged != 'true' }}
         run: |
-          if git ls-remote --exit-code --tags origin "refs/tags/v${{ steps.release_version.outputs.version }}" >/dev/null 2>&1; then
-            echo "Tag v${{ steps.release_version.outputs.version }} already exists on origin."
-            exit 0
-          fi
-
-          git tag "v${{ steps.release_version.outputs.version }}"
-          git push origin "v${{ steps.release_version.outputs.version }}"
+          git tag "${{ steps.release_version.outputs.tag }}"
+          git push origin "${{ steps.release_version.outputs.tag }}"
 
       - name: Create GitHub release
-        if: ${{ steps.version_commit.outputs.created == 'true' || steps.release_state.outputs.tagged != 'true' }}
+        if: ${{ steps.release_version.outputs.already_tagged != 'true' }}
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v${{ steps.release_version.outputs.version }}
+          tag_name: ${{ steps.release_version.outputs.tag }}
           generate_release_notes: true
           files: .artifacts/release/*
 
       - name: Upload release artifact
-        if: ${{ (steps.version_commit.outputs.created == 'true' || steps.release_state.outputs.tagged != 'true') && success() }}
+        if: ${{ steps.release_version.outputs.already_tagged != 'true' && success() }}
         uses: actions/upload-artifact@v4
         with:
           name: srgical-release-${{ github.run_number }}

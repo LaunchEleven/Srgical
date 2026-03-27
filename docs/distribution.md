@@ -3,8 +3,8 @@
 ## Current Production Channel
 
 The current production release channels are GitHub Packages for npm, the public npm registry, and GitHub Releases.
-Versioning is source-controlled with Changesets, which means semver intent lives in pull requests instead of being
-inferred from CI build numbers.
+Versioning is tag-driven from git history, which means the repo carries a base major/minor line and CI computes the
+next patch version during release instead of committing a version bump back to `main`.
 
 The npm package does not bundle `codex` or `claude`. Users still need at least one supported local agent CLI installed
 separately and available on `PATH`, and `srgical doctor` remains the truthful way to confirm which agents are usable on
@@ -12,17 +12,18 @@ the current machine.
 
 ## Release Flow
 
-1. A feature branch that changes the package also adds a changeset with `npm run changeset`.
-2. When that branch lands on `main`, the release workflow runs `npm ci`, `npm test`, and `npm run version-packages`.
-3. If the changesets produce a version bump, the workflow commits the updated `package.json`, `CHANGELOG.md`, and
-   consumed changeset files back to `main`.
-4. The same workflow run publishes `@launcheleven/srgical` to GitHub Packages.
-5. The workflow also stages and publishes `@launch11/srgical` to the public npm registry.
-6. After both publishes, the workflow creates a `v<version>` tag and a GitHub Release with the packaged artifacts
-   attached.
+1. `package.json` stores the release line, such as `0.0.0` or `0.1.0`.
+2. When a commit lands on `main`, the release workflow runs `npm ci` and `npm test`.
+3. CI reads the base version, looks for existing `v<major>.<minor>.*` tags, and computes the next patch version for
+   the current untagged commit.
+4. The workflow stages that computed version into temporary package copies without mutating the committed repo files.
+5. The same workflow publishes `@launcheleven/srgical` to GitHub Packages and `@launch11/srgical` to the public npm
+   registry.
+6. After both publishes succeed, the workflow creates a `v<version>` tag and a GitHub Release with the packaged
+   artifacts attached.
 
-This keeps the published semver repeatable across reruns and tracked in git history instead of being tied to a specific
-Actions run number, without requiring a separate release PR just to ship the version bump.
+This keeps the published semver repeatable for a given commit, avoids commit-noise from release-only version bumps, and
+still gives each published package a unique version that both registries can accept.
 
 ## Local Release Check
 
@@ -36,8 +37,9 @@ That command:
 
 - builds the TypeScript CLI,
 - runs `node dist/index.js doctor`,
-- creates an npm tarball under `.artifacts/release/`,
-- writes `release-manifest.json` and `release-manifest.md` with the artifact path and SHA256 hash.
+- computes the next release version from git tags,
+- creates GitHub Packages and npm tarballs under `.artifacts/release/`,
+- writes `release-manifest.json` and `release-manifest.md` with the artifact paths and SHA256 hashes.
 
 ## Registry Configuration
 

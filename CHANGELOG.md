@@ -1,7 +1,5 @@
-# @launcheleven/srgical
+# Changelog
 
-## 0.0.1
+Release history is tracked through git tags, GitHub Releases, GitHub Packages, and npm.
 
-### Initial Release
-
-- First public npm release of `srgical`.
+The repo keeps a base version line in `package.json`, and CI computes the next patch version at release time.

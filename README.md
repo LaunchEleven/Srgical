@@ -79,15 +79,13 @@ npm run release:pack
 The release bundle lands under `.artifacts/release/`. The broader distribution path, including standalone binaries and
 wrapper package-manager installs, is documented in `docs/distribution.md`.
 
-For release work, add a changeset in your feature branch:
-
-```bash
-npm run changeset
-```
-
 When that branch reaches `main`, the release workflow versions the package, publishes `@launcheleven/srgical` to
 GitHub Packages, publishes `@launch11/srgical` to npm, and opens a matching GitHub Release entry with the packaged
 artifacts.
+
+The repo keeps a base version line in `package.json` and CI computes the next patch version from matching git tags. For
+example, a base version of `0.0.0` means releases flow as `0.0.1`, `0.0.2`, and so on. To move to a new minor line,
+change the base version to something like `0.1.0`.
 
 ## Install Prerequisites
 
