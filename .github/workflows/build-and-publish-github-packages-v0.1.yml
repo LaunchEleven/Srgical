@@ -1,0 +1,102 @@
+name: Build and Publish GitHub Packages v0.1
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  set_version:
+    name: Set Version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.extract_version.outputs.version }}
+      version_prefix: ${{ steps.extract_version.outputs.version_prefix }}
+    steps:
+      - name: Extract version from workflow filename
+        id: extract_version
+        shell: bash
+        run: |
+          WORKFLOW_REF="${{ github.workflow_ref }}"
+          WORKFLOW_FILE=$(basename "${WORKFLOW_REF%@*}")
+          VERSION_PREFIX=$(echo "$WORKFLOW_FILE" | sed -n 's/.*-v\([0-9]\+\.[0-9]\+\)\.yml/\1/p')
+
+          if [ -z "$VERSION_PREFIX" ]; then
+            VERSION_PREFIX=$(echo "${{ github.workflow }}" | sed -n 's/.*v\([0-9]\+\.[0-9]\+\).*/\1/p')
+          fi
+
+          if [ -z "$VERSION_PREFIX" ]; then
+            echo "Could not extract major.minor from workflow ref: $WORKFLOW_REF"
+            exit 1
+          fi
+
+          FULL_VERSION="${VERSION_PREFIX}.${{ github.run_number }}"
+
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            FULL_VERSION="${FULL_VERSION}-pull-request.${{ github.event.pull_request.number }}"
+          elif [ "${{ github.ref }}" != "refs/heads/main" ]; then
+            FULL_VERSION="${FULL_VERSION}-preview.${{ github.run_attempt }}"
+          fi
+
+          echo "version_prefix=$VERSION_PREFIX" >> "$GITHUB_OUTPUT"
+          echo "version=$FULL_VERSION" >> "$GITHUB_OUTPUT"
+          echo "Workflow file: $WORKFLOW_FILE"
+          echo "Version prefix: $VERSION_PREFIX"
+          echo "Full version: $FULL_VERSION"
+
+  build_test_pack:
+    name: Build, Test, and Pack
+    needs: set_version
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://npm.pkg.github.com
+          scope: "@launcheleven"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Stamp CI version
+        run: npm version --no-git-tag-version "${{ needs.set_version.outputs.version }}"
+
+      - name: Run tests
+        run: npm test
+
+      - name: Build, validate, and pack release artifact
+        run: npm run release:pack
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: srgical-${{ needs.set_version.outputs.version }}
+          path: .artifacts/release/
+
+      - name: Publish package to GitHub Packages
+        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          PACKAGE_NAME=$(node -p "require('./package.json').name")
+          PACKAGE_VERSION=$(node -p "require('./package.json').version")
+
+          if npm view "${PACKAGE_NAME}@${PACKAGE_VERSION}" version --registry=https://npm.pkg.github.com >/dev/null 2>&1; then
+            echo "Package ${PACKAGE_NAME}@${PACKAGE_VERSION} already exists in GitHub Packages; skipping publish."
+            exit 0
+          fi
+
+          npm publish

@@ -44,6 +44,6 @@ time.
 
 ## Distribution Strategy
 
-- Native package: `npm`
+- Native package: GitHub Packages for npm as `@launcheleven/srgical`
 - Release artifacts: standalone binaries for Windows, macOS, and Linux
 - Package-manager wrappers: `brew`, `choco`, and other ecosystems can install those release artifacts

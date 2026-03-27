@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { Command } from "commander";
 import { runDoctorCommand } from "./commands/doctor";
 import { runInitCommand } from "./commands/init";
@@ -7,11 +9,12 @@ import { runRunNextCommand } from "./commands/run-next";
 import { runStudioCommand } from "./commands/studio";
 
 const program = new Command();
+const packageVersion = readPackageVersion();
 
 program
   .name("srgical")
   .description("Local-first AI planning and execution orchestration.")
-  .version("0.1.0");
+  .version(packageVersion);
 
 program
   .command("doctor")
@@ -53,3 +56,9 @@ program.parseAsync(process.argv).catch((error: unknown) => {
   process.stderr.write(`${message}\n`);
   process.exitCode = 1;
 });
+
+function readPackageVersion(): string {
+  const packageJsonPath = path.resolve(__dirname, "..", "package.json");
+  const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf8")) as { version?: string };
+  return packageJson.version ?? "0.0.0";
+}

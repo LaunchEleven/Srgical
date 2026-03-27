@@ -65,8 +65,9 @@ The first TUI pass already leans in that direction, and we can keep pushing it.
 
 ## Distribution
 
-The first production channel is `npm`, backed by a tagged GitHub Actions release flow that builds the CLI, validates it
-with `doctor`, creates an npm tarball, and uploads a release manifest with the artifact hash.
+The first production channel is GitHub Packages for npm, backed by a versioned GitHub Actions workflow that derives
+`major.minor` from the workflow filename, stamps the patch from `github.run_number`, validates the CLI with `doctor`,
+creates an npm tarball, and publishes from `main`.
 
 For a local production-style packaging check:
 
@@ -89,6 +90,10 @@ node dist/index.js doctor
 
 `doctor` is the source of truth for local availability. If an agent CLI is missing, `srgical` reports it as missing
 instead of pretending it can run that path anyway.
+
+For GitHub Packages installs, the published package name is `@launcheleven/srgical`. GitHub's npm registry also
+requires authenticated installs, so consumers need an `.npmrc` entry for `@launcheleven` plus a token before running
+`npm install -g @launcheleven/srgical`.
 
 ## Getting Started
 
