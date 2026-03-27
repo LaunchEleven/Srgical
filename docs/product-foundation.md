@@ -45,5 +45,6 @@ time.
 ## Distribution Strategy
 
 - Native package: GitHub Packages for npm as `@launcheleven/srgical`
+- Versioning model: semver via Changesets release PRs on GitHub Actions
 - Release artifacts: standalone binaries for Windows, macOS, and Linux
 - Package-manager wrappers: `brew`, `choco`, and other ecosystems can install those release artifacts

@@ -2,8 +2,8 @@
 
 ## Current Production Channel
 
-The current production release channel is GitHub Packages for npm. Every `main` push should produce a uniquely versioned
-package, validate the built CLI, and publish the same tarball that was packed in CI.
+The current production release channel is GitHub Packages for npm. Versioning is source-controlled with Changesets,
+which means semver intent lives in pull requests instead of being inferred from CI build numbers.
 
 The npm package does not bundle `codex` or `claude`. Users still need at least one supported local agent CLI installed
 separately and available on `PATH`, and `srgical doctor` remains the truthful way to confirm which agents are usable on
@@ -11,16 +11,16 @@ the current machine.
 
 ## Release Flow
 
-1. The workflow filename carries the `major.minor` line, currently `build-and-publish-github-packages-v0.1.yml`.
-2. CI extracts `0.1` from that filename and uses `github.run_number` as the patch number.
-3. The workflow runs `npm ci`, stamps `package.json` with `npm version --no-git-tag-version`, runs `npm test`, then
-   runs `npm run release:pack`.
-4. Pushes to `main` publish the computed version to GitHub Packages with `GITHUB_TOKEN`.
-5. Pull requests run the same build and pack flow, but get a `-pull-request.<number>` suffix and do not publish.
+1. A feature branch that changes the package also adds a changeset with `npm run changeset`.
+2. When that branch lands on `main`, the release workflow runs `npm ci`, `npm test`, and `changesets/action`.
+3. If unpublished changesets exist, the action opens or updates a release PR with the exact `package.json` version bump
+   and changelog changes.
+4. Merging that release PR reruns the workflow on `main`.
+5. With no pending changesets left, the workflow runs `npm run release`, which packs the tarball and publishes the
+   version already written into `package.json`.
 
-To bump the release line from `0.1.x` to `0.2.x`, rename the workflow file and workflow title to the new `v0.2`
-prefix. That naturally resets the patch sequence because the next published version line starts at the new
-`major.minor`.
+This is a better npm fit than build-number versioning because the published semver is reviewable before release,
+repeatable across reruns, and tracked in git history instead of being tied to a specific Actions run number.
 
 ## Local Release Check
 

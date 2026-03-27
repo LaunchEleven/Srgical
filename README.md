@@ -65,9 +65,9 @@ The first TUI pass already leans in that direction, and we can keep pushing it.
 
 ## Distribution
 
-The first production channel is GitHub Packages for npm, backed by a versioned GitHub Actions workflow that derives
-`major.minor` from the workflow filename, stamps the patch from `github.run_number`, validates the CLI with `doctor`,
-creates an npm tarball, and publishes from `main`.
+The first production channel is GitHub Packages for npm, backed by a Changesets release workflow. Version intent stays
+in git, release PRs show the exact semver bump before publish, and GitHub Actions publishes only after the release PR
+lands on `main`.
 
 For a local production-style packaging check:
 
@@ -77,6 +77,15 @@ npm run release:pack
 
 The release bundle lands under `.artifacts/release/`. The broader distribution path, including standalone binaries and
 wrapper package-manager installs, is documented in `docs/distribution.md`.
+
+For release work, add a changeset in your feature branch:
+
+```bash
+npm run changeset
+```
+
+When that branch reaches `main`, the release workflow opens or updates a release PR. Merging the release PR publishes
+the new package version to GitHub Packages.
 
 ## Install Prerequisites
 

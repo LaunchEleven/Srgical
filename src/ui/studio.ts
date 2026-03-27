@@ -776,7 +776,25 @@ export function resolveStudioWorkspaceInput(currentWorkspace: string, requestedW
     return currentWorkspace;
   }
 
-  return path.isAbsolute(trimmed) ? path.resolve(trimmed) : path.resolve(currentWorkspace, trimmed);
+  const pathModule = shouldUseWindowsPathSemantics(currentWorkspace, trimmed) ? path.win32 : path;
+  return pathModule.isAbsolute(trimmed) ? pathModule.resolve(trimmed) : pathModule.resolve(currentWorkspace, trimmed);
+}
+
+function shouldUseWindowsPathSemantics(currentWorkspace: string, requestedWorkspace: string): boolean {
+  return (
+    isWindowsAbsolutePath(currentWorkspace) ||
+    isWindowsAbsolutePath(requestedWorkspace) ||
+    isWindowsUncPath(currentWorkspace) ||
+    isWindowsUncPath(requestedWorkspace)
+  );
+}
+
+function isWindowsAbsolutePath(value: string): boolean {
+  return /^[A-Za-z]:[\\/]/.test(value);
+}
+
+function isWindowsUncPath(value: string): boolean {
+  return /^\\\\[^\\]+\\[^\\]+/.test(value);
 }
 
 function isDefaultStudioSession(messages: ChatMessage[]): boolean {
