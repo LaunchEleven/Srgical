@@ -36,7 +36,8 @@
     "url": "https://github.com/LaunchEleven/Srgical/issues"
   },
   "publishConfig": {
-    "registry": "https://npm.pkg.github.com"
+    "access": "public",
+    "registry": "https://registry.npmjs.org"
   },
   "keywords": [
     "ai",

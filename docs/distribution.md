@@ -2,7 +2,7 @@
 
 ## Current Production Channel
 
-The current production release channel is GitHub Packages for npm. Versioning is source-controlled with Changesets,
+The current production release channel is the public npm registry. Versioning is source-controlled with Changesets,
 which means semver intent lives in pull requests instead of being inferred from CI build numbers.
 
 The npm package does not bundle `codex` or `claude`. Users still need at least one supported local agent CLI installed
@@ -12,15 +12,14 @@ the current machine.
 ## Release Flow
 
 1. A feature branch that changes the package also adds a changeset with `npm run changeset`.
-2. When that branch lands on `main`, the release workflow runs `npm ci`, `npm test`, and `changesets/action`.
-3. If unpublished changesets exist, the action opens or updates a release PR with the exact `package.json` version bump
-   and changelog changes.
-4. Merging that release PR reruns the workflow on `main`.
-5. With no pending changesets left, the workflow runs `npm run release`, which packs the tarball and publishes the
-   version already written into `package.json`.
+2. When that branch lands on `main`, the release workflow runs `npm ci`, `npm test`, and `npm run version-packages`.
+3. If the changesets produce a version bump, the workflow commits the updated `package.json`, `CHANGELOG.md`, and
+   consumed changeset files back to `main`.
+4. The same workflow run then executes `npm run release`, which packs the tarball and publishes the version already
+   written into `package.json`.
 
-This is a better npm fit than build-number versioning because the published semver is reviewable before release,
-repeatable across reruns, and tracked in git history instead of being tied to a specific Actions run number.
+This keeps the published semver repeatable across reruns and tracked in git history instead of being tied to a specific
+Actions run number, without requiring a separate release PR just to ship the version bump.
 
 ## Local Release Check
 
@@ -39,21 +38,13 @@ That command:
 
 ## Registry Configuration
 
-GitHub Packages only supports scoped npm package names. This package now publishes as `@launcheleven/srgical`.
+This package publishes to npm as `@launcheleven/srgical`.
 
-The repo-local `.npmrc` pins that scope to GitHub Packages:
-
-```ini
-@launcheleven:registry=https://npm.pkg.github.com
-```
-
-The workflow publishes with `GITHUB_TOKEN`, which GitHub documents as the recommended authentication path for packages
-associated with the workflow repository. Local installs and local publishes still require authentication in the user's
-own npm config, typically:
+The workflow publishes with the repository secret `NPM_TOKEN`. Local publishes require the same token in the user's
+own npm config:
 
 ```ini
-//npm.pkg.github.com/:_authToken=TOKEN
-@launcheleven:registry=https://npm.pkg.github.com
+//registry.npmjs.org/:_authToken=TOKEN
 ```
 
 ## Post-Install Setup
@@ -79,7 +70,6 @@ npm install -g @launcheleven/srgical
 ```
 
 - Required local prerequisites after install:
-  - authenticated access to GitHub Packages
   - `codex` and/or `claude` installed separately
   - available on `PATH` for the current shell session
 
