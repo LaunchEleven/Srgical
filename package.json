@@ -1,6 +1,6 @@
 {
   "name": "@launcheleven/srgical",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "A sexy local-first CLI for planning and executing long AI-driven delivery sequences.",
   "files": [
     "dist",
