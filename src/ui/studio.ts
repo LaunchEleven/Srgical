@@ -47,7 +47,7 @@ type BusyMode = "planner" | "pack" | "run" | "auto";
 
 const READY_FOOTER = " PgUp/PgDn scroll   /agents choose tool   /help commands   /quit exit ";
 const ACTIVITY_FRAMES = ["[    ]", "[=   ]", "[==  ]", "[=== ]", "[ ===]", "[  ==]", "[   =]"];
-const COMPOSER_CURSOR = "{black-fg}{#ffb14a-bg} {/}";
+const COMPOSER_CURSOR = "{#ffb14a-fg}\u2588{/}";
 const escapeBlessedText = (blessed as typeof blessed & { helpers: { escape(text: string): string } }).helpers.escape;
 
 export async function launchStudio(options: StudioOptions = {}): Promise<void> {
@@ -177,6 +177,9 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
   screen.append(sidebar);
   screen.append(input);
   screen.append(footer);
+  screen.on("render", () => {
+    screen.program.hideCursor();
+  });
 
   let busy = false;
   let busyMode: BusyMode | null = null;
