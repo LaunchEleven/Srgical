@@ -29,6 +29,7 @@ export type PlanningPackPaths = {
   executionLog: string;
   planningState: string;
   autoRunState: string;
+  adviceState: string;
   activePlanFile: string;
 };
 
@@ -77,6 +78,7 @@ export function getPlanningPackPaths(root: string, options: PlanningPathOptions 
     executionLog: path.join(dir, "execution-log.md"),
     planningState: path.join(dir, "planning-state.json"),
     autoRunState: path.join(dir, "auto-run-state.json"),
+    adviceState: path.join(dir, "advice-state.json"),
     activePlanFile: path.join(planningRoot, ACTIVE_PLAN_FILE)
   };
 }
@@ -217,7 +219,8 @@ async function hasDefaultPlanPresence(root: string): Promise<boolean> {
     fileExists(paths.executionState),
     fileExists(paths.executionLog),
     fileExists(paths.planningState),
-    fileExists(paths.autoRunState)
+    fileExists(paths.autoRunState),
+    fileExists(paths.adviceState)
   ]);
 
   return checks.some(Boolean);

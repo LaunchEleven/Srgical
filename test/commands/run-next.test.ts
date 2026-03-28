@@ -374,6 +374,17 @@ function createFakeAdapter(options: {
     async requestPlannerReply(_workspaceRoot: string, _messages: ChatMessage[]): Promise<string> {
       return `${options.id}-planner`;
     },
+    async requestPlanningAdvice(): Promise<string> {
+      return JSON.stringify({
+        version: 1,
+        problemStatement: "fake",
+        clarity: "mostly clear",
+        stateAssessment: "fake",
+        researchNeeded: [],
+        advice: "fake",
+        nextAction: "fake"
+      });
+    },
     async writePlanningPack(): Promise<string> {
       return `${options.id}-pack`;
     },

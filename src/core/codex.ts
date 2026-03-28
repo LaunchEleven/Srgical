@@ -8,7 +8,8 @@ import {
   preparePlanningPackForWrite,
   type PlanningEpochPreparation
 } from "./planning-epochs";
-import { buildPackWriterPrompt, buildPlannerPrompt, type ChatMessage } from "./prompts";
+import { buildAdvicePrompt, buildPackWriterPrompt, buildPlannerPrompt, type ChatMessage } from "./prompts";
+import type { PlanningPackState } from "./planning-pack-state";
 import type { PlanningPathOptions } from "./workspace";
 
 export type CodexStatus = {
@@ -68,6 +69,23 @@ export async function requestPlannerReply(
   const result = await runCodexExec({
     cwd: workspaceRoot,
     prompt: buildPlannerPrompt(messages, workspaceRoot),
+    allowWrite: false,
+    skipGitRepoCheck: true,
+    ephemeral: true
+  });
+
+  return result.lastMessage.trim();
+}
+
+export async function requestPlanningAdvice(
+  workspaceRoot: string,
+  messages: ChatMessage[],
+  packState: PlanningPackState,
+  options: PlanningPathOptions = {}
+): Promise<string> {
+  const result = await runCodexExec({
+    cwd: workspaceRoot,
+    prompt: await buildAdvicePrompt(messages, workspaceRoot, packState, options),
     allowWrite: false,
     skipGitRepoCheck: true,
     ephemeral: true

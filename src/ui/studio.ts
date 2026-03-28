@@ -1,5 +1,6 @@
 import path from "node:path";
 import blessed from "blessed";
+import type { PlanningAdviceState } from "../core/advice-state";
 import { executeAutoRun, requestAutoRunStop } from "../core/auto-run";
 import {
   getPrimaryAgentAdapter,
@@ -18,6 +19,7 @@ import {
   renderDryRunPreview
 } from "../core/execution-controls";
 import { appendExecutionLog, saveExecutionState } from "../core/execution-state";
+import { refreshPlanningAdvice } from "../core/planning-advice";
 import { readPlanningPackState, type PlanningCurrentPosition, type PlanningPackState } from "../core/planning-pack-state";
 import { markPlanningPackAuthored, savePlanningState } from "../core/planning-state";
 import type { ChatMessage } from "../core/prompts";
@@ -43,8 +45,10 @@ type StudioOptions = {
 
 type BusyMode = "planner" | "pack" | "run" | "auto";
 
-const READY_FOOTER = " PgUp/PgDn scroll   /agents choose tool   /help commands ";
+const READY_FOOTER = " PgUp/PgDn scroll   /agents choose tool   /help commands   /quit exit ";
 const ACTIVITY_FRAMES = ["[    ]", "[=   ]", "[==  ]", "[=== ]", "[ ===]", "[  ==]", "[   =]"];
+const COMPOSER_CURSOR = "{black-fg}{#ffb14a-bg} {/}";
+const escapeBlessedText = (blessed as typeof blessed & { helpers: { escape(text: string): string } }).helpers.escape;
 
 export async function launchStudio(options: StudioOptions = {}): Promise<void> {
   let workspace = resolveWorkspace(options.workspace);
@@ -127,14 +131,21 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
     }
   });
 
-  const input = blessed.textarea({
+  const input = blessed.box({
     bottom: 1,
     left: 0,
     width: "100%",
     height: 4,
-    inputOnFocus: true,
     keys: true,
     mouse: true,
+    tags: true,
+    clickable: true,
+    padding: {
+      top: 0,
+      right: 1,
+      bottom: 0,
+      left: 1
+    },
     border: {
       type: "line"
     },
@@ -147,7 +158,6 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
       }
     }
   });
-  configureComposer(input);
 
   const footer = blessed.box({
     bottom: 0,
@@ -179,6 +189,8 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
   let trackerSummary = "loading...";
   let executionSummary = "never run";
   let autoSummary = "idle";
+  let adviceSummary = "run /advice for AI guidance";
+  let composerValue = "";
 
   function setSidebar(status?: string): void {
     const planningPaths = getPlanningPackPaths(workspace, { planId });
@@ -204,6 +216,9 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
         "",
         "{bold}Auto{/bold}",
         autoSummary,
+        "",
+        "{bold}Advice{/bold}",
+        adviceSummary,
         "",
         "{bold}State{/bold}",
         status ?? getActivityState()
@@ -286,6 +301,11 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
     transcript.setScrollPerc(100);
   }
 
+  function renderComposer(): void {
+    const escapedValue = escapeBlessedText(composerValue);
+    input.setContent(`${escapedValue}${COMPOSER_CURSOR}`);
+  }
+
   function scrollTranscript(lines: number): void {
     transcript.scroll(lines);
     screen.render();
@@ -305,6 +325,59 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
     setSidebar();
     setFooter();
     screen.render();
+  }
+
+  async function submitComposer(): Promise<void> {
+    const rawValue = composerValue;
+    const text = rawValue.trim();
+    composerValue = "";
+    renderComposer();
+
+    if (!text || (busy && text !== "/stop")) {
+      screen.render();
+      return;
+    }
+
+    if (text.startsWith("/")) {
+      await handleSlashCommand(text);
+      input.focus();
+      renderComposer();
+      screen.render();
+      return;
+    }
+
+    startBusy("planner");
+    await appendMessage({
+      role: "user",
+      content: text
+    });
+    renderTranscript();
+    setSidebar();
+    setFooter();
+    renderComposer();
+    screen.render();
+
+    try {
+      const reply = await requestPlannerReply(workspace, messages, { planId });
+      await appendMessage({
+        role: "assistant",
+        content: reply
+      });
+      await refreshAdvice(false);
+    } catch (error) {
+      await appendMessage({
+        role: "system",
+        content: `Planner call failed: ${error instanceof Error ? error.message : String(error)}`
+      });
+    } finally {
+      stopBusy();
+      renderTranscript();
+      setSidebar();
+      setFooter();
+      renderComposer();
+      input.focus();
+      screen.render();
+    }
   }
 
   async function refreshEnvironment(): Promise<void> {
@@ -329,9 +402,11 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
     trackerSummary = formatTrackerSummary(packState.currentPosition);
     executionSummary = formatExecutionSummary(packState.lastExecution);
     autoSummary = formatAutoSummary(packState);
+    adviceSummary = formatAdviceSummary(packState.advice);
     setSidebar();
     setFooter();
     renderTranscript();
+    renderComposer();
     screen.render();
   }
 
@@ -340,6 +415,21 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
     await saveActivePlanId(workspace, planId);
     messages = await loadStudioSession(workspace, { planId });
     await refreshEnvironment();
+  }
+
+  async function refreshAdvice(showInTranscript = false): Promise<void> {
+    try {
+      const advice = await refreshPlanningAdvice(workspace, messages, { planId });
+      await refreshEnvironment();
+
+      if (showInTranscript) {
+        await appendSystemMessage(renderAdviceMessage(advice));
+      }
+    } catch (error) {
+      if (showInTranscript) {
+        await appendSystemMessage(`Advice refresh failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
   }
 
   async function handleSlashCommand(command: string): Promise<void> {
@@ -443,6 +533,19 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
       return;
     }
 
+    if (command === "/advice") {
+      startBusy("planner", "refreshing AI advice...");
+
+      try {
+        await refreshAdvice(true);
+      } finally {
+        stopBusy();
+        await refreshEnvironment();
+      }
+
+      return;
+    }
+
     if (command === "/stop") {
       const state = await requestAutoRunStop(workspace, { planId });
       await refreshEnvironment();
@@ -496,9 +599,10 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
           "1. Talk normally to sharpen the plan against the real repo.",
           "2. Use `/plans`, `/plan`, and `/plan new <id>` to manage named planning packs in this workspace.",
           "3. Use `/readiness` to see what context is still missing before you write the pack.",
-          "4. Run `/write` when the plan is ready to put on disk.",
-          "5. Run `/preview` for a safe execution preview, `/run` for one execution step, or `/auto [max]` for continuous execution.",
-          "6. Run `/stop` to stop auto mode after the current iteration.",
+          "4. Run `/advice` for an AI assessment of the problem statement, clarity, research gaps, and next move.",
+          "5. Run `/write` when the plan is ready to put on disk.",
+          "6. Run `/preview` for a safe execution preview, `/run` for one execution step, or `/auto [max]` for continuous execution.",
+          "7. Run `/stop` to stop auto mode after the current iteration.",
           "",
           "Controls:",
           "- `Enter` sends the current message or command.",
@@ -532,6 +636,7 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
       try {
         const result = await writePlanningPack(workspace, messages, { planId });
         await markPlanningPackAuthored(workspace, { planId });
+        await refreshAdvice(false);
         await appendSystemMessage(`Planning pack updated for \`${planId}\`. Summary:\n${result}`);
       } catch (error) {
         await appendSystemMessage(`Pack generation failed: ${error instanceof Error ? error.message : String(error)}`);
@@ -562,6 +667,7 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
           planId,
           stepLabel: packState.nextStepSummary?.id ?? packState.currentPosition.nextRecommended
         });
+        await refreshAdvice(false);
         await appendSystemMessage(`Execution run finished. ${getPrimaryAgentAdapter().label} summary:\n${result}`);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -602,6 +708,7 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
             await appendSystemMessage(line);
           }
         });
+        await refreshAdvice(false);
         await appendSystemMessage(`Auto mode finished: ${result.summary}`);
       } catch (error) {
         await appendSystemMessage(`Auto mode failed: ${error instanceof Error ? error.message : String(error)}`);
@@ -616,48 +723,42 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
     await appendSystemMessage(`Unknown command: ${command}`);
   }
 
-  input.on("submit", async (value: string) => {
-    const text = value.trim();
-    input.clearValue();
+  input.on("click", () => {
+    input.focus();
+    screen.render();
+  });
 
-    if (!text || (busy && text !== "/stop")) {
+  input.on("keypress", async (ch: string, key: blessed.Widgets.Events.IKeyEventArg) => {
+    if (key.name === "pageup" || key.name === "ppage" || key.name === "pagedown" || key.name === "npage") {
+      return;
+    }
+
+    if (key.name === "enter" && !key.shift && !key.meta && !key.ctrl) {
+      await submitComposer();
+      return;
+    }
+
+    if ((key.name === "enter" && (key.shift || key.meta)) || (key.ctrl && key.name === "j")) {
+      composerValue += "\n";
+      renderComposer();
       screen.render();
       return;
     }
 
-    if (text.startsWith("/")) {
-      await handleSlashCommand(text);
-      input.focus();
+    if (key.name === "backspace") {
+      composerValue = removeLastCodePoint(composerValue);
+      renderComposer();
+      screen.render();
       return;
     }
 
-    startBusy("planner");
-    await appendMessage({
-      role: "user",
-      content: text
-    });
-    renderTranscript();
-    setSidebar();
-    setFooter();
-    screen.render();
+    if (key.ctrl || key.meta) {
+      return;
+    }
 
-    try {
-      const reply = await requestPlannerReply(workspace, messages, { planId });
-      await appendMessage({
-        role: "assistant",
-        content: reply
-      });
-    } catch (error) {
-      await appendMessage({
-        role: "system",
-        content: `Planner call failed: ${error instanceof Error ? error.message : String(error)}`
-      });
-    } finally {
-      stopBusy();
-      renderTranscript();
-      setSidebar();
-      setFooter();
-      input.focus();
+    if (ch && !/^[\x00-\x08\x0b-\x0c\x0e-\x1f\x7f]$/.test(ch)) {
+      composerValue += ch;
+      renderComposer();
       screen.render();
     }
   });
@@ -683,8 +784,10 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
   }
 
   renderTranscript();
+  renderComposer();
   setSidebar("booting...");
   setFooter(" Starting studio... ");
+  screen.program.hideCursor();
   screen.render();
   input.focus();
   await refreshEnvironment();
@@ -771,6 +874,20 @@ function formatAutoSummary(packState: PlanningPackState | null): string {
   if (packState.autoRun.stopReason) {
     lines.push(packState.autoRun.stopReason);
   }
+
+  return lines.join("\n");
+}
+
+function formatAdviceSummary(advice: PlanningAdviceState | null): string {
+  if (!advice) {
+    return "run /advice for AI guidance";
+  }
+
+  const lines = [
+    `problem: ${advice.problemStatement}`,
+    `clarity: ${advice.clarity}`,
+    `next: ${advice.nextAction}`
+  ];
 
   return lines.join("\n");
 }
@@ -955,37 +1072,8 @@ function deriveDisplayMode(packState: PlanningPackState): string {
   return packState.trackerReadable ? "Plan Written - Needs Step" : "Gathering Context";
 }
 
-function configureComposer(input: blessed.Widgets.TextareaElement): void {
-  const internals = input as blessed.Widgets.TextareaElement & {
-    _listener?: (ch: string, key: blessed.Widgets.Events.IKeyEventArg) => void;
-    _done?: (err: unknown, value: string | null) => void;
-    value?: string;
-  };
-  const originalListener = internals._listener;
-
-  if (!originalListener) {
-    return;
-  }
-
-  internals._listener = function patchedListener(ch: string, key: blessed.Widgets.Events.IKeyEventArg): void {
-    if (key.name === "enter" && !key.shift && !key.meta && !key.ctrl) {
-      if (typeof internals._done === "function") {
-        internals._done(null, internals.value ?? "");
-      }
-      return;
-    }
-
-    if ((key.name === "enter" && (key.shift || key.meta)) || (key.ctrl && key.name === "j")) {
-      originalListener.call(this, "\n", { ...key, name: "enter" });
-      return;
-    }
-
-    originalListener.call(this, ch, key);
-  };
-}
-
 function renderStatusMessage(workspace: string, packState: PlanningPackState): string {
-  return [
+  const lines = [
     `Plan: ${packState.planId}`,
     `Planning dir: ${getPlanningPackPaths(workspace, { planId: packState.planId }).relativeDir}`,
     `Mode: ${packState.mode}${packState.hasFailureOverlay ? " [last run failed]" : ""}`,
@@ -994,7 +1082,13 @@ function renderStatusMessage(workspace: string, packState: PlanningPackState): s
     `Execution activated: ${packState.executionActivated ? "yes" : "no"}`,
     `Auto mode: ${packState.autoRun?.status ?? "idle"}`,
     `Next step: ${packState.nextStepSummary?.id ?? packState.currentPosition.nextRecommended ?? "none queued"}`
-  ].join("\n");
+  ];
+
+  if (packState.advice) {
+    lines.push(`Advice next: ${packState.advice.nextAction}`);
+  }
+
+  return lines.join("\n");
 }
 
 function renderReadinessMessage(packState: PlanningPackState): string {
@@ -1010,6 +1104,21 @@ function renderReadinessMessage(packState: PlanningPackState): string {
       ? "Next: run `/write` to create or refresh the planning doc set."
       : "Next: keep gathering repo truth, constraints, and the first execution slice."
   ].join("\n");
+}
+
+function renderAdviceMessage(advice: PlanningAdviceState): string {
+  return [
+    `Problem: ${advice.problemStatement}`,
+    `Clarity: ${advice.clarity}`,
+    `Assessment: ${advice.stateAssessment}`,
+    `Research: ${advice.researchNeeded.length > 0 ? advice.researchNeeded.join(" | ") : "none"}`,
+    `Advice: ${advice.advice}`,
+    `Next: ${advice.nextAction}`
+  ].join("\n");
+}
+
+function removeLastCodePoint(value: string): string {
+  return Array.from(value).slice(0, -1).join("");
 }
 
 function renderPlanUsageMessage(currentPlanId: string, paths: PlanningPackPaths): string {

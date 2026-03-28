@@ -9,7 +9,7 @@ import {
 } from "../../src/core/agent";
 import type { ChatMessage } from "../../src/core/prompts";
 import { saveStoredActiveAgentId } from "../../src/core/studio-session";
-import { writeText } from "../../src/core/workspace";
+import { getPlanningPackPaths, writeText } from "../../src/core/workspace";
 import { captureStdout } from "../helpers/capture";
 import { createTempWorkspace, writePlanningPack } from "../helpers/workspace";
 
@@ -57,6 +57,25 @@ test("doctor reports all supported agents and the queued next step", async (t) =
 `
   );
 
+  await writeText(
+    getPlanningPackPaths(workspace).adviceState,
+    JSON.stringify(
+      {
+        version: 1,
+        planId: "default",
+        updatedAt: "2026-03-24T00:05:00.000Z",
+        problemStatement: "Summarize the queued execution work before running it.",
+        clarity: "mostly clear",
+        stateAssessment: "The execution target is visible, but validation expectations still need to be tightened.",
+        researchNeeded: ["confirm validation command", "confirm expected output surface"],
+        advice: "Tighten the acceptance language before the first execution handoff.",
+        nextAction: "Review EXEC001 acceptance and then run the step."
+      },
+      null,
+      2
+    )
+  );
+
   const output = await captureStdout(async () => {
     await runDoctorCommand(workspace);
   });
@@ -70,6 +89,10 @@ test("doctor reports all supported agents and the queued next step", async (t) =
   assert.match(output, /Plans:/);
   assert.match(output, /default \[active\]: \| path \.srgical \| mode Execution Active \| docs 4\/4 \| readiness 3\/4 \| execution started \| auto idle/);
   assert.match(output, /Next Step: EXEC001 \(Execution\)/);
+  assert.match(output, /AI advice: Summarize the queued execution work before running it\./);
+  assert.match(output, /Clarity: mostly clear/);
+  assert.match(output, /Research: confirm validation command, confirm expected output surface/);
+  assert.match(output, /Next: Review EXEC001 acceptance and then run the step\./);
   assert.match(output, /Next move: run `srgical run-next --plan <id>` for one step or `srgical run-next --plan <id> --auto` to continue automatically\./);
 });
 
@@ -120,6 +143,7 @@ test("doctor reports missing supported agents safely when no next step is queued
   assert.match(output, /Next Step: unavailable/);
   assert.match(output, /Tracker does not currently expose a next recommended step\./);
   assert.match(output, /Mode: Plan Written - Needs Step/);
+  assert.match(output, /AI advice: none cached yet \(run `\/advice` in studio to generate guidance\)\./);
   assert.match(output, /Next move: run `srgical studio` to queue or refine the next execution-ready step\./);
 });
 
@@ -136,6 +160,17 @@ function createFakeAdapter(options: {
     },
     async requestPlannerReply(_workspaceRoot: string, _messages: ChatMessage[]): Promise<string> {
       return `${options.id}-planner`;
+    },
+    async requestPlanningAdvice(): Promise<string> {
+      return JSON.stringify({
+        version: 1,
+        problemStatement: "fake",
+        clarity: "mostly clear",
+        stateAssessment: "fake",
+        researchNeeded: [],
+        advice: "fake",
+        nextAction: "fake"
+      });
     },
     async writePlanningPack(): Promise<string> {
       return `${options.id}-pack`;

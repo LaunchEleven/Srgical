@@ -122,6 +122,18 @@ function renderPlanDetailLines(state: Awaited<ReturnType<typeof readPlanningPack
     );
   }
 
+  if (state.advice) {
+    lines.push(
+      `AI advice: ${state.advice.problemStatement}`,
+      `  Clarity: ${state.advice.clarity}`,
+      `  Assessment: ${state.advice.stateAssessment}`,
+      `  Research: ${state.advice.researchNeeded.length > 0 ? state.advice.researchNeeded.join(", ") : "none"}`,
+      `  Next: ${state.advice.nextAction}`
+    );
+  } else {
+    lines.push("AI advice: none cached yet (run `/advice` in studio to generate guidance).");
+  }
+
   return lines;
 }
 

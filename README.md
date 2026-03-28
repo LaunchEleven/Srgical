@@ -31,7 +31,7 @@ This repo currently ships the foundation for:
   Prints the installed version with release-note links instead of only echoing the semver.
 - `srgical doctor`
   Reports the active plan, plan readiness, execution state, auto-run state, and which supported agents are available
-  locally.
+  locally, along with any cached AI advice for the selected plan.
 - `srgical about`
   Shows package details, release links, and the currently supported agent adapters.
 - `srgical changelog`
@@ -40,7 +40,8 @@ This repo currently ships the foundation for:
   Creates a local `.srgical/` planning pack from built-in templates, with `--plan <id>` for named plans.
 - `srgical studio`
   Opens a full-screen planning studio where you can switch between named plans, inspect readiness with `/readiness`,
-  inspect supported tools with `/agents`, and explicitly trigger pack writes, single-step execution, or `/auto`.
+  inspect supported tools with `/agents`, refresh AI guidance with `/advice`, and explicitly trigger pack writes,
+  single-step execution, or `/auto`.
 - `srgical run-next`
   Replays the generated next-agent prompt through the active agent, with `--plan <id>` for plan targeting,
   `--dry-run` for safe preview, `--agent <id>` for a one-run override, and `--auto` for bounded multi-step execution.
@@ -168,9 +169,18 @@ Inside the studio, the footer is intentionally minimal:
 - `PgUp/PgDn` scrolls the transcript
 - `/agents` chooses the current tool
 - `/help` shows the full command set
+- `/quit` exits the studio
 
 The composer is now multiline with a minimum two-line visible input area. `Enter` sends, while `Shift+Enter`,
 `Alt+Enter`, or `Ctrl+J` inserts a newline when the terminal exposes those keys distinctly.
+
+The studio can also ask the active agent for an AI assessment of the current planning state. Run `/advice` to cache a
+plain-English summary of:
+
+- the problem statement the agent believes you are solving,
+- whether the current plan state is clear or still fuzzy,
+- what research or repo truth still needs to be gathered,
+- and the best next move right now.
 
 ## Current Claude Caveat
 

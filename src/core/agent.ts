@@ -1,22 +1,26 @@
 import {
   detectAugment,
+  requestPlanningAdvice as requestAugmentPlanningAdvice,
   requestPlannerReply as requestAugmentPlannerReply,
   runNextPrompt as runAugmentNextPrompt,
   writePlanningPack as writeAugmentPlanningPack
 } from "./augment";
 import {
   detectClaude,
+  requestPlanningAdvice as requestClaudePlanningAdvice,
   requestPlannerReply as requestClaudePlannerReply,
   runNextPrompt as runClaudeNextPrompt,
   writePlanningPack as writeClaudePlanningPack
 } from "./claude";
 import {
   detectCodex,
+  requestPlanningAdvice as requestCodexPlanningAdvice,
   requestPlannerReply as requestCodexPlannerReply,
   runNextPrompt as runCodexNextPrompt,
   writePlanningPack as writeCodexPlanningPack
 } from "./codex";
 import type { ChatMessage } from "./prompts";
+import type { PlanningPackState } from "./planning-pack-state";
 import { loadStoredActiveAgentId, saveStoredActiveAgentId } from "./studio-session";
 import type { PlanningPathOptions } from "./workspace";
 
@@ -34,6 +38,12 @@ export type AgentAdapter = {
   label: string;
   detectStatus(): Promise<AgentStatus>;
   requestPlannerReply(workspaceRoot: string, messages: ChatMessage[], options?: PlanningPathOptions): Promise<string>;
+  requestPlanningAdvice(
+    workspaceRoot: string,
+    messages: ChatMessage[],
+    packState: PlanningPackState,
+    options?: PlanningPathOptions
+  ): Promise<string>;
   writePlanningPack(workspaceRoot: string, messages: ChatMessage[], options?: PlanningPathOptions): Promise<string>;
   runNextPrompt(workspaceRoot: string, prompt: string, options?: PlanningPathOptions): Promise<string>;
 };
@@ -59,6 +69,7 @@ const codexAdapter: AgentAdapter = {
     };
   },
   requestPlannerReply: requestCodexPlannerReply,
+  requestPlanningAdvice: requestCodexPlanningAdvice,
   writePlanningPack: writeCodexPlanningPack,
   runNextPrompt: runCodexNextPrompt
 };
@@ -78,6 +89,7 @@ const claudeAdapter: AgentAdapter = {
     };
   },
   requestPlannerReply: requestClaudePlannerReply,
+  requestPlanningAdvice: requestClaudePlanningAdvice,
   writePlanningPack: writeClaudePlanningPack,
   runNextPrompt: runClaudeNextPrompt
 };
@@ -97,6 +109,7 @@ const augmentAdapter: AgentAdapter = {
     };
   },
   requestPlannerReply: requestAugmentPlannerReply,
+  requestPlanningAdvice: requestAugmentPlanningAdvice,
   writePlanningPack: writeAugmentPlanningPack,
   runNextPrompt: runAugmentNextPrompt
 };
@@ -188,6 +201,16 @@ export async function writePlanningPack(
 ): Promise<string> {
   const { adapter } = await resolvePrimaryAgent(workspaceRoot, options);
   return adapter.writePlanningPack(workspaceRoot, messages, options);
+}
+
+export async function requestPlanningAdvice(
+  workspaceRoot: string,
+  messages: ChatMessage[],
+  packState: PlanningPackState,
+  options: PlanningPathOptions = {}
+): Promise<string> {
+  const { adapter } = await resolvePrimaryAgent(workspaceRoot, options);
+  return adapter.requestPlanningAdvice(workspaceRoot, messages, packState, options);
 }
 
 export async function runNextPrompt(

@@ -1,3 +1,4 @@
+import { loadPlanningAdviceState, type PlanningAdviceState } from "./advice-state";
 import { loadAutoRunState, type AutoRunState } from "./auto-run-state";
 import { loadExecutionState, type ExecutionState } from "./execution-state";
 import { inferLegacyPackMode, loadPlanningState, type PlanningPackMode, type PlanningStateFile } from "./planning-state";
@@ -55,6 +56,7 @@ export type PlanningPackState = {
   planningState: PlanningStateFile | null;
   packMode: PlanningPackMode;
   readiness: PlanningReadiness;
+  advice: PlanningAdviceState | null;
   autoRun: AutoRunState | null;
   executionActivated: boolean;
   mode: PlanningMode;
@@ -82,9 +84,10 @@ export async function readPlanningPackState(
     }
   }
 
-  const [lastExecution, planningState, autoRun, docsPresent, studioSession] = await Promise.all([
+  const [lastExecution, planningState, advice, autoRun, docsPresent, studioSession] = await Promise.all([
     loadExecutionState(workspaceRoot, options),
     loadPlanningState(workspaceRoot, options),
+    loadPlanningAdviceState(workspaceRoot, options),
     loadAutoRunState(workspaceRoot, options),
     countPresentDocs(paths),
     loadStudioSessionState(workspaceRoot, options)
@@ -118,6 +121,7 @@ export async function readPlanningPackState(
     planningState,
     packMode,
     readiness,
+    advice,
     autoRun,
     executionActivated,
     mode,

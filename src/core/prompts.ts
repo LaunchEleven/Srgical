@@ -1,5 +1,6 @@
 import { readdir } from "node:fs/promises";
 import path from "node:path";
+import type { PlanningPackState } from "./planning-pack-state";
 import { fileExists, getPlanningPackPaths, readText, type PlanningPathOptions } from "./workspace";
 
 export type ChatMessage = {
@@ -82,6 +83,53 @@ ${renderTranscript(messages)}
 `;
 }
 
+export async function buildAdvicePrompt(
+  messages: ChatMessage[],
+  workspaceRoot: string,
+  packState: PlanningPackState,
+  options: PlanningPathOptions = {}
+): Promise<string> {
+  const repoTruth = await buildRepoTruthSnapshot(workspaceRoot, options);
+
+  return `You are the planning advisor inside srgical.
+
+Your job is to assess the current planning state and return only a single JSON object.
+
+Assess the user's current problem statement, whether the repo/project state is clear enough yet, whether more research is needed, and what the best next move is.
+
+Rules:
+- Be specific to the current repository and transcript.
+- Do not invent repo facts that are not supported by the transcript or repo truth snapshot.
+- Prefer concise, practical advice over generic coaching.
+- If the plan is still fuzzy, say so plainly.
+- If more repo research is needed, name the missing area directly.
+- Return valid JSON only. No markdown fences. No prose before or after the JSON.
+
+Required JSON shape:
+{
+  "version": 1,
+  "problemStatement": "string",
+  "clarity": "clear" | "mostly clear" | "still fuzzy",
+  "stateAssessment": "one short sentence",
+  "researchNeeded": ["string", "string"],
+  "advice": "one short paragraph",
+  "nextAction": "one concrete next move"
+}
+
+Current deterministic planning state:
+
+${renderPlanningStateSummary(packState)}
+
+Repo truth snapshot:
+
+${repoTruth}
+
+Conversation transcript:
+
+${renderTranscript(messages)}
+`;
+}
+
 async function buildRepoTruthSnapshot(workspaceRoot: string, options: PlanningPathOptions = {}): Promise<string> {
   const paths = getPlanningPackPaths(workspaceRoot, options);
   const [
@@ -140,6 +188,24 @@ async function buildRepoTruthSnapshot(workspaceRoot: string, options: PlanningPa
     renderNamedSnippet(".srgical/03-detailed-implementation-plan.md", trackerSnippet),
     "",
     renderNamedSnippet(".srgical/04-next-agent-prompt.md", nextPromptSnippet)
+  ].join("\n");
+}
+
+function renderPlanningStateSummary(packState: PlanningPackState): string {
+  return [
+    `- planId: ${packState.planId}`,
+    `- packDir: ${packState.packDir}`,
+    `- packPresent: ${packState.packPresent}`,
+    `- packMode: ${packState.packMode}`,
+    `- mode: ${packState.mode}`,
+    `- docsPresent: ${packState.docsPresent}/4`,
+    `- readiness: ${packState.readiness.score}/${packState.readiness.total}`,
+    `- readinessReadyToWrite: ${packState.readiness.readyToWrite}`,
+    `- missingReadinessSignals: ${packState.readiness.missingLabels.join(", ") || "none"}`,
+    `- nextRecommended: ${packState.currentPosition.nextRecommended ?? "none queued"}`,
+    `- nextStepId: ${packState.nextStepSummary?.id ?? "none"}`,
+    `- executionActivated: ${packState.executionActivated}`,
+    `- autoRunStatus: ${packState.autoRun?.status ?? "idle"}`
   ].join("\n");
 }
 

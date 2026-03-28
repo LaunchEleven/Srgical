@@ -19,6 +19,7 @@ const ARCHIVED_PACK_FILE_NAMES = [
   "studio-session.json",
   "planning-state.json",
   "auto-run-state.json",
+  "advice-state.json",
   "execution-state.json",
   "execution-log.md"
 ];
@@ -93,6 +94,7 @@ async function resetActivePlanningPack(paths: PlanningPackPaths): Promise<void> 
 
   await Promise.all([
     rm(paths.autoRunState, { force: true }),
+    rm(paths.adviceState, { force: true }),
     rm(paths.executionState, { force: true }),
     rm(paths.executionLog, { force: true })
   ]);
@@ -107,6 +109,7 @@ function listArchivablePaths(paths: PlanningPackPaths): string[] {
     paths.studioSession,
     paths.planningState,
     paths.autoRunState,
+    paths.adviceState,
     paths.executionState,
     paths.executionLog
   ];
