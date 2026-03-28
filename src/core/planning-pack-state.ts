@@ -173,6 +173,9 @@ function buildReadiness(messages: { role: "user" | "assistant" | "system"; conte
       message.role === "assistant" &&
       !DEFAULT_STUDIO_MESSAGES.some((defaultMessage) => defaultMessage.content === message.content)
   );
+  const substantiveUserMessages = userMessages.filter((message) => message.content.trim().length >= 48);
+  const substantiveAssistantMessages = assistantMessages.filter((message) => message.content.trim().length >= 80);
+  const userTranscript = userMessages.map((message) => message.content.toLowerCase()).join("\n");
   const transcript = meaningfulMessages.map((message) => message.content.toLowerCase()).join("\n");
   const checks: PlanningReadinessCheck[] = [
     {
@@ -199,14 +202,27 @@ function buildReadiness(messages: { role: "user" | "assistant" | "system"; conte
   ];
 
   const score = checks.filter((check) => check.passed).length;
-  const readyToWrite = score >= 3 && userMessages.length > 0 && assistantMessages.length > 0;
+  const commitmentCaptured =
+    /(^|\b)(yes|agreed|approved|go with that|use that|let'?s do that|write (it|that|the pack)|capture that|lock it in|sounds right|that seam works)\b/.test(
+      userTranscript
+    );
+  const readyToWrite =
+    score === checks.length &&
+    substantiveUserMessages.length >= 2 &&
+    substantiveAssistantMessages.length >= 2 &&
+    commitmentCaptured;
+  const missingLabels = checks.filter((check) => !check.passed).map((check) => check.label);
+
+  if (!commitmentCaptured) {
+    missingLabels.push("Explicit go-ahead captured");
+  }
 
   return {
     checks,
     score,
     total: checks.length,
     readyToWrite,
-    missingLabels: checks.filter((check) => !check.passed).map((check) => check.label)
+    missingLabels
   };
 }
 
