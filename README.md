@@ -27,9 +27,15 @@ plan. It creates momentum:
 
 This repo currently ships the foundation for:
 
+- `srgical --version`
+  Prints the installed version with release-note links instead of only echoing the semver.
 - `srgical doctor`
   Reports whether the current workspace has a planning pack, which supported agent is active, and which supported
   agents are available locally.
+- `srgical about`
+  Shows package details, release links, and the currently supported agent adapters.
+- `srgical changelog`
+  Points straight at the installed version's release notes and the local packaged changelog.
 - `srgical init`
   Creates a local `.srgical/` planning pack from built-in templates.
 - `srgical studio`
@@ -138,7 +144,10 @@ npm run dev -- studio
 Typical flow once a workspace has a pack:
 
 ```bash
+node dist/index.js --version
+node dist/index.js about
 node dist/index.js doctor
+node dist/index.js changelog
 node dist/index.js run-next --dry-run
 node dist/index.js run-next
 ```

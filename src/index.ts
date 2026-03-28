@@ -1,20 +1,48 @@
 #!/usr/bin/env node
 
-import { readFileSync } from "node:fs";
-import path from "node:path";
 import { Command } from "commander";
+import { runAboutCommand } from "./commands/about";
+import { runChangelogCommand } from "./commands/changelog";
 import { runDoctorCommand } from "./commands/doctor";
 import { runInitCommand } from "./commands/init";
 import { runRunNextCommand } from "./commands/run-next";
 import { runStudioCommand } from "./commands/studio";
+import { runVersionCommand } from "./commands/version";
+import { readInstalledPackageInfo } from "./core/package-info";
 
 const program = new Command();
-const packageVersion = readPackageVersion();
+const packageInfo = readInstalledPackageInfo();
+
+if (isStandaloneVersionRequest(process.argv.slice(2))) {
+  runVersionCommand();
+  process.exit(0);
+}
 
 program
   .name("srgical")
   .description("Local-first AI planning and execution orchestration.")
-  .version(packageVersion);
+  .version(packageInfo.version, "-V, --version", "Show installed version and release info.");
+
+program
+  .command("version")
+  .description("Show installed version and release info.")
+  .action(() => {
+    runVersionCommand();
+  });
+
+program
+  .command("about")
+  .description("Show package, release, and supported-agent information.")
+  .action(() => {
+    runAboutCommand();
+  });
+
+program
+  .command("changelog")
+  .description("Show where to find upgrade notes for the installed version.")
+  .action(() => {
+    runChangelogCommand();
+  });
 
 program
   .command("doctor")
@@ -57,8 +85,6 @@ program.parseAsync(process.argv).catch((error: unknown) => {
   process.exitCode = 1;
 });
 
-function readPackageVersion(): string {
-  const packageJsonPath = path.resolve(__dirname, "..", "package.json");
-  const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf8")) as { version?: string };
-  return packageJson.version ?? "0.0.0";
+function isStandaloneVersionRequest(args: string[]): boolean {
+  return args.length === 1 && (args[0] === "--version" || args[0] === "-V");
 }
