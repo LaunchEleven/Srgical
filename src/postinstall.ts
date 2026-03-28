@@ -1,8 +1,14 @@
 import process from "node:process";
 import { readInstalledPackageInfo } from "./core/package-info";
 
-if (require.main === module && shouldRenderPostinstallMessage(process.env, process.stdout.isTTY === true)) {
-  process.stdout.write(`${renderPostinstallMessage()}\n`);
+if (require.main === module) {
+  runPostinstall();
+}
+
+export function runPostinstall(): void {
+  if (shouldRenderPostinstallMessage(process.env, process.stdout.isTTY === true)) {
+    process.stdout.write(`${renderPostinstallMessage()}\n`);
+  }
 }
 
 export function renderPostinstallMessage(): string {

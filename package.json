@@ -6,6 +6,7 @@
     "dist",
     "README.md",
     "CHANGELOG.md",
+    "postinstall.js",
     "docs",
     "LICENSE"
   ],
@@ -16,7 +17,7 @@
     "build": "tsc -p tsconfig.json",
     "dev": "tsx src/index.ts",
     "start": "node dist/index.js",
-    "postinstall": "node dist/postinstall.js",
+    "postinstall": "node postinstall.js",
     "doctor": "tsx src/index.ts doctor",
     "test": "tsx --test test/**/*.test.ts",
     "test:coverage": "tsx --test --experimental-test-coverage test/**/*.test.ts",
