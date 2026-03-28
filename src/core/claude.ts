@@ -9,6 +9,7 @@ import {
   type PlanningEpochPreparation
 } from "./planning-epochs";
 import { buildPackWriterPrompt, buildPlannerPrompt, type ChatMessage } from "./prompts";
+import type { PlanningPathOptions } from "./workspace";
 
 export type ClaudeStatus = {
   available: boolean;
@@ -72,7 +73,11 @@ export async function detectClaude(): Promise<ClaudeStatus> {
   }
 }
 
-export async function requestPlannerReply(workspaceRoot: string, messages: ChatMessage[]): Promise<string> {
+export async function requestPlannerReply(
+  workspaceRoot: string,
+  messages: ChatMessage[],
+  _options: PlanningPathOptions = {}
+): Promise<string> {
   const result = await runClaudeExec({
     cwd: workspaceRoot,
     prompt: buildPlannerPrompt(messages, workspaceRoot),
@@ -83,8 +88,12 @@ export async function requestPlannerReply(workspaceRoot: string, messages: ChatM
   return result.lastMessage.trim();
 }
 
-export async function writePlanningPack(workspaceRoot: string, messages: ChatMessage[]): Promise<string> {
-  const planningEpoch = await preparePlanningPackForWrite(workspaceRoot);
+export async function writePlanningPack(
+  workspaceRoot: string,
+  messages: ChatMessage[],
+  options: PlanningPathOptions = {}
+): Promise<string> {
+  const planningEpoch = await preparePlanningPackForWrite(workspaceRoot, options);
   const claudeStatus = await detectClaude();
 
   if (!claudeStatus.available) {
@@ -94,7 +103,8 @@ export async function writePlanningPack(workspaceRoot: string, messages: ChatMes
         workspaceRoot,
         messages,
         claudeStatus.error ?? "Claude Code CLI is unavailable",
-        "Claude Code"
+        "Claude Code",
+        options
       )
     );
   }
@@ -102,7 +112,7 @@ export async function writePlanningPack(workspaceRoot: string, messages: ChatMes
   try {
     const result = await runClaudeExec({
       cwd: workspaceRoot,
-      prompt: await buildPackWriterPrompt(messages, workspaceRoot),
+      prompt: await buildPackWriterPrompt(messages, workspaceRoot, options),
       permissionMode: "acceptEdits",
       allowedTools: CLAUDE_WRITE_ALLOW_TOOLS,
       maxTurns: 24
@@ -114,7 +124,7 @@ export async function writePlanningPack(workspaceRoot: string, messages: ChatMes
       const message = error instanceof Error ? error.message : "Claude Code CLI is unavailable";
       return appendPlanningEpochSummary(
         planningEpoch,
-        await writePlanningPackFallback(workspaceRoot, messages, message, "Claude Code")
+        await writePlanningPackFallback(workspaceRoot, messages, message, "Claude Code", options)
       );
     }
 
@@ -129,7 +139,11 @@ export async function writePlanningPack(workspaceRoot: string, messages: ChatMes
   }
 }
 
-export async function runNextPrompt(workspaceRoot: string, prompt: string): Promise<string> {
+export async function runNextPrompt(
+  workspaceRoot: string,
+  prompt: string,
+  _options: PlanningPathOptions = {}
+): Promise<string> {
   const result = await runClaudeExec({
     cwd: workspaceRoot,
     prompt,

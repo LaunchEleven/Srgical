@@ -7,9 +7,10 @@ import {
   type AgentAdapter,
   type AgentStatus
 } from "../../src/core/agent";
+import { loadAutoRunState } from "../../src/core/auto-run-state";
 import type { ChatMessage } from "../../src/core/prompts";
 import { loadStoredActiveAgentId, saveStoredActiveAgentId } from "../../src/core/studio-session";
-import { writeText } from "../../src/core/workspace";
+import { getPlanningPackPaths, readText, writeText } from "../../src/core/workspace";
 import { captureStdout } from "../helpers/capture";
 import { createTempWorkspace, writePlanningPack } from "../helpers/workspace";
 
@@ -263,6 +264,99 @@ test("run-next --dry-run fails clearly when the override agent is unavailable an
     /Cannot use Claude Code for this run: missing claude\./
   );
   assert.equal(await saveAndReloadStoredAgent(workspace), "codex");
+});
+
+test("run-next --auto advances through queued execution steps and records completion", async (t) => {
+  const workspace = await createTempWorkspace("srgical-run-next-auto-");
+  const paths = await writePlanningPack(workspace);
+
+  await writeText(
+    paths.tracker,
+    `# Detailed Implementation Plan
+
+## Current Position
+
+- Last Completed: \`PLAN-001\`
+- Next Recommended: \`EXEC-001\`
+- Updated At: \`2026-03-24T00:00:00.000Z\`
+- Updated By: \`Codex\`
+
+## Delivery
+
+| ID | Status | Depends On | Scope | Acceptance | Notes |
+| --- | --- | --- | --- | --- | --- |
+| EXEC-001 | pending | PLAN-001 | Execute the first slice. | The first slice lands. | Pending first slice. |
+| EXEC-002 | pending | EXEC-001 | Execute the second slice. | The second slice lands. | Pending second slice. |
+`
+  );
+
+  setAgentAdaptersForTesting([
+    createFakeAdapter({
+      id: "codex",
+      label: "Codex",
+      status: availableStatus("codex", "Codex"),
+      onRunNextPrompt: async (workspaceRoot: string) => {
+        const planPaths = getPlanningPackPaths(workspaceRoot);
+        const tracker = await readText(planPaths.tracker);
+
+        if (tracker.includes("- Next Recommended: `EXEC-001`")) {
+          await writeText(
+            planPaths.tracker,
+            `# Detailed Implementation Plan
+
+## Current Position
+
+- Last Completed: \`EXEC-001\`
+- Next Recommended: \`EXEC-002\`
+- Updated At: \`2026-03-24T00:01:00.000Z\`
+- Updated By: \`Codex\`
+
+## Delivery
+
+| ID | Status | Depends On | Scope | Acceptance | Notes |
+| --- | --- | --- | --- | --- | --- |
+| EXEC-001 | done | PLAN-001 | Execute the first slice. | The first slice lands. | Completed. |
+| EXEC-002 | pending | EXEC-001 | Execute the second slice. | The second slice lands. | Pending second slice. |
+`
+          );
+          return "completed exec-001";
+        }
+
+        await writeText(
+          planPaths.tracker,
+          `# Detailed Implementation Plan
+
+## Current Position
+
+- Last Completed: \`EXEC-002\`
+- Next Recommended: none queued
+- Updated At: \`2026-03-24T00:02:00.000Z\`
+- Updated By: \`Codex\`
+
+## Delivery
+
+| ID | Status | Depends On | Scope | Acceptance | Notes |
+| --- | --- | --- | --- | --- | --- |
+| EXEC-001 | done | PLAN-001 | Execute the first slice. | The first slice lands. | Completed. |
+| EXEC-002 | done | EXEC-001 | Execute the second slice. | The second slice lands. | Completed. |
+`
+        );
+        return "completed exec-002";
+      }
+    })
+  ]);
+  t.after(resetAgentAdaptersForTesting);
+
+  const output = await captureStdout(async () => {
+    await runRunNextCommand(workspace, { auto: true, maxSteps: 5 });
+  });
+
+  const autoRunState = await loadAutoRunState(workspace);
+
+  assert.match(output, /Auto mode started for plan `default` with max 5 steps\./);
+  assert.match(output, /Auto mode completed because no next recommended step remains\./);
+  assert.equal(autoRunState?.status, "completed");
+  assert.equal(autoRunState?.stepsAttempted, 2);
 });
 
 function createFakeAdapter(options: {

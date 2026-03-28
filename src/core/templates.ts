@@ -51,7 +51,9 @@ Define and ship a local-first CLI that helps a user:
 `;
 }
 
-export function buildContextTemplate(): string {
+export function buildContextTemplate(paths: PlanningPackPaths): string {
+  const planDir = `\`${paths.relativeDir}/\``;
+
   return `# Agent Context Kickoff
 
 Updated: ${new Date().toISOString()}
@@ -59,7 +61,7 @@ Updated By: srgical
 
 ## Mission
 
-Continue the current project from the planning pack in \`.srgical/\`. Read the stable plan, the tracker, and the next
+Continue the current project from the planning pack in ${planDir}. Read the stable plan, the tracker, and the next
 agent prompt before making changes.
 
 ## Working Agreements
@@ -81,6 +83,7 @@ agent prompt before making changes.
 ### ${new Date().toISOString().slice(0, 10)} - BOOT-001 - srgical
 
 - Created the initial \`.srgical/\` planning pack.
+- Active planning directory: \`${paths.relativeDir}\`.
 - Validation: confirmed the four planning-pack files were written.
 - Blockers: none.
 - Next recommended work: \`PLAN-001\`.
@@ -135,7 +138,9 @@ Updated By: srgical
 `;
 }
 
-export function buildNextPromptTemplate(): string {
+export function buildNextPromptTemplate(paths: PlanningPackPaths): string {
+  const planDir = paths.relativeDir;
+
   return `# Next Agent Prompt
 
 You are continuing the current project from the existing repo state. Do not restart product design or casually rewrite
@@ -143,9 +148,9 @@ the whole codebase.
 
 ## Read Order
 
-1. Read \`.srgical/02-agent-context-kickoff.md\`.
-2. Read \`.srgical/01-product-plan.md\`.
-3. Read \`.srgical/03-detailed-implementation-plan.md\`.
+1. Read \`${planDir}/02-agent-context-kickoff.md\`.
+2. Read \`${planDir}/01-product-plan.md\`.
+3. Read \`${planDir}/03-detailed-implementation-plan.md\`.
 4. Execute only the next eligible step block.
 
 ## What To Determine Before Editing
@@ -164,10 +169,10 @@ the whole codebase.
 
 ## Required Updates After Execution
 
-1. Update \`.srgical/03-detailed-implementation-plan.md\`.
+1. Update \`${planDir}/03-detailed-implementation-plan.md\`.
 2. Mark finished steps \`done\` only if validation passed.
 3. Update the \`Current Position\` section.
-4. Append a dated handoff entry to \`.srgical/02-agent-context-kickoff.md\`.
+4. Append a dated handoff entry to \`${planDir}/02-agent-context-kickoff.md\`.
 
 ## Stop Conditions
 
@@ -180,8 +185,8 @@ the whole codebase.
 export function getInitialTemplates(paths: PlanningPackPaths): Record<string, string> {
   return {
     [paths.plan]: buildPlanTemplate(paths.root),
-    [paths.context]: buildContextTemplate(),
+    [paths.context]: buildContextTemplate(paths),
     [paths.tracker]: buildTrackerTemplate(),
-    [paths.nextPrompt]: buildNextPromptTemplate()
+    [paths.nextPrompt]: buildNextPromptTemplate(paths)
   };
 }

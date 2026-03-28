@@ -1,5 +1,5 @@
 import { appendFile } from "node:fs/promises";
-import { ensurePlanningDir, fileExists, getPlanningPackPaths, readText, writeText } from "./workspace";
+import { ensurePlanningDir, fileExists, getPlanningPackPaths, readText, writeText, type PlanningPathOptions } from "./workspace";
 
 export type ExecutionOutcomeStatus = "success" | "failure";
 export type ExecutionOutcomeSource = "studio" | "run-next";
@@ -16,8 +16,11 @@ export type ExecutionLogOptions = {
   stepLabel?: string | null;
 };
 
-export async function loadExecutionState(workspaceRoot: string): Promise<ExecutionState | null> {
-  const paths = getPlanningPackPaths(workspaceRoot);
+export async function loadExecutionState(
+  workspaceRoot: string,
+  options: PlanningPathOptions = {}
+): Promise<ExecutionState | null> {
+  const paths = getPlanningPackPaths(workspaceRoot, options);
   const exists = await fileExists(paths.executionState);
 
   if (!exists) {
@@ -54,9 +57,10 @@ export async function saveExecutionState(
   workspaceRoot: string,
   status: ExecutionOutcomeStatus,
   source: ExecutionOutcomeSource,
-  summary: string
+  summary: string,
+  options: PlanningPathOptions = {}
 ): Promise<void> {
-  const paths = await ensurePlanningDir(workspaceRoot);
+  const paths = await ensurePlanningDir(workspaceRoot, options);
   const payload: ExecutionState = {
     version: 1,
     updatedAt: new Date().toISOString(),
@@ -73,9 +77,9 @@ export async function appendExecutionLog(
   status: ExecutionOutcomeStatus,
   source: ExecutionOutcomeSource,
   summary: string,
-  options: ExecutionLogOptions = {}
+  options: ExecutionLogOptions & PlanningPathOptions = {}
 ): Promise<void> {
-  const paths = await ensurePlanningDir(workspaceRoot);
+  const paths = await ensurePlanningDir(workspaceRoot, options);
   const entry = buildExecutionLogEntry(status, source, summary, options);
   const exists = await fileExists(paths.executionLog);
 

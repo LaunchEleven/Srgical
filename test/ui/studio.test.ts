@@ -13,13 +13,14 @@ test("format-planning-pack-summary makes an unwritten plan obvious", () => {
   const workspace = "G:\\code\\Launch11Projects\\demo";
   const state = createPackState({
     packPresent: false,
-    trackerReadable: false
+    trackerReadable: false,
+    mode: "No Pack"
   });
 
-  assert.match(formatPlanningPackSummary(workspace, state), /state: not written yet/);
-  assert.match(formatPlanningPackSummary(workspace, state), /next: \/write will put the plan on disk/);
-  assert.match(renderWorkspaceSelectionMessage(workspace, state), /plan status: not written yet/);
-  assert.match(buildStudioHeaderContent(workspace, state), /PLAN NOT WRITTEN/);
+  assert.match(formatPlanningPackSummary(workspace, state), /state: no pack/);
+  assert.match(formatPlanningPackSummary(workspace, state), /next: \/plan new <id> or \/write to create the planning doc set/);
+  assert.match(renderWorkspaceSelectionMessage(workspace, state), /plan status: no pack/);
+  assert.match(buildStudioHeaderContent(workspace, state), /PLAN DEFAULT \| NO PACK/);
 });
 
 test("format-planning-pack-summary makes a written plan obvious", () => {
@@ -27,12 +28,13 @@ test("format-planning-pack-summary makes a written plan obvious", () => {
   const state = createPackState({
     packPresent: true,
     trackerReadable: true,
-    nextRecommended: "EXEC001"
+    nextRecommended: "EXEC001",
+    mode: "Execution Active"
   });
 
-  assert.match(formatPlanningPackSummary(workspace, state), /state: written to disk/);
-  assert.match(formatPlanningPackSummary(workspace, state), /next: \/preview or \/run when ready/);
-  assert.match(buildStudioHeaderContent(workspace, state), /PLAN WRITTEN/);
+  assert.match(formatPlanningPackSummary(workspace, state), /state: execution active/);
+  assert.match(formatPlanningPackSummary(workspace, state), /next: \/preview, \/run, or \/auto when ready/);
+  assert.match(buildStudioHeaderContent(workspace, state), /PLAN DEFAULT \| EXECUTION ACTIVE/);
 });
 
 test("format-tracker-summary shows none queued instead of unknown", () => {
@@ -61,10 +63,14 @@ function createPackState(options: {
   packPresent: boolean;
   trackerReadable: boolean;
   nextRecommended?: string | null;
+  mode?: PlanningPackState["mode"];
 }): PlanningPackState {
   return {
+    planId: "default",
+    packDir: ".srgical",
     packPresent: options.packPresent,
     trackerReadable: options.trackerReadable,
+    docsPresent: options.packPresent ? 4 : 0,
     currentPosition: {
       lastCompleted: options.packPresent ? "DOC002" : null,
       nextRecommended: options.nextRecommended ?? null,
@@ -81,6 +87,19 @@ function createPackState(options: {
           phase: "Phase 6"
         }
       : null,
-    lastExecution: null
+    lastExecution: null,
+    planningState: null,
+    packMode: options.packPresent ? "authored" : "scaffolded",
+    readiness: {
+      checks: [],
+      score: options.packPresent ? 3 : 0,
+      total: 4,
+      readyToWrite: false,
+      missingLabels: []
+    },
+    autoRun: null,
+    executionActivated: Boolean(options.nextRecommended),
+    mode: options.mode ?? (options.packPresent ? "Plan Written - Needs Step" : "No Pack"),
+    hasFailureOverlay: false
   };
 }

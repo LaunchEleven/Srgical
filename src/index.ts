@@ -48,8 +48,9 @@ program
   .command("doctor")
   .description("Inspect the workspace and local agent availability.")
   .argument("[workspace]", "Workspace path")
-  .action(async (workspace) => {
-    await runDoctorCommand(workspace);
+  .option("--plan <id>", "Planning pack id to inspect")
+  .action(async (workspace, options: { plan?: string }) => {
+    await runDoctorCommand(workspace, { planId: options.plan });
   });
 
 program
@@ -57,16 +58,18 @@ program
   .description("Create a local .srgical planning pack scaffold.")
   .argument("[workspace]", "Workspace path")
   .option("-f, --force", "Overwrite an existing planning pack")
-  .action(async (workspace, options: { force?: boolean }) => {
-    await runInitCommand(workspace, Boolean(options.force));
+  .option("--plan <id>", "Named planning pack id to create or overwrite")
+  .action(async (workspace, options: { force?: boolean; plan?: string }) => {
+    await runInitCommand(workspace, Boolean(options.force), options.plan);
   });
 
 program
   .command("studio")
   .description("Open the planning studio.")
   .argument("[workspace]", "Workspace path")
-  .action(async (workspace) => {
-    await runStudioCommand(workspace);
+  .option("--plan <id>", "Planning pack id to open")
+  .action(async (workspace, options: { plan?: string }) => {
+    await runStudioCommand(workspace, { planId: options.plan });
   });
 
 program
@@ -75,8 +78,17 @@ program
   .argument("[workspace]", "Workspace path")
   .option("--dry-run", "Preview the current execution prompt without invoking the active agent")
   .option("--agent <id>", "Temporarily override the active agent for this run only")
-  .action(async (workspace, options: { dryRun?: boolean; agent?: string }) => {
-    await runRunNextCommand(workspace, { dryRun: Boolean(options.dryRun), agent: options.agent });
+  .option("--plan <id>", "Planning pack id to execute")
+  .option("--auto", "Continue executing eligible execution steps until a stop condition is reached")
+  .option("--max-steps <n>", "Maximum number of auto iterations to attempt", Number)
+  .action(async (workspace, options: { dryRun?: boolean; agent?: string; plan?: string; auto?: boolean; maxSteps?: number }) => {
+    await runRunNextCommand(workspace, {
+      dryRun: Boolean(options.dryRun),
+      agent: options.agent,
+      planId: options.plan,
+      auto: Boolean(options.auto),
+      maxSteps: options.maxSteps
+    });
   });
 
 program.parseAsync(process.argv).catch((error: unknown) => {

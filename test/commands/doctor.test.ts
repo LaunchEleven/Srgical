@@ -61,14 +61,16 @@ test("doctor reports all supported agents and the queued next step", async (t) =
     await runDoctorCommand(workspace);
   });
 
-  assert.match(output, /Planning pack: present/);
+  assert.match(output, /Active plan: default/);
   assert.match(output, /Active agent: Claude Code \(claude\) - available \(1\.2\.3\)/);
   assert.match(output, /Supported agents:/);
   assert.match(output, /- Codex \(codex\): available \(0\.113\.0\) via codex\.cmd/);
   assert.match(output, /- Claude Code \(claude\) \[active\]: available \(1\.2\.3\) via claude\.cmd/);
   assert.match(output, /- Augment CLI \(augment\): available \(2\.0\.0\) via augment\.cmd/);
+  assert.match(output, /Plans:/);
+  assert.match(output, /default \[active\]: \| path \.srgical \| mode Execution Active \| docs 4\/4 \| readiness 3\/4 \| execution started \| auto idle/);
   assert.match(output, /Next Step: EXEC001 \(Execution\)/);
-  assert.match(output, /Next move: run `srgical studio` to refine the plan or `srgical run-next` to execute the next step\./);
+  assert.match(output, /Next move: run `srgical run-next --plan <id>` for one step or `srgical run-next --plan <id> --auto` to continue automatically\./);
 });
 
 test("doctor reports missing supported agents safely when no next step is queued", async (t) => {
@@ -117,7 +119,8 @@ test("doctor reports missing supported agents safely when no next step is queued
   assert.match(output, /- Augment CLI \(augment\): missing \(missing augment\) via augment\.cmd/);
   assert.match(output, /Next Step: unavailable/);
   assert.match(output, /Tracker does not currently expose a next recommended step\./);
-  assert.match(output, /Next move: run `srgical studio` to queue more work or update the tracker with a new recommended step\./);
+  assert.match(output, /Mode: Plan Written - Needs Step/);
+  assert.match(output, /Next move: run `srgical studio` to queue or refine the next execution-ready step\./);
 });
 
 function createFakeAdapter(options: {

@@ -18,6 +18,7 @@ import {
 } from "./codex";
 import type { ChatMessage } from "./prompts";
 import { loadStoredActiveAgentId, saveStoredActiveAgentId } from "./studio-session";
+import type { PlanningPathOptions } from "./workspace";
 
 export type AgentStatus = {
   id: string;
@@ -32,9 +33,9 @@ export type AgentAdapter = {
   id: string;
   label: string;
   detectStatus(): Promise<AgentStatus>;
-  requestPlannerReply(workspaceRoot: string, messages: ChatMessage[]): Promise<string>;
-  writePlanningPack(workspaceRoot: string, messages: ChatMessage[]): Promise<string>;
-  runNextPrompt(workspaceRoot: string, prompt: string): Promise<string>;
+  requestPlannerReply(workspaceRoot: string, messages: ChatMessage[], options?: PlanningPathOptions): Promise<string>;
+  writePlanningPack(workspaceRoot: string, messages: ChatMessage[], options?: PlanningPathOptions): Promise<string>;
+  runNextPrompt(workspaceRoot: string, prompt: string, options?: PlanningPathOptions): Promise<string>;
 };
 
 export type ResolvedPrimaryAgent = {
@@ -119,9 +120,9 @@ export async function detectSupportedAgents(workspaceRoot?: string): Promise<Age
   return statuses;
 }
 
-export async function resolvePrimaryAgent(workspaceRoot?: string): Promise<ResolvedPrimaryAgent> {
+export async function resolvePrimaryAgent(workspaceRoot?: string, options: PlanningPathOptions = {}): Promise<ResolvedPrimaryAgent> {
   const statuses = await collectAgentStatuses();
-  const status = await resolvePrimaryAgentStatus(statuses, workspaceRoot);
+  const status = await resolvePrimaryAgentStatus(statuses, workspaceRoot, options);
   const adapter = getAgentAdapterById(status.id) ?? getSupportedAgentAdapters()[0];
 
   syncPrimaryAgent(adapter.id);
@@ -133,15 +134,19 @@ export async function resolvePrimaryAgent(workspaceRoot?: string): Promise<Resol
   };
 }
 
-export async function detectPrimaryAgent(workspaceRoot?: string): Promise<AgentStatus> {
-  return (await resolvePrimaryAgent(workspaceRoot)).status;
+export async function detectPrimaryAgent(workspaceRoot?: string, options: PlanningPathOptions = {}): Promise<AgentStatus> {
+  return (await resolvePrimaryAgent(workspaceRoot, options)).status;
 }
 
-export async function resolveExecutionAgent(workspaceRoot: string, overrideId?: string | null): Promise<ResolvedPrimaryAgent> {
+export async function resolveExecutionAgent(
+  workspaceRoot: string,
+  overrideId?: string | null,
+  options: PlanningPathOptions = {}
+): Promise<ResolvedPrimaryAgent> {
   const normalizedOverrideId = overrideId?.trim().toLowerCase();
 
   if (!normalizedOverrideId) {
-    return resolvePrimaryAgent(workspaceRoot);
+    return resolvePrimaryAgent(workspaceRoot, options);
   }
 
   const statuses = await collectAgentStatuses();
@@ -167,14 +172,22 @@ export async function resolveExecutionAgent(workspaceRoot: string, overrideId?: 
   };
 }
 
-export async function requestPlannerReply(workspaceRoot: string, messages: ChatMessage[]): Promise<string> {
-  const { adapter } = await resolvePrimaryAgent(workspaceRoot);
-  return adapter.requestPlannerReply(workspaceRoot, messages);
+export async function requestPlannerReply(
+  workspaceRoot: string,
+  messages: ChatMessage[],
+  options: PlanningPathOptions = {}
+): Promise<string> {
+  const { adapter } = await resolvePrimaryAgent(workspaceRoot, options);
+  return adapter.requestPlannerReply(workspaceRoot, messages, options);
 }
 
-export async function writePlanningPack(workspaceRoot: string, messages: ChatMessage[]): Promise<string> {
-  const { adapter } = await resolvePrimaryAgent(workspaceRoot);
-  return adapter.writePlanningPack(workspaceRoot, messages);
+export async function writePlanningPack(
+  workspaceRoot: string,
+  messages: ChatMessage[],
+  options: PlanningPathOptions = {}
+): Promise<string> {
+  const { adapter } = await resolvePrimaryAgent(workspaceRoot, options);
+  return adapter.writePlanningPack(workspaceRoot, messages, options);
 }
 
 export async function runNextPrompt(
@@ -182,13 +195,18 @@ export async function runNextPrompt(
   prompt: string,
   options: {
     agentId?: string | null;
+    planId?: string | null;
   } = {}
 ): Promise<string> {
-  const { adapter } = await resolveExecutionAgent(workspaceRoot, options.agentId);
-  return adapter.runNextPrompt(workspaceRoot, prompt);
+  const { adapter } = await resolveExecutionAgent(workspaceRoot, options.agentId, { planId: options.planId });
+  return adapter.runNextPrompt(workspaceRoot, prompt, { planId: options.planId });
 }
 
-export async function selectPrimaryAgent(workspaceRoot: string, id: string): Promise<ResolvedPrimaryAgent> {
+export async function selectPrimaryAgent(
+  workspaceRoot: string,
+  id: string,
+  options: PlanningPathOptions = {}
+): Promise<ResolvedPrimaryAgent> {
   const normalizedId = id.trim().toLowerCase();
   const statuses = await collectAgentStatuses();
   const status = statuses.find((candidate) => candidate.id === normalizedId);
@@ -201,7 +219,7 @@ export async function selectPrimaryAgent(workspaceRoot: string, id: string): Pro
     throw new Error(`Cannot activate ${status.label}: ${status.error ?? `${status.command} is not available`}.`);
   }
 
-  await saveStoredActiveAgentId(workspaceRoot, status.id);
+  await saveStoredActiveAgentId(workspaceRoot, status.id, options);
 
   const adapter = getAgentAdapterById(status.id) ?? getSupportedAgentAdapters()[0];
   syncPrimaryAgent(adapter.id);
@@ -227,8 +245,12 @@ async function collectAgentStatuses(): Promise<AgentStatus[]> {
   return Promise.all(getSupportedAgentAdapters().map((adapter) => adapter.detectStatus()));
 }
 
-async function resolvePrimaryAgentStatus(statuses: AgentStatus[], workspaceRoot?: string): Promise<AgentStatus> {
-  const storedId = workspaceRoot ? await loadStoredActiveAgentId(workspaceRoot) : null;
+async function resolvePrimaryAgentStatus(
+  statuses: AgentStatus[],
+  workspaceRoot?: string,
+  options: PlanningPathOptions = {}
+): Promise<AgentStatus> {
+  const storedId = workspaceRoot ? await loadStoredActiveAgentId(workspaceRoot, options) : null;
 
   if (storedId) {
     const storedStatus = statuses.find((status) => status.id === storedId);
@@ -238,7 +260,7 @@ async function resolvePrimaryAgentStatus(statuses: AgentStatus[], workspaceRoot?
     }
 
     if (workspaceRoot) {
-      await saveStoredActiveAgentId(workspaceRoot, null);
+      await saveStoredActiveAgentId(workspaceRoot, null, options);
     }
   }
 

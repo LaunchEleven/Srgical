@@ -1,6 +1,6 @@
 import { readdir } from "node:fs/promises";
 import path from "node:path";
-import { fileExists, getPlanningPackPaths, readText } from "./workspace";
+import { fileExists, getPlanningPackPaths, readText, type PlanningPathOptions } from "./workspace";
 
 export type ChatMessage = {
   role: "user" | "assistant" | "system";
@@ -40,8 +40,12 @@ ${renderTranscript(messages)}
 Respond as the planning partner.`;
 }
 
-export async function buildPackWriterPrompt(messages: ChatMessage[], workspaceRoot: string): Promise<string> {
-  const repoTruth = await buildRepoTruthSnapshot(workspaceRoot);
+export async function buildPackWriterPrompt(
+  messages: ChatMessage[],
+  workspaceRoot: string,
+  options: PlanningPathOptions = {}
+): Promise<string> {
+  const repoTruth = await buildRepoTruthSnapshot(workspaceRoot, options);
 
   return `You are writing a planning pack for the current repository.
 
@@ -78,8 +82,8 @@ ${renderTranscript(messages)}
 `;
 }
 
-async function buildRepoTruthSnapshot(workspaceRoot: string): Promise<string> {
-  const paths = getPlanningPackPaths(workspaceRoot);
+async function buildRepoTruthSnapshot(workspaceRoot: string, options: PlanningPathOptions = {}): Promise<string> {
+  const paths = getPlanningPackPaths(workspaceRoot, options);
   const [
     packageSummary,
     topLevelEntries,

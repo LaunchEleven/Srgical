@@ -9,6 +9,7 @@ import {
   type PlanningEpochPreparation
 } from "./planning-epochs";
 import { buildPackWriterPrompt, buildPlannerPrompt, type ChatMessage } from "./prompts";
+import type { PlanningPathOptions } from "./workspace";
 
 export type AugmentStatus = {
   available: boolean;
@@ -74,7 +75,11 @@ export async function detectAugment(): Promise<AugmentStatus> {
   }
 }
 
-export async function requestPlannerReply(workspaceRoot: string, messages: ChatMessage[]): Promise<string> {
+export async function requestPlannerReply(
+  workspaceRoot: string,
+  messages: ChatMessage[],
+  _options: PlanningPathOptions = {}
+): Promise<string> {
   const result = await runAugmentExec({
     cwd: workspaceRoot,
     prompt: buildPlannerPrompt(messages, workspaceRoot),
@@ -85,8 +90,12 @@ export async function requestPlannerReply(workspaceRoot: string, messages: ChatM
   return result.lastMessage.trim();
 }
 
-export async function writePlanningPack(workspaceRoot: string, messages: ChatMessage[]): Promise<string> {
-  const planningEpoch = await preparePlanningPackForWrite(workspaceRoot);
+export async function writePlanningPack(
+  workspaceRoot: string,
+  messages: ChatMessage[],
+  options: PlanningPathOptions = {}
+): Promise<string> {
+  const planningEpoch = await preparePlanningPackForWrite(workspaceRoot, options);
   const augmentStatus = await detectAugment();
 
   if (!augmentStatus.available) {
@@ -96,7 +105,8 @@ export async function writePlanningPack(workspaceRoot: string, messages: ChatMes
         workspaceRoot,
         messages,
         augmentStatus.error ?? "Augment CLI is unavailable",
-        "Augment CLI"
+        "Augment CLI",
+        options
       )
     );
   }
@@ -104,7 +114,7 @@ export async function writePlanningPack(workspaceRoot: string, messages: ChatMes
   try {
     const result = await runAugmentExec({
       cwd: workspaceRoot,
-      prompt: await buildPackWriterPrompt(messages, workspaceRoot),
+      prompt: await buildPackWriterPrompt(messages, workspaceRoot, options),
       maxTurns: 24
     });
 
@@ -114,7 +124,7 @@ export async function writePlanningPack(workspaceRoot: string, messages: ChatMes
       const message = error instanceof Error ? error.message : "Augment CLI is unavailable";
       return appendPlanningEpochSummary(
         planningEpoch,
-        await writePlanningPackFallback(workspaceRoot, messages, message, "Augment CLI")
+        await writePlanningPackFallback(workspaceRoot, messages, message, "Augment CLI", options)
       );
     }
 
@@ -129,7 +139,11 @@ export async function writePlanningPack(workspaceRoot: string, messages: ChatMes
   }
 }
 
-export async function runNextPrompt(workspaceRoot: string, prompt: string): Promise<string> {
+export async function runNextPrompt(
+  workspaceRoot: string,
+  prompt: string,
+  _options: PlanningPathOptions = {}
+): Promise<string> {
   const result = await runAugmentExec({
     cwd: workspaceRoot,
     prompt,

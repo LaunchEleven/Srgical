@@ -30,20 +30,20 @@ This repo currently ships the foundation for:
 - `srgical --version`
   Prints the installed version with release-note links instead of only echoing the semver.
 - `srgical doctor`
-  Reports whether the current workspace has a planning pack, which supported agent is active, and which supported
-  agents are available locally.
+  Reports the active plan, plan readiness, execution state, auto-run state, and which supported agents are available
+  locally.
 - `srgical about`
   Shows package details, release links, and the currently supported agent adapters.
 - `srgical changelog`
   Points straight at the installed version's release notes and the local packaged changelog.
 - `srgical init`
-  Creates a local `.srgical/` planning pack from built-in templates.
+  Creates a local `.srgical/` planning pack from built-in templates, with `--plan <id>` for named plans.
 - `srgical studio`
-  Opens a full-screen planning studio where you can plan against the repo, inspect supported tools with `/agents`,
-  switch the session agent with `/agent <id>`, and explicitly trigger pack writes or execution.
+  Opens a full-screen planning studio where you can switch between named plans, inspect readiness with `/readiness`,
+  inspect supported tools with `/agents`, and explicitly trigger pack writes, single-step execution, or `/auto`.
 - `srgical run-next`
-  Replays the generated next-agent prompt through the active agent, with `--dry-run` for safe preview and
-  `--agent <id>` for a one-run override that does not change the stored workspace choice.
+  Replays the generated next-agent prompt through the active agent, with `--plan <id>` for plan targeting,
+  `--dry-run` for safe preview, `--agent <id>` for a one-run override, and `--auto` for bounded multi-step execution.
 
 ## Supported Agents
 
@@ -148,8 +148,11 @@ node dist/index.js --version
 node dist/index.js about
 node dist/index.js doctor
 node dist/index.js changelog
+node dist/index.js init --plan release-readiness
+node dist/index.js studio --plan release-readiness
 node dist/index.js run-next --dry-run
 node dist/index.js run-next
+node dist/index.js run-next --auto --max-steps 10
 ```
 
 To override the active workspace agent for one execution only:
@@ -159,6 +162,15 @@ node dist/index.js run-next --agent codex
 node dist/index.js run-next --agent claude
 node dist/index.js run-next --agent augment
 ```
+
+Inside the studio, the footer is intentionally minimal:
+
+- `PgUp/PgDn` scrolls the transcript
+- `/agents` chooses the current tool
+- `/help` shows the full command set
+
+The composer is now multiline with a minimum two-line visible input area. `Enter` sends, while `Shift+Enter`,
+`Alt+Enter`, or `Ctrl+J` inserts a newline when the terminal exposes those keys distinctly.
 
 ## Current Claude Caveat
 

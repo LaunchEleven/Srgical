@@ -1,11 +1,25 @@
-import { access, mkdir, readFile, writeFile } from "node:fs/promises";
+import { access, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 export const PLAN_DIR = ".srgical";
+export const DEFAULT_PLAN_ID = "default";
+export const NAMED_PLANS_DIR = "plans";
+export const ACTIVE_PLAN_FILE = "active-plan.txt";
+
+export type PlanningDirectoryRef = {
+  planId: string;
+  dir: string;
+  relativeDir: string;
+  isDefaultPlan: boolean;
+};
 
 export type PlanningPackPaths = {
   root: string;
+  planningRoot: string;
+  planId: string;
+  isDefaultPlan: boolean;
   dir: string;
+  relativeDir: string;
   plan: string;
   context: string;
   tracker: string;
@@ -13,32 +27,71 @@ export type PlanningPackPaths = {
   studioSession: string;
   executionState: string;
   executionLog: string;
+  planningState: string;
+  autoRunState: string;
+  activePlanFile: string;
+};
+
+export type PlanningPathOptions = {
+  planId?: string | null;
 };
 
 export function resolveWorkspace(input?: string): string {
   return path.resolve(input ?? process.cwd());
 }
 
-export function getPlanningPackPaths(root: string): PlanningPackPaths {
-  const dir = path.join(root, PLAN_DIR);
+export function normalizePlanId(value?: string | null): string {
+  const normalized = (value ?? DEFAULT_PLAN_ID)
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+
+  return normalized.length > 0 ? normalized : DEFAULT_PLAN_ID;
+}
+
+export function getPlanningRoot(root: string): string {
+  return path.join(root, PLAN_DIR);
+}
+
+export function getPlanningPackPaths(root: string, options: PlanningPathOptions = {}): PlanningPackPaths {
+  const planningRoot = getPlanningRoot(root);
+  const planId = normalizePlanId(options.planId);
+  const isDefaultPlan = planId === DEFAULT_PLAN_ID;
+  const dir = isDefaultPlan ? planningRoot : path.join(planningRoot, NAMED_PLANS_DIR, planId);
+  const relativeDir = path.relative(root, dir).replace(/\\/g, "/") || PLAN_DIR;
 
   return {
     root,
+    planningRoot,
+    planId,
+    isDefaultPlan,
     dir,
+    relativeDir,
     plan: path.join(dir, "01-product-plan.md"),
     context: path.join(dir, "02-agent-context-kickoff.md"),
     tracker: path.join(dir, "03-detailed-implementation-plan.md"),
     nextPrompt: path.join(dir, "04-next-agent-prompt.md"),
     studioSession: path.join(dir, "studio-session.json"),
     executionState: path.join(dir, "execution-state.json"),
-    executionLog: path.join(dir, "execution-log.md")
+    executionLog: path.join(dir, "execution-log.md"),
+    planningState: path.join(dir, "planning-state.json"),
+    autoRunState: path.join(dir, "auto-run-state.json"),
+    activePlanFile: path.join(planningRoot, ACTIVE_PLAN_FILE)
   };
 }
 
-export async function ensurePlanningDir(root: string): Promise<PlanningPackPaths> {
-  const paths = getPlanningPackPaths(root);
+export async function ensurePlanningDir(root: string, options: PlanningPathOptions = {}): Promise<PlanningPackPaths> {
+  const paths = getPlanningPackPaths(root, options);
+  await mkdir(paths.planningRoot, { recursive: true });
   await mkdir(paths.dir, { recursive: true });
   return paths;
+}
+
+export async function ensurePlanningRoot(root: string): Promise<string> {
+  const planningRoot = getPlanningRoot(root);
+  await mkdir(planningRoot, { recursive: true });
+  return planningRoot;
 }
 
 export async function fileExists(filePath: string): Promise<boolean> {
@@ -50,8 +103,8 @@ export async function fileExists(filePath: string): Promise<boolean> {
   }
 }
 
-export async function planningPackExists(root: string): Promise<boolean> {
-  const paths = getPlanningPackPaths(root);
+export async function planningPackExists(root: string, options: PlanningPathOptions = {}): Promise<boolean> {
+  const paths = getPlanningPackPaths(root, options);
   const checks = await Promise.all([
     fileExists(paths.plan),
     fileExists(paths.context),
@@ -60,6 +113,85 @@ export async function planningPackExists(root: string): Promise<boolean> {
   ]);
 
   return checks.every(Boolean);
+}
+
+export async function listPlanningDirectories(root: string): Promise<PlanningDirectoryRef[]> {
+  const planningRoot = getPlanningRoot(root);
+  const namedPlansRoot = path.join(planningRoot, NAMED_PLANS_DIR);
+  const planIds = new Set<string>();
+
+  if (await hasDefaultPlanPresence(root)) {
+    planIds.add(DEFAULT_PLAN_ID);
+  }
+
+  try {
+    const entries = await readdir(namedPlansRoot, { withFileTypes: true });
+
+    for (const entry of entries) {
+      if (!entry.isDirectory()) {
+        continue;
+      }
+
+      planIds.add(normalizePlanId(entry.name));
+    }
+  } catch {
+    // ignore missing named-plan directory
+  }
+
+  const activePlanId = await readActivePlanId(root);
+  if (activePlanId) {
+    planIds.add(activePlanId);
+  }
+
+  return Array.from(planIds)
+    .sort((left, right) => {
+      if (left === DEFAULT_PLAN_ID) {
+        return -1;
+      }
+
+      if (right === DEFAULT_PLAN_ID) {
+        return 1;
+      }
+
+      return left.localeCompare(right);
+    })
+    .map((planId) => {
+      const paths = getPlanningPackPaths(root, { planId });
+      return {
+        planId,
+        dir: paths.dir,
+        relativeDir: paths.relativeDir,
+        isDefaultPlan: paths.isDefaultPlan
+      };
+    });
+}
+
+export async function readActivePlanId(root: string): Promise<string | null> {
+  const markerPath = getPlanningPackPaths(root).activePlanFile;
+
+  if (!(await fileExists(markerPath))) {
+    return null;
+  }
+
+  try {
+    return normalizePlanId(await readText(markerPath));
+  } catch {
+    return null;
+  }
+}
+
+export async function saveActivePlanId(root: string, planId: string): Promise<void> {
+  const normalizedPlanId = normalizePlanId(planId);
+  const planningRoot = await ensurePlanningRoot(root);
+  await writeText(path.join(planningRoot, ACTIVE_PLAN_FILE), normalizedPlanId);
+}
+
+export async function resolvePlanId(root: string, requestedPlanId?: string | null): Promise<string> {
+  if (requestedPlanId && requestedPlanId.trim().length > 0) {
+    return normalizePlanId(requestedPlanId);
+  }
+
+  return (await readActivePlanId(root)) ?? DEFAULT_PLAN_ID;
 }
 
 export async function readText(filePath: string): Promise<string> {
@@ -72,4 +204,21 @@ export async function writeText(filePath: string, content: string): Promise<void
 
 export async function isGitRepo(root: string): Promise<boolean> {
   return fileExists(path.join(root, ".git"));
+}
+
+async function hasDefaultPlanPresence(root: string): Promise<boolean> {
+  const paths = getPlanningPackPaths(root, { planId: DEFAULT_PLAN_ID });
+  const checks = await Promise.all([
+    fileExists(paths.plan),
+    fileExists(paths.context),
+    fileExists(paths.tracker),
+    fileExists(paths.nextPrompt),
+    fileExists(paths.studioSession),
+    fileExists(paths.executionState),
+    fileExists(paths.executionLog),
+    fileExists(paths.planningState),
+    fileExists(paths.autoRunState)
+  ]);
+
+  return checks.some(Boolean);
 }

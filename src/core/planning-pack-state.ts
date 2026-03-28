@@ -1,6 +1,8 @@
+import { loadAutoRunState, type AutoRunState } from "./auto-run-state";
 import { loadExecutionState, type ExecutionState } from "./execution-state";
-import { planningPackExists, readText } from "./workspace";
-import { getPlanningPackPaths } from "./workspace";
+import { inferLegacyPackMode, loadPlanningState, type PlanningPackMode, type PlanningStateFile } from "./planning-state";
+import { DEFAULT_STUDIO_MESSAGES, loadStudioSessionState } from "./studio-session";
+import { fileExists, getPlanningPackPaths, planningPackExists, readText, type PlanningPathOptions } from "./workspace";
 
 export type PlanningCurrentPosition = {
   lastCompleted: string | null;
@@ -18,23 +20,60 @@ export type PlanningStepSummary = {
   phase: string | null;
 };
 
+export type PlanningReadinessCheck = {
+  id: "goal" | "repo" | "constraints" | "execution";
+  label: string;
+  passed: boolean;
+};
+
+export type PlanningReadiness = {
+  checks: PlanningReadinessCheck[];
+  score: number;
+  total: number;
+  readyToWrite: boolean;
+  missingLabels: string[];
+};
+
+export type PlanningMode =
+  | "No Pack"
+  | "Gathering Context"
+  | "Ready to Write"
+  | "Plan Written - Needs Step"
+  | "Ready to Execute"
+  | "Execution Active"
+  | "Auto Running";
+
 export type PlanningPackState = {
+  planId: string;
+  packDir: string;
   packPresent: boolean;
   trackerReadable: boolean;
+  docsPresent: number;
   currentPosition: PlanningCurrentPosition;
   nextStepSummary: PlanningStepSummary | null;
   lastExecution: ExecutionState | null;
+  planningState: PlanningStateFile | null;
+  packMode: PlanningPackMode;
+  readiness: PlanningReadiness;
+  autoRun: AutoRunState | null;
+  executionActivated: boolean;
+  mode: PlanningMode;
+  hasFailureOverlay: boolean;
 };
 
-export async function readPlanningPackState(workspaceRoot: string): Promise<PlanningPackState> {
-  const packPresent = await planningPackExists(workspaceRoot);
+export async function readPlanningPackState(
+  workspaceRoot: string,
+  options: PlanningPathOptions = {}
+): Promise<PlanningPackState> {
+  const paths = getPlanningPackPaths(workspaceRoot, options);
+  const packPresent = await planningPackExists(workspaceRoot, options);
   const currentPosition = emptyCurrentPosition();
   let nextStepSummary: PlanningStepSummary | null = null;
   let trackerReadable = false;
 
   if (packPresent) {
     try {
-      const tracker = await readText(getPlanningPackPaths(workspaceRoot).tracker);
+      const tracker = await readText(paths.tracker);
       Object.assign(currentPosition, parseCurrentPosition(tracker));
       nextStepSummary = parseNextStepSummary(tracker, currentPosition.nextRecommended);
       trackerReadable = currentPosition.lastCompleted !== null || currentPosition.nextRecommended !== null;
@@ -43,28 +82,164 @@ export async function readPlanningPackState(workspaceRoot: string): Promise<Plan
     }
   }
 
-  const lastExecution = await loadExecutionState(workspaceRoot);
+  const [lastExecution, planningState, autoRun, docsPresent, studioSession] = await Promise.all([
+    loadExecutionState(workspaceRoot, options),
+    loadPlanningState(workspaceRoot, options),
+    loadAutoRunState(workspaceRoot, options),
+    countPresentDocs(paths),
+    loadStudioSessionState(workspaceRoot, options)
+  ]);
+
+  const readiness = buildReadiness(studioSession.messages, nextStepSummary);
+  const packMode = planningState?.packMode ?? inferLegacyPackMode(currentPosition);
+  const executionActivated = Boolean(
+    lastExecution ||
+      (autoRun && autoRun.status !== "idle") ||
+      (isExecutionStepSummary(nextStepSummary) && currentPosition.lastCompleted !== "PLAN-001")
+  );
+  const mode = derivePlanningMode({
+    packPresent,
+    packMode,
+    readiness,
+    nextStepSummary,
+    autoRun,
+    executionActivated
+  });
 
   return {
+    planId: paths.planId,
+    packDir: paths.relativeDir,
     packPresent,
     trackerReadable,
+    docsPresent,
     currentPosition,
     nextStepSummary,
-    lastExecution
+    lastExecution,
+    planningState,
+    packMode,
+    readiness,
+    autoRun,
+    executionActivated,
+    mode,
+    hasFailureOverlay: lastExecution?.status === "failure"
   };
+}
+
+export function isExecutionStepSummary(step: PlanningStepSummary | null): boolean {
+  if (!step) {
+    return false;
+  }
+
+  const phase = step.phase?.toLowerCase() ?? "";
+  return phase.includes("delivery") || phase.includes("execution") || /^exec[-\d]/i.test(step.id);
+}
+
+export function isExecutionReadyState(state: PlanningPackState): boolean {
+  return state.packPresent && state.packMode === "authored" && isExecutionStepSummary(state.nextStepSummary);
+}
+
+function derivePlanningMode(input: {
+  packPresent: boolean;
+  packMode: PlanningPackMode;
+  readiness: PlanningReadiness;
+  nextStepSummary: PlanningStepSummary | null;
+  autoRun: AutoRunState | null;
+  executionActivated: boolean;
+}): PlanningMode {
+  if (!input.packPresent) {
+    return "No Pack";
+  }
+
+  if (input.autoRun?.status === "running" || input.autoRun?.status === "stop_requested") {
+    return "Auto Running";
+  }
+
+  if (input.packMode === "scaffolded") {
+    return input.readiness.readyToWrite ? "Ready to Write" : "Gathering Context";
+  }
+
+  if (!isExecutionStepSummary(input.nextStepSummary)) {
+    return "Plan Written - Needs Step";
+  }
+
+  return input.executionActivated ? "Execution Active" : "Ready to Execute";
+}
+
+function buildReadiness(messages: { role: "user" | "assistant" | "system"; content: string }[], nextStepSummary: PlanningStepSummary | null): PlanningReadiness {
+  const meaningfulMessages = messages.filter((message) => message.content.trim().length > 0);
+  const userMessages = meaningfulMessages.filter((message) => message.role === "user");
+  const assistantMessages = meaningfulMessages.filter(
+    (message) =>
+      message.role === "assistant" &&
+      !DEFAULT_STUDIO_MESSAGES.some((defaultMessage) => defaultMessage.content === message.content)
+  );
+  const transcript = meaningfulMessages.map((message) => message.content.toLowerCase()).join("\n");
+  const checks: PlanningReadinessCheck[] = [
+    {
+      id: "goal",
+      label: "Goal captured",
+      passed: userMessages.length > 0
+    },
+    {
+      id: "repo",
+      label: "Repo context captured",
+      passed: /repo|current|existing|already|codebase|today|currently|workspace/.test(transcript)
+    },
+    {
+      id: "constraints",
+      label: "Constraints or decisions captured",
+      passed: /constraint|must|should|can't|cannot|need|require|locked|decision|prefer|non-negotiable/.test(transcript)
+    },
+    {
+      id: "execution",
+      label: "First executable slice captured",
+      passed:
+        isExecutionStepSummary(nextStepSummary) || /step|slice|execute|execution|implement|delivery|tracker/.test(transcript)
+    }
+  ];
+
+  const score = checks.filter((check) => check.passed).length;
+  const readyToWrite = score >= 3 && userMessages.length > 0 && assistantMessages.length > 0;
+
+  return {
+    checks,
+    score,
+    total: checks.length,
+    readyToWrite,
+    missingLabels: checks.filter((check) => !check.passed).map((check) => check.label)
+  };
+}
+
+async function countPresentDocs(paths: ReturnType<typeof getPlanningPackPaths>): Promise<number> {
+  const checks = await Promise.all([
+    fileExists(paths.plan),
+    fileExists(paths.context),
+    fileExists(paths.tracker),
+    fileExists(paths.nextPrompt)
+  ]);
+
+  return checks.filter(Boolean).length;
 }
 
 function parseCurrentPosition(tracker: string): PlanningCurrentPosition {
   return {
     lastCompleted: readCurrentPositionValue(tracker, "Last Completed"),
-    nextRecommended: readCurrentPositionValue(tracker, "Next Recommended"),
+    nextRecommended: normalizeStepReference(readCurrentPositionValue(tracker, "Next Recommended")),
     updatedAt: readCurrentPositionValue(tracker, "Updated At")
   };
 }
 
 function readCurrentPositionValue(tracker: string, label: string): string | null {
-  const match = tracker.match(new RegExp(`- ${escapeRegExp(label)}: \`([^\`]+)\``));
-  return match?.[1] ?? null;
+  const match = tracker.match(new RegExp(`- ${escapeRegExp(label)}: (?:\\\`([^\\\`]+)\\\`|([^\\n]+))`));
+  return match?.[1]?.trim() ?? match?.[2]?.trim() ?? null;
+}
+
+function normalizeStepReference(value: string | null): string | null {
+  if (!value) {
+    return null;
+  }
+
+  return value.toLowerCase() === "none queued" ? null : value;
 }
 
 function escapeRegExp(value: string): string {

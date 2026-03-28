@@ -1,14 +1,16 @@
 import type { ChatMessage } from "./prompts";
+import { ensurePlanningPackState } from "./planning-state";
 import { getInitialTemplates } from "./templates";
-import { ensurePlanningDir, fileExists, getPlanningPackPaths, readText, writeText } from "./workspace";
+import { ensurePlanningDir, fileExists, getPlanningPackPaths, readText, writeText, type PlanningPathOptions } from "./workspace";
 
 export async function writePlanningPackFallback(
   workspaceRoot: string,
   messages: ChatMessage[],
   reason: string,
-  agentLabel = "Codex"
+  agentLabel = "Codex",
+  options: PlanningPathOptions = {}
 ): Promise<string> {
-  const paths = await ensurePlanningDir(workspaceRoot);
+  const paths = await ensurePlanningDir(workspaceRoot, options);
   const templates = getInitialTemplates(paths);
   const createdFiles: string[] = [];
   const preservedFiles: string[] = [];
@@ -42,6 +44,8 @@ export async function writePlanningPackFallback(
       ? `Tracker remains on next recommended step: ${currentPosition.nextRecommended}`
       : "Tracker next step is not yet available."
   ];
+
+  await ensurePlanningPackState(workspaceRoot, "scaffolded", options);
 
   return summary.join("\n");
 }
@@ -146,20 +150,22 @@ function appendFallbackEntry(context: string, entry: string): string {
 }
 
 function toPackLabel(paths: ReturnType<typeof getPlanningPackPaths>, filePath: string): string {
+  const prefix = `${paths.relativeDir}/`;
+
   if (filePath === paths.plan) {
-    return ".srgical/01-product-plan.md";
+    return `${prefix}01-product-plan.md`;
   }
 
   if (filePath === paths.context) {
-    return ".srgical/02-agent-context-kickoff.md";
+    return `${prefix}02-agent-context-kickoff.md`;
   }
 
   if (filePath === paths.tracker) {
-    return ".srgical/03-detailed-implementation-plan.md";
+    return `${prefix}03-detailed-implementation-plan.md`;
   }
 
   if (filePath === paths.nextPrompt) {
-    return ".srgical/04-next-agent-prompt.md";
+    return `${prefix}04-next-agent-prompt.md`;
   }
 
   return filePath;

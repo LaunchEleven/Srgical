@@ -1,8 +1,9 @@
 import { mkdir, readdir, rm } from "node:fs/promises";
 import path from "node:path";
 import { readPlanningPackState } from "./planning-pack-state";
+import { savePlanningState } from "./planning-state";
 import { getInitialTemplates } from "./templates";
-import { ensurePlanningDir, fileExists, readText, type PlanningPackPaths, writeText } from "./workspace";
+import { ensurePlanningDir, fileExists, readText, type PlanningPackPaths, type PlanningPathOptions, writeText } from "./workspace";
 
 export type PlanningEpochPreparation = {
   archived: boolean;
@@ -16,12 +17,17 @@ const ARCHIVED_PACK_FILE_NAMES = [
   "03-detailed-implementation-plan.md",
   "04-next-agent-prompt.md",
   "studio-session.json",
+  "planning-state.json",
+  "auto-run-state.json",
   "execution-state.json",
   "execution-log.md"
 ];
 
-export async function preparePlanningPackForWrite(workspaceRoot: string): Promise<PlanningEpochPreparation> {
-  const packState = await readPlanningPackState(workspaceRoot);
+export async function preparePlanningPackForWrite(
+  workspaceRoot: string,
+  options: PlanningPathOptions = {}
+): Promise<PlanningEpochPreparation> {
+  const packState = await readPlanningPackState(workspaceRoot, options);
 
   if (!packState.packPresent || packState.currentPosition.nextRecommended) {
     return {
@@ -31,7 +37,7 @@ export async function preparePlanningPackForWrite(workspaceRoot: string): Promis
     };
   }
 
-  const paths = await ensurePlanningDir(workspaceRoot);
+  const paths = await ensurePlanningDir(workspaceRoot, options);
   const archiveDirName = await nextPlanningEpochName(paths.dir);
   const archiveDir = path.join(paths.dir, archiveDirName);
   await mkdir(archiveDir, { recursive: false });
@@ -83,7 +89,10 @@ async function resetActivePlanningPack(paths: PlanningPackPaths): Promise<void> 
     Object.entries(templates).map(([filePath, content]) => writeText(filePath, content))
   );
 
+  await savePlanningState(paths.root, "scaffolded", { planId: paths.planId });
+
   await Promise.all([
+    rm(paths.autoRunState, { force: true }),
     rm(paths.executionState, { force: true }),
     rm(paths.executionLog, { force: true })
   ]);
@@ -96,6 +105,8 @@ function listArchivablePaths(paths: PlanningPackPaths): string[] {
     paths.tracker,
     paths.nextPrompt,
     paths.studioSession,
+    paths.planningState,
+    paths.autoRunState,
     paths.executionState,
     paths.executionLog
   ];

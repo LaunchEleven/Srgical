@@ -9,6 +9,7 @@ import {
   type PlanningEpochPreparation
 } from "./planning-epochs";
 import { buildPackWriterPrompt, buildPlannerPrompt, type ChatMessage } from "./prompts";
+import type { PlanningPathOptions } from "./workspace";
 
 export type CodexStatus = {
   available: boolean;
@@ -61,7 +62,8 @@ export async function detectCodex(): Promise<CodexStatus> {
 
 export async function requestPlannerReply(
   workspaceRoot: string,
-  messages: ChatMessage[]
+  messages: ChatMessage[],
+  _options: PlanningPathOptions = {}
 ): Promise<string> {
   const result = await runCodexExec({
     cwd: workspaceRoot,
@@ -74,21 +76,25 @@ export async function requestPlannerReply(
   return result.lastMessage.trim();
 }
 
-export async function writePlanningPack(workspaceRoot: string, messages: ChatMessage[]): Promise<string> {
-  const planningEpoch = await preparePlanningPackForWrite(workspaceRoot);
+export async function writePlanningPack(
+  workspaceRoot: string,
+  messages: ChatMessage[],
+  options: PlanningPathOptions = {}
+): Promise<string> {
+  const planningEpoch = await preparePlanningPackForWrite(workspaceRoot, options);
   const codexStatus = await detectCodex();
 
   if (!codexStatus.available) {
     return appendPlanningEpochSummary(
       planningEpoch,
-      await writePlanningPackFallback(workspaceRoot, messages, codexStatus.error ?? "Codex is unavailable", "Codex")
+      await writePlanningPackFallback(workspaceRoot, messages, codexStatus.error ?? "Codex is unavailable", "Codex", options)
     );
   }
 
   try {
     const result = await runCodexExec({
       cwd: workspaceRoot,
-      prompt: await buildPackWriterPrompt(messages, workspaceRoot),
+      prompt: await buildPackWriterPrompt(messages, workspaceRoot, options),
       allowWrite: true,
       skipGitRepoCheck: true,
       ephemeral: false
@@ -100,7 +106,7 @@ export async function writePlanningPack(workspaceRoot: string, messages: ChatMes
       const message = error instanceof Error ? error.message : "Codex is unavailable";
       return appendPlanningEpochSummary(
         planningEpoch,
-        await writePlanningPackFallback(workspaceRoot, messages, message, "Codex")
+        await writePlanningPackFallback(workspaceRoot, messages, message, "Codex", options)
       );
     }
 
@@ -115,7 +121,11 @@ export async function writePlanningPack(workspaceRoot: string, messages: ChatMes
   }
 }
 
-export async function runNextPrompt(workspaceRoot: string, prompt: string): Promise<string> {
+export async function runNextPrompt(
+  workspaceRoot: string,
+  prompt: string,
+  _options: PlanningPathOptions = {}
+): Promise<string> {
   const result = await runCodexExec({
     cwd: workspaceRoot,
     prompt,

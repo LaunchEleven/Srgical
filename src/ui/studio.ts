@@ -1,5 +1,6 @@
 import path from "node:path";
 import blessed from "blessed";
+import { executeAutoRun, requestAutoRunStop } from "../core/auto-run";
 import {
   getPrimaryAgentAdapter,
   getSupportedAgentAdapters,
@@ -16,30 +17,40 @@ import {
   hasQueuedNextStep,
   renderDryRunPreview
 } from "../core/execution-controls";
-import { saveExecutionState } from "../core/execution-state";
+import { appendExecutionLog, saveExecutionState } from "../core/execution-state";
 import { readPlanningPackState, type PlanningCurrentPosition, type PlanningPackState } from "../core/planning-pack-state";
+import { markPlanningPackAuthored, savePlanningState } from "../core/planning-state";
 import type { ChatMessage } from "../core/prompts";
 import { DEFAULT_STUDIO_MESSAGES, loadStoredActiveAgentId, loadStudioSession, saveStudioSession } from "../core/studio-session";
+import { getInitialTemplates } from "../core/templates";
 import {
+  ensurePlanningDir,
   getPlanningPackPaths,
+  listPlanningDirectories,
+  normalizePlanId,
   readText,
+  resolvePlanId,
   resolveWorkspace,
+  saveActivePlanId,
+  writeText,
   type PlanningPackPaths
 } from "../core/workspace";
 
 type StudioOptions = {
   workspace?: string;
+  planId?: string | null;
 };
 
-type BusyMode = "planner" | "pack" | "run";
+type BusyMode = "planner" | "pack" | "run" | "auto";
 
-const READY_FOOTER =
-  " Enter send message   PgUp/PgDn scroll   /workspace switch repo   /agents tools   /write save plan   /preview safe preview   /run execute next step   /quit exit ";
+const READY_FOOTER = " PgUp/PgDn scroll   /agents choose tool   /help commands ";
 const ACTIVITY_FRAMES = ["[    ]", "[=   ]", "[==  ]", "[=== ]", "[ ===]", "[  ==]", "[   =]"];
 
 export async function launchStudio(options: StudioOptions = {}): Promise<void> {
   let workspace = resolveWorkspace(options.workspace);
-  let messages = await loadStudioSession(workspace);
+  let planId = await resolvePlanId(workspace, options.planId);
+  await saveActivePlanId(workspace, planId);
+  let messages = await loadStudioSession(workspace, { planId });
   const screen = blessed.screen({
     smartCSR: true,
     fullUnicode: true,
@@ -63,7 +74,7 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
     top: 3,
     left: 0,
     width: "72%",
-    height: "100%-7",
+    height: "100%-8",
     tags: true,
     scrollable: true,
     alwaysScroll: true,
@@ -95,7 +106,7 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
     top: 3,
     left: "72%",
     width: "28%",
-    height: "100%-7",
+    height: "100%-8",
     tags: true,
     padding: {
       top: 1,
@@ -116,12 +127,14 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
     }
   });
 
-  const input = blessed.textbox({
+  const input = blessed.textarea({
     bottom: 1,
     left: 0,
     width: "100%",
-    height: 3,
+    height: 4,
     inputOnFocus: true,
+    keys: true,
+    mouse: true,
     border: {
       type: "line"
     },
@@ -134,6 +147,7 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
       }
     }
   });
+  configureComposer(input);
 
   const footer = blessed.box({
     bottom: 0,
@@ -164,15 +178,17 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
   let planningPackSummary = "not checked";
   let trackerSummary = "loading...";
   let executionSummary = "never run";
+  let autoSummary = "idle";
 
   function setSidebar(status?: string): void {
-    const planningPaths = getPlanningPackPaths(workspace);
+    const planningPaths = getPlanningPackPaths(workspace, { planId });
 
     sidebar.setContent(
       [
         "{bold}Workspace{/bold}",
         `root: ${workspace}`,
-        `plan dir: ${planningPaths.dir}`,
+        `plan: ${planId}`,
+        `plan dir: ${planningPaths.relativeDir}`,
         "",
         "{bold}Agent{/bold}",
         agentSummary,
@@ -186,15 +202,8 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
         "{bold}Last Run{/bold}",
         executionSummary,
         "",
-        "{bold}Commands{/bold}",
-        "/workspace [path]  inspect or switch planning view",
-        "/agents  list supported tools and the current session choice",
-        "/agent <id>  switch the active agent for this workspace",
-        "/write  put the current plan on disk",
-        "/preview  inspect the next execution without invoking the active agent",
-        "/run    execute .srgical/04-next-agent-prompt.md",
-        "/help   show the workflow and key controls",
-        "/quit   close the studio",
+        "{bold}Auto{/bold}",
+        autoSummary,
         "",
         "{bold}State{/bold}",
         status ?? getActivityState()
@@ -284,21 +293,32 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
 
   async function appendMessage(message: ChatMessage): Promise<void> {
     messages.push(message);
-    await saveStudioSession(workspace, messages);
+    await saveStudioSession(workspace, messages, { planId });
+  }
+
+  async function appendSystemMessage(content: string): Promise<void> {
+    await appendMessage({
+      role: "system",
+      content
+    });
+    renderTranscript();
+    setSidebar();
+    setFooter();
+    screen.render();
   }
 
   async function refreshEnvironment(): Promise<void> {
     const [storedAgentId, packState] = await Promise.all([
-      loadStoredActiveAgentId(workspace),
-      readPlanningPackState(workspace)
+      loadStoredActiveAgentId(workspace, { planId }),
+      readPlanningPackState(workspace, { planId })
     ]);
-    let agentState = await resolvePrimaryAgent(workspace);
+    let agentState = await resolvePrimaryAgent(workspace, { planId });
 
     if (!storedAgentId) {
       const availableAgents = agentState.statuses.filter((status) => status.available);
 
       if (availableAgents.length === 1) {
-        agentState = await selectPrimaryAgent(workspace, availableAgents[0].id);
+        agentState = await selectPrimaryAgent(workspace, availableAgents[0].id, { planId });
       }
     }
 
@@ -308,10 +328,18 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
     planningPackSummary = formatPlanningPackSummary(workspace, packState);
     trackerSummary = formatTrackerSummary(packState.currentPosition);
     executionSummary = formatExecutionSummary(packState.lastExecution);
+    autoSummary = formatAutoSummary(packState);
     setSidebar();
     setFooter();
     renderTranscript();
     screen.render();
+  }
+
+  async function switchPlan(nextPlanId: string): Promise<void> {
+    planId = normalizePlanId(nextPlanId);
+    await saveActivePlanId(workspace, planId);
+    messages = await loadStudioSession(workspace, { planId });
+    await refreshEnvironment();
   }
 
   async function handleSlashCommand(command: string): Promise<void> {
@@ -321,15 +349,8 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
     }
 
     if (command === "/workspace") {
-      const packState = latestPackState ?? (await readPlanningPackState(workspace));
-      await appendMessage({
-        role: "system",
-        content: renderWorkspaceSelectionMessage(workspace, packState)
-      });
-      renderTranscript();
-      setSidebar();
-      setFooter();
-      screen.render();
+      const packState = latestPackState ?? (await readPlanningPackState(workspace, { planId }));
+      await appendSystemMessage(renderWorkspaceSelectionMessage(workspace, packState));
       return;
     }
 
@@ -337,53 +358,105 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
       const requestedWorkspace = command.slice("/workspace".length).trim();
 
       if (!requestedWorkspace) {
-        const packState = latestPackState ?? (await readPlanningPackState(workspace));
-        await appendMessage({
-          role: "system",
-          content: renderWorkspaceSelectionMessage(workspace, packState)
-        });
-        renderTranscript();
-        setSidebar();
-        setFooter();
-        screen.render();
+        const packState = latestPackState ?? (await readPlanningPackState(workspace, { planId }));
+        await appendSystemMessage(renderWorkspaceSelectionMessage(workspace, packState));
         return;
       }
 
       const nextWorkspace = resolveStudioWorkspaceInput(workspace, requestedWorkspace);
 
-      setSidebar("switching planning view...");
-      setFooter(" Switching planning view... ");
+      setSidebar("switching workspace...");
+      setFooter(" Switching workspace... ");
       screen.render();
 
       workspace = nextWorkspace;
-      messages = await loadStudioSession(workspace);
+      planId = await resolvePlanId(workspace);
+      await saveActivePlanId(workspace, planId);
+      messages = await loadStudioSession(workspace, { planId });
       await refreshEnvironment();
-
-      await appendMessage({
-        role: "system",
-        content: [
+      await appendSystemMessage(
+        [
           `Now looking at ${workspace}.`,
           "",
-          renderWorkspaceSelectionMessage(workspace, latestPackState ?? (await readPlanningPackState(workspace)))
+          renderWorkspaceSelectionMessage(workspace, latestPackState ?? (await readPlanningPackState(workspace, { planId })))
         ].join("\n")
-      });
-      renderTranscript();
-      setSidebar();
-      setFooter();
+      );
+      return;
+    }
+
+    if (command === "/plans") {
+      await appendSystemMessage(await renderPlansMessage(workspace, planId));
+      return;
+    }
+
+    if (command === "/plan") {
+      await appendSystemMessage(renderPlanUsageMessage(planId, getPlanningPackPaths(workspace, { planId })));
+      return;
+    }
+
+    if (command.startsWith("/plan new ")) {
+      const requestedPlanId = command.slice("/plan new ".length).trim();
+
+      if (!requestedPlanId) {
+        await appendSystemMessage("Usage: `/plan new <id>`");
+        return;
+      }
+
+      setSidebar("creating named plan...");
+      setFooter(" Creating named plan... ");
       screen.render();
+
+      const createdPaths = await createPlanScaffold(workspace, requestedPlanId);
+      await switchPlan(createdPaths.planId);
+      await appendSystemMessage(
+        [
+          `Created and selected plan \`${createdPaths.planId}\`.`,
+          `Planning directory: ${createdPaths.relativeDir}`,
+          "Use `/readiness` while gathering context, then `/write` when the plan is ready."
+        ].join("\n")
+      );
+      return;
+    }
+
+    if (command.startsWith("/plan ")) {
+      const requestedPlanId = command.slice("/plan ".length).trim();
+
+      if (!requestedPlanId) {
+        await appendSystemMessage(renderPlanUsageMessage(planId, getPlanningPackPaths(workspace, { planId })));
+        return;
+      }
+
+      await switchPlan(requestedPlanId);
+      await appendSystemMessage(`Active plan set to \`${planId}\`.\nPlanning directory: ${getPlanningPackPaths(workspace, { planId }).relativeDir}`);
+      return;
+    }
+
+    if (command === "/status") {
+      const packState = latestPackState ?? (await readPlanningPackState(workspace, { planId }));
+      await appendSystemMessage(renderStatusMessage(workspace, packState));
+      return;
+    }
+
+    if (command === "/readiness") {
+      const packState = latestPackState ?? (await readPlanningPackState(workspace, { planId }));
+      await appendSystemMessage(renderReadinessMessage(packState));
+      return;
+    }
+
+    if (command === "/stop") {
+      const state = await requestAutoRunStop(workspace, { planId });
+      await refreshEnvironment();
+      await appendSystemMessage(
+        state.status === "stop_requested"
+          ? "Stop requested. Auto mode will finish the current iteration before stopping."
+          : "No active auto run was in progress."
+      );
       return;
     }
 
     if (command === "/agents") {
-      const agentState = await resolvePrimaryAgent(workspace);
-      await appendMessage({
-        role: "system",
-        content: renderAgentSelectionMessage(agentState.status, agentState.statuses)
-      });
-      renderTranscript();
-      setSidebar();
-      setFooter();
-      screen.render();
+      const agentState = await resolvePrimaryAgent(workspace, { planId });
+      await appendSystemMessage(renderAgentSelectionMessage(agentState.status, agentState.statuses));
       return;
     }
 
@@ -391,19 +464,8 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
       const requestedId = command.slice("/agent".length).trim().toLowerCase();
 
       if (!requestedId) {
-        const agentState = await resolvePrimaryAgent(workspace);
-        await appendMessage({
-          role: "system",
-          content: [
-            buildAgentUsageMessage(),
-            "",
-            renderAgentSelectionMessage(agentState.status, agentState.statuses)
-          ].join("\n")
-        });
-        renderTranscript();
-        setSidebar();
-        setFooter();
-        screen.render();
+        const agentState = await resolvePrimaryAgent(workspace, { planId });
+        await appendSystemMessage([buildAgentUsageMessage(), "", renderAgentSelectionMessage(agentState.status, agentState.statuses)].join("\n"));
         return;
       }
 
@@ -412,20 +474,14 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
       screen.render();
 
       try {
-        const agentState = await selectPrimaryAgent(workspace, requestedId);
-        await appendMessage({
-          role: "system",
-          content: [
-            `Active agent set to ${agentState.status.label} for this workspace session.`,
-            "",
-            renderAgentSelectionMessage(agentState.status, agentState.statuses)
-          ].join("\n")
-        });
+        const agentState = await selectPrimaryAgent(workspace, requestedId, { planId });
+        await appendSystemMessage(
+          [`Active agent set to ${agentState.status.label} for plan \`${planId}\`.`, "", renderAgentSelectionMessage(agentState.status, agentState.statuses)].join(
+            "\n"
+          )
+        );
       } catch (error) {
-        await appendMessage({
-          role: "system",
-          content: `Agent selection failed: ${error instanceof Error ? error.message : String(error)}`
-        });
+        await appendSystemMessage(`Agent selection failed: ${error instanceof Error ? error.message : String(error)}`);
       } finally {
         await refreshEnvironment();
       }
@@ -434,58 +490,39 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
     }
 
     if (command === "/help") {
-      await appendMessage({
-        role: "system",
-        content:
-          [
-            "Workflow:",
-            "1. Talk normally to sharpen the plan against the real repo.",
-            "2. Run `/workspace <path>` when you want to change which repo and planning directory you are looking at.",
-            "3. Run `/agents` to inspect available tools and `/agent <id>` when you want to switch the workspace session.",
-            "4. Run `/write` when the shape is ready to put the plan on disk inside `.srgical/`.",
-            "5. Run `/preview` to inspect the next execution safely before writes happen.",
-            "6. Run `/run` when you want the active agent to execute the next eligible tracker block.",
-            "",
-            "Controls:",
-            "- `Enter` sends the current message.",
-            "- `PageUp` and `PageDown` scroll the transcript.",
-            "- `/quit` closes the studio."
-          ].join("\n")
-      });
-      renderTranscript();
-      setSidebar();
-      setFooter();
-      screen.render();
+      await appendSystemMessage(
+        [
+          "Workflow:",
+          "1. Talk normally to sharpen the plan against the real repo.",
+          "2. Use `/plans`, `/plan`, and `/plan new <id>` to manage named planning packs in this workspace.",
+          "3. Use `/readiness` to see what context is still missing before you write the pack.",
+          "4. Run `/write` when the plan is ready to put on disk.",
+          "5. Run `/preview` for a safe execution preview, `/run` for one execution step, or `/auto [max]` for continuous execution.",
+          "6. Run `/stop` to stop auto mode after the current iteration.",
+          "",
+          "Controls:",
+          "- `Enter` sends the current message or command.",
+          "- `Shift+Enter`, `Alt+Enter`, or `Ctrl+J` inserts a new line when the terminal exposes those keys distinctly.",
+          "- `PageUp` and `PageDown` scroll the transcript.",
+          "- `/quit` closes the studio."
+        ].join("\n")
+      );
       return;
     }
 
     if (command === "/preview") {
-      const paths: PlanningPackPaths = getPlanningPackPaths(workspace);
-      const packState = await readPlanningPackState(workspace);
+      const paths: PlanningPackPaths = getPlanningPackPaths(workspace, { planId });
+      const packState = await readPlanningPackState(workspace, { planId });
 
       if (!packState.packPresent) {
-        await appendMessage({
-          role: "system",
-          content: "Execution preview unavailable: no .srgical planning pack was found yet."
-        });
-        renderTranscript();
-        setSidebar();
-        setFooter();
-        screen.render();
+        await appendSystemMessage("Execution preview unavailable: no planning pack was found for the selected plan yet.");
         return;
       }
 
       const prompt = await readText(paths.nextPrompt);
-      await appendMessage({
-        role: "system",
-        content: renderDryRunPreview(prompt, packState.nextStepSummary, packState.currentPosition.nextRecommended).join(
-          "\n"
-        )
-      });
-      renderTranscript();
-      setSidebar();
-      setFooter();
-      screen.render();
+      await appendSystemMessage(
+        renderDryRunPreview(prompt, packState.nextStepSummary, packState.currentPosition.nextRecommended).join("\n")
+      );
       return;
     }
 
@@ -493,16 +530,11 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
       startBusy("pack");
 
       try {
-        const result = await writePlanningPack(workspace, messages);
-        await appendMessage({
-          role: "system",
-          content: `Planning pack updated. Summary:\n${result}`
-        });
+        const result = await writePlanningPack(workspace, messages, { planId });
+        await markPlanningPackAuthored(workspace, { planId });
+        await appendSystemMessage(`Planning pack updated for \`${planId}\`. Summary:\n${result}`);
       } catch (error) {
-        await appendMessage({
-          role: "system",
-          content: `Pack generation failed: ${error instanceof Error ? error.message : String(error)}`
-        });
+        await appendSystemMessage(`Pack generation failed: ${error instanceof Error ? error.message : String(error)}`);
       } finally {
         stopBusy();
         await refreshEnvironment();
@@ -512,18 +544,11 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
     }
 
     if (command === "/run") {
-      const paths: PlanningPackPaths = getPlanningPackPaths(workspace);
-      const packState = await readPlanningPackState(workspace);
+      const paths: PlanningPackPaths = getPlanningPackPaths(workspace, { planId });
+      const packState = await readPlanningPackState(workspace, { planId });
 
       if (!hasQueuedNextStep(packState.currentPosition.nextRecommended)) {
-        await appendMessage({
-          role: "system",
-          content: formatNoQueuedNextStepMessage("studio")
-        });
-        renderTranscript();
-        setSidebar();
-        setFooter();
-        screen.render();
+        await appendSystemMessage(formatNoQueuedNextStepMessage("studio"));
         return;
       }
 
@@ -531,25 +556,29 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
 
       try {
         const prompt = await readText(paths.nextPrompt);
-        const result = await runNextPrompt(workspace, prompt);
-        await saveExecutionState(workspace, "success", "studio", result);
-        await appendMessage({
-          role: "system",
-          content: `Execution run finished. ${getPrimaryAgentAdapter().label} summary:\n${result}`
+        const result = await runNextPrompt(workspace, prompt, { planId });
+        await saveExecutionState(workspace, "success", "studio", result, { planId });
+        await appendExecutionLog(workspace, "success", "studio", result, {
+          planId,
+          stepLabel: packState.nextStepSummary?.id ?? packState.currentPosition.nextRecommended
         });
+        await appendSystemMessage(`Execution run finished. ${getPrimaryAgentAdapter().label} summary:\n${result}`);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        await saveExecutionState(workspace, "failure", "studio", message);
-        const refreshedPackState = await readPlanningPackState(workspace);
-        await appendMessage({
-          role: "system",
-          content: formatExecutionFailureMessage(
+        await saveExecutionState(workspace, "failure", "studio", message, { planId });
+        await appendExecutionLog(workspace, "failure", "studio", message, {
+          planId,
+          stepLabel: packState.nextStepSummary?.id ?? packState.currentPosition.nextRecommended
+        });
+        const refreshedPackState = await readPlanningPackState(workspace, { planId });
+        await appendSystemMessage(
+          formatExecutionFailureMessage(
             message,
             refreshedPackState.nextStepSummary,
             refreshedPackState.currentPosition.nextRecommended,
             "studio"
           )
-        });
+        );
       } finally {
         stopBusy();
         await refreshEnvironment();
@@ -558,21 +587,40 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
       return;
     }
 
-    await appendMessage({
-      role: "system",
-      content: `Unknown command: ${command}`
-    });
-    renderTranscript();
-    setSidebar();
-    setFooter();
-    screen.render();
+    if (command.startsWith("/auto")) {
+      const requestedMax = command.slice("/auto".length).trim();
+      const maxSteps = requestedMax ? Number(requestedMax) : undefined;
+
+      startBusy("auto");
+
+      try {
+        const result = await executeAutoRun(workspace, {
+          source: "studio",
+          planId,
+          maxSteps,
+          onMessage: async (line) => {
+            await appendSystemMessage(line);
+          }
+        });
+        await appendSystemMessage(`Auto mode finished: ${result.summary}`);
+      } catch (error) {
+        await appendSystemMessage(`Auto mode failed: ${error instanceof Error ? error.message : String(error)}`);
+      } finally {
+        stopBusy();
+        await refreshEnvironment();
+      }
+
+      return;
+    }
+
+    await appendSystemMessage(`Unknown command: ${command}`);
   }
 
   input.on("submit", async (value: string) => {
     const text = value.trim();
     input.clearValue();
 
-    if (!text || busy) {
+    if (!text || (busy && text !== "/stop")) {
       screen.render();
       return;
     }
@@ -594,7 +642,7 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
     screen.render();
 
     try {
-      const reply = await requestPlannerReply(workspace, messages);
+      const reply = await requestPlannerReply(workspace, messages, { planId });
       await appendMessage({
         role: "assistant",
         content: reply
@@ -615,6 +663,11 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
   });
 
   screen.key(["C-c"], () => {
+    if (busyMode === "auto") {
+      void requestAutoRunStop(workspace, { planId });
+      return;
+    }
+
     stopBusy();
     screen.destroy();
   });
@@ -642,14 +695,7 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
       return;
     }
 
-    await appendMessage({
-      role: "system",
-      content: renderWorkspaceSelectionMessage(workspace, latestPackState)
-    });
-    renderTranscript();
-    setSidebar();
-    setFooter();
-    screen.render();
+    await appendSystemMessage(renderWorkspaceSelectionMessage(workspace, latestPackState));
   }
 }
 
@@ -661,6 +707,8 @@ function describeBusyMode(mode: BusyMode): string {
       return `writing planning pack via ${getPrimaryAgentAdapter().label}`;
     case "run":
       return `executing next-agent prompt via ${getPrimaryAgentAdapter().label}`;
+    case "auto":
+      return `running auto mode via ${getPrimaryAgentAdapter().label}`;
   }
 }
 
@@ -707,6 +755,26 @@ function formatExecutionSummary(execution: {
   return `${label} via ${execution.source}\n${execution.updatedAt}\n${execution.summary}`;
 }
 
+function formatAutoSummary(packState: PlanningPackState | null): string {
+  if (!packState?.autoRun) {
+    return "idle";
+  }
+
+  const lines: string[] = [packState.autoRun.status];
+
+  if (packState.autoRun.maxSteps) {
+    lines.push(`steps: ${packState.autoRun.stepsAttempted}/${packState.autoRun.maxSteps}`);
+  } else {
+    lines.push(`steps: ${packState.autoRun.stepsAttempted}`);
+  }
+
+  if (packState.autoRun.stopReason) {
+    lines.push(packState.autoRun.stopReason);
+  }
+
+  return lines.join("\n");
+}
+
 function formatAgentSummary(activeAgent: AgentStatus, statuses: AgentStatus[]): string {
   return [`active: ${activeAgent.label}`, ...statuses.map((status) => formatAgentStatusLine(status, status.id === activeAgent.id))]
     .join("\n");
@@ -719,33 +787,50 @@ export function buildStudioHeaderContent(workspace: string, packState: PlanningP
 }
 
 export function formatPlanningPackSummary(workspace: string, packState: PlanningPackState): string {
+  const planId = packState.planId ?? "default";
+  const readinessScore = packState.readiness?.score ?? 0;
+  const readinessTotal = packState.readiness?.total ?? 4;
+  const docsPresent = packState.docsPresent ?? (packState.packPresent ? 4 : 0);
   const lines = [
     `state: ${describePlanningPackState(packState)}`,
-    `dir: ${getPlanningPackPaths(workspace).dir}`
+    `plan: ${planId}`,
+    `dir: ${getPlanningPackPaths(workspace, { planId }).relativeDir}`,
+    `docs: ${docsPresent}/4`,
+    `readiness: ${readinessScore}/${readinessTotal}`
   ];
 
-  if (!packState.packPresent) {
-    lines.push("next: /write will put the plan on disk");
-  } else if (packState.trackerReadable) {
-    lines.push(packState.currentPosition.nextRecommended ? "next: /preview or /run when ready" : "next: plan is written; queue more work when ready");
+  const mode = deriveDisplayMode(packState);
+  const readyToWrite = packState.readiness?.readyToWrite ?? false;
+
+  if (mode === "Gathering Context" || mode === "Ready to Write") {
+    lines.push(readyToWrite ? "next: /write will create or refresh the planning doc set" : "next: keep gathering context or run /readiness");
+  } else if (mode === "Ready to Execute" || mode === "Execution Active" || mode === "Auto Running") {
+    lines.push("next: /preview, /run, or /auto when ready");
+  } else if (!packState.packPresent) {
+    lines.push("next: /plan new <id> or /write to create the planning doc set");
   } else {
-    lines.push("next: rewrite or repair the pack before running");
+    lines.push("next: add or queue the next execution-ready step");
   }
 
   return lines.join("\n");
 }
 
 export function renderWorkspaceSelectionMessage(workspace: string, packState: PlanningPackState): string {
+  const planId = packState.planId ?? "default";
+
   return [
     "Planning view:",
     `- workspace: ${workspace}`,
-    `- planning dir: ${getPlanningPackPaths(workspace).dir}`,
+    `- active plan: ${planId}`,
+    `- planning dir: ${getPlanningPackPaths(workspace, { planId }).relativeDir}`,
     `- plan status: ${describePlanningPackState(packState)}`,
+    `- readiness: ${packState.readiness.score}/${packState.readiness.total}`,
     "",
     "Use `/workspace <path>` to switch repos.",
-    !packState.packPresent
+    "Use `/plans` to inspect plan directories and `/plan <id>` to switch plans.",
+    !packState.packPresent || packState.mode === "Gathering Context" || packState.mode === "Ready to Write"
       ? "Use `/write` when you want to put the current plan on disk."
-      : "Use `/write` when you want to refresh the plan on disk from this transcript."
+      : "Use `/write` when you want to refresh the selected plan from this transcript."
   ].join("\n");
 }
 
@@ -828,25 +913,142 @@ function isDefaultStudioSession(messages: ChatMessage[]): boolean {
 }
 
 function describePlanningPackState(packState: PlanningPackState): string {
-  if (!packState.packPresent) {
-    return "not written yet";
-  }
-
-  if (!packState.trackerReadable) {
-    return "written but needs attention";
-  }
-
-  return "written to disk";
+  return `${deriveDisplayMode(packState).toLowerCase()}${packState.hasFailureOverlay ? " (last run failed)" : ""}`;
 }
 
 function formatPlanningPackPill(packState: PlanningPackState): string {
+  const planId = packState.planId ?? "default";
+  const mode = deriveDisplayMode(packState);
+
+  if (mode === "Auto Running") {
+    return `{#4de2c5-fg}PLAN ${planId.toUpperCase()} | AUTO RUNNING{/}`;
+  }
+
   if (!packState.packPresent) {
-    return "{#ffb14a-fg}PLAN NOT WRITTEN{/}";
+    return `{#ffb14a-fg}PLAN ${planId.toUpperCase()} | NO PACK{/}`;
   }
 
-  if (!packState.trackerReadable) {
-    return "{#ff7a59-fg}PACK NEEDS ATTENTION{/}";
+  if (packState.hasFailureOverlay) {
+    return `{#ff7a59-fg}PLAN ${planId.toUpperCase()} | ${mode.toUpperCase()} | FAILED{/}`;
   }
 
-  return "{#4de2c5-fg}PLAN WRITTEN{/}";
+  if (mode === "Ready to Execute" || mode === "Execution Active") {
+    return `{#4de2c5-fg}PLAN ${planId.toUpperCase()} | ${mode.toUpperCase()}{/}`;
+  }
+
+  return `{#ffb14a-fg}PLAN ${planId.toUpperCase()} | ${mode.toUpperCase()}{/}`;
+}
+
+function deriveDisplayMode(packState: PlanningPackState): string {
+  if (packState.mode) {
+    return packState.mode;
+  }
+
+  if (!packState.packPresent) {
+    return "No Pack";
+  }
+
+  if (packState.currentPosition?.nextRecommended) {
+    return "Execution Active";
+  }
+
+  return packState.trackerReadable ? "Plan Written - Needs Step" : "Gathering Context";
+}
+
+function configureComposer(input: blessed.Widgets.TextareaElement): void {
+  const internals = input as blessed.Widgets.TextareaElement & {
+    _listener?: (ch: string, key: blessed.Widgets.Events.IKeyEventArg) => void;
+    _done?: (err: unknown, value: string | null) => void;
+    value?: string;
+  };
+  const originalListener = internals._listener;
+
+  if (!originalListener) {
+    return;
+  }
+
+  internals._listener = function patchedListener(ch: string, key: blessed.Widgets.Events.IKeyEventArg): void {
+    if (key.name === "enter" && !key.shift && !key.meta && !key.ctrl) {
+      if (typeof internals._done === "function") {
+        internals._done(null, internals.value ?? "");
+      }
+      return;
+    }
+
+    if ((key.name === "enter" && (key.shift || key.meta)) || (key.ctrl && key.name === "j")) {
+      originalListener.call(this, "\n", { ...key, name: "enter" });
+      return;
+    }
+
+    originalListener.call(this, ch, key);
+  };
+}
+
+function renderStatusMessage(workspace: string, packState: PlanningPackState): string {
+  return [
+    `Plan: ${packState.planId}`,
+    `Planning dir: ${getPlanningPackPaths(workspace, { planId: packState.planId }).relativeDir}`,
+    `Mode: ${packState.mode}${packState.hasFailureOverlay ? " [last run failed]" : ""}`,
+    `Docs: ${packState.docsPresent}/4`,
+    `Readiness: ${packState.readiness.score}/${packState.readiness.total}${packState.readiness.readyToWrite ? " (ready to write)" : ""}`,
+    `Execution activated: ${packState.executionActivated ? "yes" : "no"}`,
+    `Auto mode: ${packState.autoRun?.status ?? "idle"}`,
+    `Next step: ${packState.nextStepSummary?.id ?? packState.currentPosition.nextRecommended ?? "none queued"}`
+  ].join("\n");
+}
+
+function renderReadinessMessage(packState: PlanningPackState): string {
+  return [
+    `Readiness for plan \`${packState.planId}\`: ${packState.readiness.score}/${packState.readiness.total}${packState.readiness.readyToWrite ? " (ready to write)" : ""}`,
+    "",
+    ...packState.readiness.checks.map((check) => `- ${check.passed ? "[x]" : "[ ]"} ${check.label}`),
+    "",
+    packState.readiness.missingLabels.length > 0
+      ? `Missing: ${packState.readiness.missingLabels.join(", ")}`
+      : "Missing: none",
+    packState.readiness.readyToWrite
+      ? "Next: run `/write` to create or refresh the planning doc set."
+      : "Next: keep gathering repo truth, constraints, and the first execution slice."
+  ].join("\n");
+}
+
+function renderPlanUsageMessage(currentPlanId: string, paths: PlanningPackPaths): string {
+  return [
+    `Current plan: ${currentPlanId}`,
+    `Planning dir: ${paths.relativeDir}`,
+    "",
+    "Commands:",
+    "- `/plans` lists available plans",
+    "- `/plan <id>` switches the active plan",
+    "- `/plan new <id>` creates a named plan scaffold"
+  ].join("\n");
+}
+
+async function renderPlansMessage(workspace: string, currentPlanId: string): Promise<string> {
+  const refs = await listPlanningDirectories(workspace);
+
+  if (refs.length === 0) {
+    return "No planning packs exist yet.\nUse `/plan new <id>` or `/write` to create one.";
+  }
+
+  const states = await Promise.all(refs.map((ref) => readPlanningPackState(workspace, { planId: ref.planId })));
+
+  return [
+    "Plans:",
+    ...states.map(
+      (state) =>
+        `- ${state.planId}${state.planId === currentPlanId ? " [active]" : ""}: ${state.packDir} | ${state.mode} | docs ${state.docsPresent}/4 | readiness ${state.readiness.score}/${state.readiness.total} | auto ${state.autoRun?.status ?? "idle"}`
+    )
+  ].join("\n");
+}
+
+async function createPlanScaffold(workspace: string, requestedPlanId: string): Promise<PlanningPackPaths> {
+  const planId = normalizePlanId(requestedPlanId);
+  const paths = await ensurePlanningDir(workspace, { planId });
+  const templates = getInitialTemplates(paths);
+
+  await Promise.all(Object.entries(templates).map(([filePath, content]) => writeText(filePath, content)));
+  await savePlanningState(workspace, "scaffolded", { planId });
+  await saveActivePlanId(workspace, planId);
+  return paths;
 }
