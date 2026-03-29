@@ -39,6 +39,21 @@ test("format-planning-pack-summary makes a written plan obvious", () => {
   assert.match(buildStudioHeaderContent(workspace, state), /PLAN DEFAULT \| EXECUTION ACTIVE/);
 });
 
+test("scaffolded ready plans guide users to first-write before confirmation", () => {
+  const workspace = "G:\\code\\Launch11Projects\\demo";
+  const state = createPackState({
+    packPresent: true,
+    trackerReadable: false,
+    mode: "Ready to Write",
+    packMode: "scaffolded",
+    readinessReadyToWrite: true,
+    humanWriteConfirmed: false
+  });
+
+  assert.match(formatPlanningPackSummary(workspace, state), /first grounded draft/);
+  assert.match(renderWorkspaceSelectionMessage(workspace, state), /first grounded draft/);
+});
+
 test("format-tracker-summary shows none queued instead of unknown", () => {
   assert.equal(
     formatTrackerSummary({
@@ -85,6 +100,9 @@ function createPackState(options: {
   trackerReadable: boolean;
   nextRecommended?: string | null;
   mode?: PlanningPackState["mode"];
+  packMode?: PlanningPackState["packMode"];
+  readinessReadyToWrite?: boolean;
+  humanWriteConfirmed?: boolean;
 }): PlanningPackState {
   return {
     planId: "default",
@@ -110,15 +128,15 @@ function createPackState(options: {
       : null,
     lastExecution: null,
     planningState: null,
-    packMode: options.packPresent ? "authored" : "scaffolded",
+    packMode: options.packMode ?? (options.packPresent ? "authored" : "scaffolded"),
     readiness: {
       checks: [],
       score: options.packPresent ? 3 : 0,
       total: 4,
-      readyToWrite: false,
+      readyToWrite: options.readinessReadyToWrite ?? false,
       missingLabels: []
     },
-    humanWriteConfirmed: false,
+    humanWriteConfirmed: options.humanWriteConfirmed ?? false,
     humanWriteConfirmedAt: null,
     autoRun: null,
     executionActivated: Boolean(options.nextRecommended),

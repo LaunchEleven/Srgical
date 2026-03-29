@@ -12,7 +12,7 @@ export const DEFAULT_STUDIO_MESSAGES: ChatMessage[] = [
   {
     role: "assistant",
     content:
-      "Describe what you are building, what is already true in the repo, or the next decision you need to make. I will help turn it into a disciplined `.srgical/` execution pack; after human review run `/confirm-plan`, then `/write` will update the repo files."
+      "Describe what you are building, what is already true in the repo, or the next decision you need to make. I will help turn it into a disciplined `.srgical/` execution pack; run `/write` for the first grounded draft, then use `/review` + `/confirm-plan` before authored-plan refresh writes."
   }
 ];
 

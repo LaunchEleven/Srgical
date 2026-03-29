@@ -36,10 +36,11 @@ Inside studio:
 
 1. talk through scope/constraints and use `/readiness` + `/advice`
 2. inject repo files directly with `/read <path>` (press `Tab` to autocomplete file paths)
-3. run `/review` and `/open all` (or `/open <path>`) for human doc review
-4. run `/confirm-plan` (human approval gate)
-5. run `/write`
-6. execute with `/preview`, `/run`, or `/auto 10` (`/stop` to stop after current iteration)
+3. run `/write` to generate the first grounded draft from transcript context
+4. run `/review` and `/open all` (or `/open <path>`) for human doc review
+5. run `/confirm-plan` (required before authored-plan refresh writes)
+6. run `/write` again when refreshing an authored plan
+7. execute with `/preview`, `/run`, or `/auto 10` (`/stop` to stop after current iteration)
 
 CLI execution path:
 
@@ -79,7 +80,8 @@ This repo currently ships the foundation for:
 - `srgical studio`
   Opens a full-screen planning studio where you can switch between named plans, inspect readiness with `/readiness`,
   inspect supported tools with `/agents`, refresh AI guidance with `/advice`, run human review with `/review` and
-  `/open`, inject large file context via `/read <path>`, confirm with `/confirm-plan`, and then trigger pack writes,
+  `/open`, inject large file context via `/read <path>`, confirm with `/confirm-plan` for authored-plan refresh writes,
+  and then trigger pack writes,
   single-step execution, or `/auto`.
 - `srgical run-next`
   Replays the generated execution handoff through the active agent, with `--plan <id>` for plan targeting,
@@ -234,7 +236,7 @@ Before `/write`, a human must review and confirm:
 
 - use `/review` to get the checklist and file targets
 - use `/open all` to open the planning docs in VS Code
-- use `/confirm-plan` to unlock `/write`
+- use `/confirm-plan` to approve authored-plan refresh writes
 
 ## Current Claude Caveat
 

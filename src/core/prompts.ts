@@ -70,10 +70,11 @@ SCOPE FREEZE
 DEFERRED / V2
 - concise bullets of descoped items
 NEXT
+- run /write (first grounded draft from transcript)
 - run /review
 - run /open all
-- run /confirm-plan
-- run /write
+- run /confirm-plan (required for authored-plan refresh writes)
+- run /write (only when refreshing an authored plan)
 
 Conversation so far:
 

@@ -646,7 +646,7 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
         [
           `Created and selected plan \`${createdPaths.planId}\`.`,
           `Planning directory: ${createdPaths.relativeDir}`,
-          "Use `/readiness` while gathering context, then `/write` when the plan is ready."
+          "Use `/readiness` while gathering context, then `/write` to generate the first grounded draft."
         ].join("\n")
       );
       return;
@@ -693,7 +693,9 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
             ? `Human write confirmation: confirmed (${packState.humanWriteConfirmedAt ?? "timestamp unavailable"})`
             : "Human write confirmation: pending",
           "Run `/open all` to open every planning doc in VS Code.",
-          "Run `/confirm-plan` after human review is complete."
+          packState.packMode === "scaffolded"
+            ? "This plan is still scaffolded; run `/write` to generate the first grounded draft from the transcript."
+            : "Run `/confirm-plan` after human review is complete, then `/write` to refresh the authored plan."
         ].join("\n")
       );
       return;
@@ -757,14 +759,23 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
 
       await setHumanWriteConfirmation(workspace, true, { planId });
       await refreshEnvironment();
-      await appendSystemMessage("Human write confirmation recorded. `/write` is now allowed once readiness is satisfied.");
+      await appendSystemMessage(
+        packState.packMode === "scaffolded"
+          ? "Human write confirmation recorded. This approval will be enforced after the first authored draft is generated."
+          : "Human write confirmation recorded. `/write` is now allowed once readiness is satisfied."
+      );
       return;
     }
 
     if (command === "/revoke-plan-confirmation") {
+      const packState = latestPackState ?? (await readPlanningPackState(workspace, { planId }));
       await setHumanWriteConfirmation(workspace, false, { planId });
       await refreshEnvironment();
-      await appendSystemMessage("Human write confirmation revoked. `/write` is now blocked until `/confirm-plan` is run again.");
+      await appendSystemMessage(
+        requiresHumanWriteConfirmation(packState)
+          ? "Human write confirmation revoked. `/write` is now blocked until `/confirm-plan` is run again."
+          : "Human write confirmation revoked. First scaffolded `/write` remains allowed; authored-plan refresh writes will require `/confirm-plan`."
+      );
       return;
     }
 
@@ -835,11 +846,12 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
           "2. Use `/plans`, `/plan`, and `/plan new <id>` to manage named planning packs in this workspace.",
           "3. Use `/read <path>` to inject repo files into the transcript for context gathering.",
           "4. Use `/readiness` to see what context is still missing before you write the pack.",
-          "5. Run `/review` and `/open [all|plan|context|tracker|prompt|handoff|dir|<path>]` for human review.",
-          "6. Run `/confirm-plan` after a human has reviewed and approved writing.",
-          "7. Run `/write` after readiness and confirmation are both satisfied.",
-          "8. Run `/preview` for a safe execution preview, `/run` for one execution step, or `/auto [max]` for continuous execution.",
-          "9. Run `/stop` to stop auto mode after the current iteration.",
+          "5. Run `/write` to generate the first grounded draft from the transcript.",
+          "6. Then run `/review` and `/open [all|plan|context|tracker|prompt|handoff|dir|<path>]` for human review.",
+          "7. Run `/confirm-plan` to approve subsequent refresh writes.",
+          "8. Run `/write` again when you want to refresh an authored plan.",
+          "9. Run `/preview` for a safe execution preview, `/run` for one execution step, or `/auto [max]` for continuous execution.",
+          "10. Run `/stop` to stop auto mode after the current iteration.",
           "",
           "Controls:",
           "- `Enter` sends the current message or command.",
@@ -882,7 +894,7 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
         return;
       }
 
-      if (!packState.humanWriteConfirmed) {
+      if (requiresHumanWriteConfirmation(packState) && !packState.humanWriteConfirmed) {
         await appendSystemMessage(
           [
             "Planning pack write blocked: explicit human confirmation is required.",
@@ -1275,7 +1287,13 @@ export function formatPlanningPackSummary(workspace: string, packState: Planning
     `dir: ${getPlanningPackPaths(workspace, { planId }).relativeDir}`,
     `docs: ${docsPresent}/5`,
     `readiness: ${readinessScore}/${readinessTotal}`,
-    `human gate: ${packState.humanWriteConfirmed ? "confirmed" : "pending"}`
+    `human gate: ${
+      requiresHumanWriteConfirmation(packState)
+        ? packState.humanWriteConfirmed
+          ? "confirmed"
+          : "pending"
+        : "not required for first scaffolded draft"
+    }`
   ];
 
   const mode = deriveDisplayMode(packState);
@@ -1284,9 +1302,11 @@ export function formatPlanningPackSummary(workspace: string, packState: Planning
   if (mode === "Gathering Context" || mode === "Ready to Write") {
     lines.push(
       readyToWrite
-        ? packState.humanWriteConfirmed
-          ? "next: /write will create or refresh the planning doc set"
-          : "next: /review, /open all, and /confirm-plan before /write"
+        ? packState.packMode === "scaffolded"
+          ? "next: /write will generate the first grounded draft from this transcript"
+          : packState.humanWriteConfirmed
+            ? "next: /write will refresh the authored planning doc set"
+            : "next: /review, /open all, and /confirm-plan before /write"
         : "next: keep gathering context or run /readiness"
     );
   } else if (mode === "Ready to Execute" || mode === "Execution Active" || mode === "Auto Running") {
@@ -1316,7 +1336,9 @@ export function renderWorkspaceSelectionMessage(workspace: string, packState: Pl
     "Use `/plans` to inspect plan directories and `/plan <id>` to switch plans.",
     "Use `/read <path>` to inject large file context directly into the transcript.",
     !packState.packPresent || packState.mode === "Gathering Context" || packState.mode === "Ready to Write"
-      ? "Use `/review`, `/open all`, `/confirm-plan`, then `/write` when the plan is ready."
+      ? packState.packMode === "scaffolded"
+        ? "Use `/write` to generate the first grounded draft once readiness is satisfied."
+        : "Use `/review`, `/open all`, `/confirm-plan`, then `/write` to refresh the authored plan."
       : "Use `/write` when you want to refresh the selected plan from this transcript."
   ].join("\n");
 }
@@ -1449,7 +1471,13 @@ function renderStatusMessage(workspace: string, packState: PlanningPackState): s
     `Mode: ${packState.mode}${packState.hasFailureOverlay ? " [last run failed]" : ""}`,
     `Docs: ${packState.docsPresent}/5`,
     `Readiness: ${packState.readiness.score}/${packState.readiness.total}${packState.readiness.readyToWrite ? " (ready to write)" : ""}`,
-    `Human write gate: ${packState.humanWriteConfirmed ? `confirmed (${packState.humanWriteConfirmedAt ?? "timestamp unavailable"})` : "pending"}`,
+    `Human write gate: ${
+      requiresHumanWriteConfirmation(packState)
+        ? packState.humanWriteConfirmed
+          ? `confirmed (${packState.humanWriteConfirmedAt ?? "timestamp unavailable"})`
+          : "pending"
+        : "not required for first scaffolded draft"
+    }`,
     `Execution activated: ${packState.executionActivated ? "yes" : "no"}`,
     `Auto mode: ${packState.autoRun?.status ?? "idle"}`,
     `Next step: ${packState.nextStepSummary?.id ?? packState.currentPosition.nextRecommended ?? "none queued"}`
@@ -1471,11 +1499,19 @@ function renderReadinessMessage(packState: PlanningPackState): string {
     packState.readiness.missingLabels.length > 0
       ? `Missing: ${packState.readiness.missingLabels.join(", ")}`
       : "Missing: none",
-    `Human write gate: ${packState.humanWriteConfirmed ? "confirmed" : "pending"}`,
+    `Human write gate: ${
+      requiresHumanWriteConfirmation(packState)
+        ? packState.humanWriteConfirmed
+          ? "confirmed"
+          : "pending"
+        : "not required for first scaffolded draft"
+    }`,
     packState.readiness.readyToWrite
-      ? packState.humanWriteConfirmed
-        ? "Next: run `/write` to create or refresh the planning doc set."
-        : "Next: run `/review`, then `/confirm-plan` before `/write`."
+      ? packState.packMode === "scaffolded"
+        ? "Next: run `/write` to generate the first grounded draft."
+        : packState.humanWriteConfirmed
+          ? "Next: run `/write` to refresh the authored planning doc set."
+          : "Next: run `/review`, then `/confirm-plan` before `/write`."
       : "Next: keep gathering repo truth, constraints, and the first execution slice."
   ].join("\n");
 }
@@ -1726,8 +1762,12 @@ function renderPlanUsageMessage(currentPlanId: string, paths: PlanningPackPaths)
     "- `/review` shows planning docs for human review",
     "- `/open all` opens planning docs in VS Code",
     "- `/open <path>` opens any repo file or folder in VS Code",
-    "- `/confirm-plan` records explicit human approval for `/write`"
+    "- `/confirm-plan` records explicit human approval required for authored-plan refresh writes"
   ].join("\n");
+}
+
+function requiresHumanWriteConfirmation(packState: PlanningPackState): boolean {
+  return packState.packMode === "authored";
 }
 
 async function renderPlansMessage(workspace: string, currentPlanId: string): Promise<string> {
