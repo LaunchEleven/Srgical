@@ -1,13 +1,7 @@
 import process from "node:process";
 import { resolvePrimaryAgent, type AgentStatus } from "../core/agent";
 import { readPlanningPackState, type PlanningStepSummary } from "../core/planning-pack-state";
-import {
-  DEFAULT_PLAN_ID,
-  isGitRepo,
-  listPlanningDirectories,
-  resolvePlanId,
-  resolveWorkspace
-} from "../core/workspace";
+import { isGitRepo, listPlanningDirectories, resolvePlanId, resolveWorkspace } from "../core/workspace";
 
 type DoctorCommandOptions = {
   planId?: string | null;
@@ -36,7 +30,7 @@ export async function runDoctorCommand(workspaceArg?: string, options: DoctorCom
   ];
 
   if (planRefs.length === 0) {
-    lines.push(`- ${DEFAULT_PLAN_ID}: no planning packs detected yet`);
+    lines.push("- none: no planning packs detected yet");
   } else {
     const planStates = await Promise.all(planRefs.map((ref) => readPlanningPackState(workspace, { planId: ref.planId })));
 
@@ -51,7 +45,7 @@ export async function runDoctorCommand(workspaceArg?: string, options: DoctorCom
     "",
     selectedPlanState.packPresent
       ? selectedPlanState.mode === "Ready to Write" || selectedPlanState.mode === "Gathering Context"
-        ? "Next move: run `srgical studio` to refine the plan, check `/readiness`, and use `/write` when it is ready."
+        ? "Next move: run `srgical studio` to refine the plan, run `/review`, then `/confirm-plan` before `/write`."
         : selectedPlanState.mode === "Ready to Execute" || selectedPlanState.mode === "Execution Active" || selectedPlanState.mode === "Auto Running"
           ? "Next move: run `srgical run-next --plan <id>` for one step or `srgical run-next --plan <id> --auto` to continue automatically."
           : "Next move: run `srgical studio` to queue or refine the next execution-ready step."
@@ -81,7 +75,8 @@ function renderPlanSummaryLine(
     `- ${state.planId}${selected ? " [active]" : ""}:`,
     `path ${state.packDir}`,
     `mode ${state.mode}`,
-    `docs ${state.docsPresent}/4`,
+    `docs ${state.docsPresent}/5`,
+    `human write gate ${state.humanWriteConfirmed ? "confirmed" : "pending"}`,
     `readiness ${state.readiness.score}/${state.readiness.total}`,
     `execution ${state.executionActivated ? "started" : "not-started"}`,
     `auto ${state.autoRun?.status ?? "idle"}`
@@ -100,7 +95,10 @@ function renderPlanDetailLines(state: Awaited<ReturnType<typeof readPlanningPack
     `Pack present: ${state.packPresent ? "yes" : "no"}`,
     `Pack mode: ${state.packMode}`,
     `Mode: ${state.mode}${state.hasFailureOverlay ? " [last run failed]" : ""}`,
-    `Docs present: ${state.docsPresent}/4`,
+    `Docs present: ${state.docsPresent}/5`,
+    `Human write confirmation: ${
+      state.humanWriteConfirmed ? `confirmed (${state.humanWriteConfirmedAt ?? "timestamp unavailable"})` : "pending"
+    }`,
     `Readiness: ${state.readiness.score}/${state.readiness.total}${state.readiness.readyToWrite ? " (ready to write)" : ""}`,
     `Execution activated: ${state.executionActivated ? "yes" : "no"}`,
     `Auto mode: ${state.autoRun?.status ?? "idle"}`

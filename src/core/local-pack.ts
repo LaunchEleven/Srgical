@@ -168,6 +168,10 @@ function toPackLabel(paths: ReturnType<typeof getPlanningPackPaths>, filePath: s
     return `${prefix}04-next-agent-prompt.md`;
   }
 
+  if (filePath === paths.handoff) {
+    return `${prefix}HandoffDoc.md`;
+  }
+
   return filePath;
 }
 

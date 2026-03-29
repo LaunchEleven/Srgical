@@ -25,7 +25,7 @@ export async function writePlanningPack(
   const templates = getInitialTemplates(paths);
 
   await Promise.all(Object.entries(templates).map(([filePath, content]) => writeText(filePath, content)));
-  if (options.activate) {
+  if (options.activate ?? true) {
     await saveActivePlanId(root, paths.planId);
   }
 

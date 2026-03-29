@@ -215,9 +215,57 @@ test("run-next executes through a temporary agent override for one run", async (
   });
 
   assert.deepEqual(calls, ["claude"]);
-  assert.match(output, /Running the current next-agent prompt through Claude Code\.\.\./);
+  assert.match(output, /Running the current execution handoff through Claude Code\.\.\./);
   assert.match(output, /claude-run/);
   assert.equal(await saveAndReloadStoredAgent(workspace), "codex");
+});
+
+test("run-next prefers HandoffDoc.md as the canonical execution source when it exists", async (t) => {
+  const workspace = await createTempWorkspace("srgical-run-next-handoff-");
+  const paths = await writePlanningPack(workspace);
+
+  await writeText(
+    paths.tracker,
+    `# Detailed Implementation Plan
+
+## Current Position
+
+- Last Completed: \`PLAN-001\`
+- Next Recommended: \`EXEC-001\`
+- Updated At: \`2026-03-24T00:00:00.000Z\`
+- Updated By: \`Codex\`
+
+## Delivery
+
+| ID | Status | Depends On | Scope | Acceptance | Notes |
+| --- | --- | --- | --- | --- | --- |
+| EXEC-001 | pending | PLAN-001 | Execute one deterministic slice. | The slice lands with validation and docs updated. | Pending first execution slice. |
+`
+  );
+  await writeText(paths.handoff, "# HandoffDoc\n\nUse this handoff workflow and update the tracker.");
+  await writeText(paths.nextPrompt, "# Next Agent Prompt\n\nLegacy fallback instructions.");
+
+  setAgentAdaptersForTesting([
+    createFakeAdapter({
+      id: "codex",
+      label: "Codex",
+      status: availableStatus("codex", "Codex"),
+      onRunNextPrompt: async (_workspaceRoot: string, prompt: string) => {
+        assert.match(prompt, /Canonical handoff instructions from `\.srgical\/plans\/default\/HandoffDoc\.md`:/);
+        assert.match(prompt, /Use this handoff workflow and update the tracker\./);
+        assert.doesNotMatch(prompt, /Legacy fallback instructions\./);
+        return "handoff-executed";
+      }
+    })
+  ]);
+  t.after(resetAgentAdaptersForTesting);
+
+  const output = await captureStdout(async () => {
+    await runRunNextCommand(workspace);
+  });
+
+  assert.match(output, /Execution handoff source: \.srgical\/plans\/default\/HandoffDoc\.md/);
+  assert.match(output, /handoff-executed/);
 });
 
 test("run-next --dry-run fails clearly when the override agent is unavailable and preserves the stored selection", async (t) => {

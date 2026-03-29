@@ -58,7 +58,7 @@ test("doctor reports all supported agents and the queued next step", async (t) =
   );
 
   await writeText(
-    getPlanningPackPaths(workspace).adviceState,
+    getPlanningPackPaths(workspace, { planId: paths.planId }).adviceState,
     JSON.stringify(
       {
         version: 1,
@@ -87,7 +87,10 @@ test("doctor reports all supported agents and the queued next step", async (t) =
   assert.match(output, /- Claude Code \(claude\) \[active\]: available \(1\.2\.3\) via claude\.cmd/);
   assert.match(output, /- Augment CLI \(augment\): available \(2\.0\.0\) via augment\.cmd/);
   assert.match(output, /Plans:/);
-  assert.match(output, /default \[active\]: \| path \.srgical \| mode Execution Active \| docs 4\/4 \| readiness 3\/4 \| execution started \| auto idle/);
+  assert.match(
+    output,
+    /default \[active\]: \| path \.srgical\/plans\/default \| mode Execution Active \| docs 5\/5 \| human write gate pending \| readiness 3\/4 \| execution started \| auto idle/
+  );
   assert.match(output, /Next Step: EXEC001 \(Execution\)/);
   assert.match(output, /AI advice: Summarize the queued execution work before running it\./);
   assert.match(output, /Clarity: mostly clear/);

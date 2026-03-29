@@ -10,9 +10,10 @@ import {
   renderDryRunPreview,
   renderExecutionStepLines
 } from "../core/execution-controls";
+import { buildExecutionIterationPrompt } from "../core/handoff";
 import { readPlanningPackState } from "../core/planning-pack-state";
-import { readActivePlanId, resolvePlanId, saveActivePlanId } from "../core/workspace";
-import { getPlanningPackPaths, readText, resolveWorkspace } from "../core/workspace";
+import { resolvePlanId, saveActivePlanId } from "../core/workspace";
+import { resolveWorkspace } from "../core/workspace";
 
 type RunNextCommandOptions = {
   dryRun?: boolean;
@@ -67,8 +68,8 @@ export async function runRunNextCommand(workspaceArg?: string, options: RunNextC
     }
   }
 
-  const paths = getPlanningPackPaths(workspace, { planId });
-  const prompt = await readText(paths.nextPrompt);
+  const handoffPrompt = await buildExecutionIterationPrompt(workspace, packState, { planId });
+  const prompt = handoffPrompt.prompt;
 
   const previewLines = options.dryRun
     ? renderDryRunPreview(prompt, packState.nextStepSummary, packState.currentPosition.nextRecommended)
@@ -83,7 +84,8 @@ export async function runRunNextCommand(workspaceArg?: string, options: RunNextC
   }
 
   process.stdout.write("\n");
-  process.stdout.write(`Running the current next-agent prompt through ${getPrimaryAgentAdapter().label}...\n`);
+  process.stdout.write(`Running the current execution handoff through ${getPrimaryAgentAdapter().label}...\n`);
+  process.stdout.write(`Execution handoff source: ${handoffPrompt.handoffDoc.displayPath}\n`);
   try {
     const result = await runNextPrompt(workspace, prompt, {
       agentId: options.agent,

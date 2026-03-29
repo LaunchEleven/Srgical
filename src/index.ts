@@ -55,7 +55,7 @@ program
 
 program
   .command("init")
-  .description("Create a local .srgical planning pack scaffold.")
+  .description("Create a named local .srgical planning pack scaffold.")
   .argument("[workspace]", "Workspace path")
   .option("-f, --force", "Overwrite an existing planning pack")
   .option("--plan <id>", "Named planning pack id to create or overwrite")
@@ -74,7 +74,7 @@ program
 
 program
   .command("run-next")
-  .description("Run the current next-agent prompt through the active agent adapter.")
+  .description("Run the current execution handoff through the active agent adapter.")
   .argument("[workspace]", "Workspace path")
   .option("--dry-run", "Preview the current execution prompt without invoking the active agent")
   .option("--agent <id>", "Temporarily override the active agent for this run only")

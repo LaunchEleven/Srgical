@@ -18,7 +18,7 @@ test("format-planning-pack-summary makes an unwritten plan obvious", () => {
   });
 
   assert.match(formatPlanningPackSummary(workspace, state), /state: no pack/);
-  assert.match(formatPlanningPackSummary(workspace, state), /next: \/plan new <id> or \/write to create the planning doc set/);
+  assert.match(formatPlanningPackSummary(workspace, state), /next: \/plan new <id> to create the planning doc set/);
   assert.match(renderWorkspaceSelectionMessage(workspace, state), /plan status: no pack/);
   assert.match(buildStudioHeaderContent(workspace, state), /PLAN DEFAULT \| NO PACK/);
 });
@@ -70,7 +70,7 @@ function createPackState(options: {
     packDir: ".srgical",
     packPresent: options.packPresent,
     trackerReadable: options.trackerReadable,
-    docsPresent: options.packPresent ? 4 : 0,
+    docsPresent: options.packPresent ? 5 : 0,
     currentPosition: {
       lastCompleted: options.packPresent ? "DOC002" : null,
       nextRecommended: options.nextRecommended ?? null,
@@ -97,6 +97,8 @@ function createPackState(options: {
       readyToWrite: false,
       missingLabels: []
     },
+    humanWriteConfirmed: false,
+    humanWriteConfirmedAt: null,
     autoRun: null,
     executionActivated: Boolean(options.nextRecommended),
     mode: options.mode ?? (options.packPresent ? "Plan Written - Needs Step" : "No Pack"),

@@ -8,6 +8,7 @@ export type PlanningStateFile = {
   createdAt: string;
   updatedAt: string;
   packMode: PlanningPackMode;
+  humanConfirmedForWriteAt: string | null;
 };
 
 export async function loadPlanningState(
@@ -28,7 +29,8 @@ export async function loadPlanningState(
       typeof parsed.planId !== "string" ||
       typeof parsed.createdAt !== "string" ||
       typeof parsed.updatedAt !== "string" ||
-      (parsed.packMode !== "scaffolded" && parsed.packMode !== "authored")
+      (parsed.packMode !== "scaffolded" && parsed.packMode !== "authored") ||
+      (typeof parsed.humanConfirmedForWriteAt !== "string" && parsed.humanConfirmedForWriteAt !== null && parsed.humanConfirmedForWriteAt !== undefined)
     ) {
       return null;
     }
@@ -38,7 +40,8 @@ export async function loadPlanningState(
       planId: parsed.planId,
       createdAt: parsed.createdAt,
       updatedAt: parsed.updatedAt,
-      packMode: parsed.packMode
+      packMode: parsed.packMode,
+      humanConfirmedForWriteAt: parsed.humanConfirmedForWriteAt ?? null
     };
   } catch {
     return null;
@@ -58,7 +61,8 @@ export async function savePlanningState(
     planId: paths.planId,
     createdAt: existing?.createdAt ?? now,
     updatedAt: now,
-    packMode
+    packMode,
+    humanConfirmedForWriteAt: existing?.humanConfirmedForWriteAt ?? null
   };
 
   await writeText(paths.planningState, JSON.stringify(state, null, 2));
@@ -69,7 +73,8 @@ export async function markPlanningPackAuthored(
   workspaceRoot: string,
   options: PlanningPathOptions = {}
 ): Promise<PlanningStateFile> {
-  return savePlanningState(workspaceRoot, "authored", options);
+  await savePlanningState(workspaceRoot, "authored", options);
+  return setHumanWriteConfirmation(workspaceRoot, false, options);
 }
 
 export async function ensurePlanningPackState(
@@ -84,6 +89,31 @@ export async function ensurePlanningPackState(
   }
 
   return savePlanningState(workspaceRoot, packMode, options);
+}
+
+export async function setHumanWriteConfirmation(
+  workspaceRoot: string,
+  confirmed: boolean,
+  options: PlanningPathOptions = {}
+): Promise<PlanningStateFile> {
+  const paths = await ensurePlanningDir(workspaceRoot, options);
+  const existing = await loadPlanningState(workspaceRoot, options);
+  const now = new Date().toISOString();
+  const state: PlanningStateFile = {
+    version: 1,
+    planId: paths.planId,
+    createdAt: existing?.createdAt ?? now,
+    updatedAt: now,
+    packMode: existing?.packMode ?? "scaffolded",
+    humanConfirmedForWriteAt: confirmed ? now : null
+  };
+
+  await writeText(paths.planningState, JSON.stringify(state, null, 2));
+  return state;
+}
+
+export function hasHumanWriteConfirmation(state: PlanningStateFile | null): boolean {
+  return Boolean(state?.humanConfirmedForWriteAt);
 }
 
 export function inferLegacyPackMode(position: {

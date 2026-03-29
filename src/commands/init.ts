@@ -4,6 +4,10 @@ import { getInitialTemplates } from "../core/templates";
 import { ensurePlanningDir, planningPackExists, resolveWorkspace, saveActivePlanId, writeText } from "../core/workspace";
 
 export async function runInitCommand(workspaceArg?: string, force = false, planId?: string | null): Promise<void> {
+  if (!planId || planId.trim().length === 0) {
+    throw new Error("`srgical init` requires an explicit named plan. Use `srgical init --plan <id>`.");
+  }
+
   const workspace = resolveWorkspace(workspaceArg);
   const exists = await planningPackExists(workspace, { planId });
 
@@ -27,6 +31,7 @@ export async function runInitCommand(workspaceArg?: string, force = false, planI
       `- ${paths.context}`,
       `- ${paths.tracker}`,
       `- ${paths.nextPrompt}`,
+      `- ${paths.handoff}`,
       `Next: run \`srgical doctor --plan ${paths.planId}\` or open \`srgical studio --plan ${paths.planId}\`.`
     ].join("\n") + "\n"
   );

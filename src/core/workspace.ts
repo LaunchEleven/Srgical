@@ -10,20 +10,19 @@ export type PlanningDirectoryRef = {
   planId: string;
   dir: string;
   relativeDir: string;
-  isDefaultPlan: boolean;
 };
 
 export type PlanningPackPaths = {
   root: string;
   planningRoot: string;
   planId: string;
-  isDefaultPlan: boolean;
   dir: string;
   relativeDir: string;
   plan: string;
   context: string;
   tracker: string;
   nextPrompt: string;
+  handoff: string;
   studioSession: string;
   executionState: string;
   executionLog: string;
@@ -58,21 +57,20 @@ export function getPlanningRoot(root: string): string {
 export function getPlanningPackPaths(root: string, options: PlanningPathOptions = {}): PlanningPackPaths {
   const planningRoot = getPlanningRoot(root);
   const planId = normalizePlanId(options.planId);
-  const isDefaultPlan = planId === DEFAULT_PLAN_ID;
-  const dir = isDefaultPlan ? planningRoot : path.join(planningRoot, NAMED_PLANS_DIR, planId);
+  const dir = path.join(planningRoot, NAMED_PLANS_DIR, planId);
   const relativeDir = path.relative(root, dir).replace(/\\/g, "/") || PLAN_DIR;
 
   return {
     root,
     planningRoot,
     planId,
-    isDefaultPlan,
     dir,
     relativeDir,
     plan: path.join(dir, "01-product-plan.md"),
     context: path.join(dir, "02-agent-context-kickoff.md"),
     tracker: path.join(dir, "03-detailed-implementation-plan.md"),
     nextPrompt: path.join(dir, "04-next-agent-prompt.md"),
+    handoff: path.join(dir, "HandoffDoc.md"),
     studioSession: path.join(dir, "studio-session.json"),
     executionState: path.join(dir, "execution-state.json"),
     executionLog: path.join(dir, "execution-log.md"),
@@ -111,20 +109,16 @@ export async function planningPackExists(root: string, options: PlanningPathOpti
     fileExists(paths.plan),
     fileExists(paths.context),
     fileExists(paths.tracker),
-    fileExists(paths.nextPrompt)
+    fileExists(paths.nextPrompt),
+    fileExists(paths.handoff)
   ]);
 
   return checks.every(Boolean);
 }
 
 export async function listPlanningDirectories(root: string): Promise<PlanningDirectoryRef[]> {
-  const planningRoot = getPlanningRoot(root);
-  const namedPlansRoot = path.join(planningRoot, NAMED_PLANS_DIR);
+  const namedPlansRoot = path.join(getPlanningRoot(root), NAMED_PLANS_DIR);
   const planIds = new Set<string>();
-
-  if (await hasDefaultPlanPresence(root)) {
-    planIds.add(DEFAULT_PLAN_ID);
-  }
 
   try {
     const entries = await readdir(namedPlansRoot, { withFileTypes: true });
@@ -146,24 +140,13 @@ export async function listPlanningDirectories(root: string): Promise<PlanningDir
   }
 
   return Array.from(planIds)
-    .sort((left, right) => {
-      if (left === DEFAULT_PLAN_ID) {
-        return -1;
-      }
-
-      if (right === DEFAULT_PLAN_ID) {
-        return 1;
-      }
-
-      return left.localeCompare(right);
-    })
+    .sort((left, right) => left.localeCompare(right))
     .map((planId) => {
       const paths = getPlanningPackPaths(root, { planId });
       return {
         planId,
         dir: paths.dir,
-        relativeDir: paths.relativeDir,
-        isDefaultPlan: paths.isDefaultPlan
+        relativeDir: paths.relativeDir
       };
     });
 }
@@ -193,7 +176,15 @@ export async function resolvePlanId(root: string, requestedPlanId?: string | nul
     return normalizePlanId(requestedPlanId);
   }
 
-  return (await readActivePlanId(root)) ?? DEFAULT_PLAN_ID;
+  const activePlanId = await readActivePlanId(root);
+
+  if (activePlanId) {
+    return activePlanId;
+  }
+
+  throw new Error(
+    "A named plan is required. Pass `--plan <id>` or create one with `srgical init --plan <id>` before continuing."
+  );
 }
 
 export async function readText(filePath: string): Promise<string> {
@@ -206,22 +197,4 @@ export async function writeText(filePath: string, content: string): Promise<void
 
 export async function isGitRepo(root: string): Promise<boolean> {
   return fileExists(path.join(root, ".git"));
-}
-
-async function hasDefaultPlanPresence(root: string): Promise<boolean> {
-  const paths = getPlanningPackPaths(root, { planId: DEFAULT_PLAN_ID });
-  const checks = await Promise.all([
-    fileExists(paths.plan),
-    fileExists(paths.context),
-    fileExists(paths.tracker),
-    fileExists(paths.nextPrompt),
-    fileExists(paths.studioSession),
-    fileExists(paths.executionState),
-    fileExists(paths.executionLog),
-    fileExists(paths.planningState),
-    fileExists(paths.autoRunState),
-    fileExists(paths.adviceState)
-  ]);
-
-  return checks.some(Boolean);
 }

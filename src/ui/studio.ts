@@ -1,4 +1,5 @@
 import path from "node:path";
+import { spawn } from "node:child_process";
 import blessed from "blessed";
 import type { PlanningAdviceState } from "../core/advice-state";
 import { executeAutoRun, requestAutoRunStop } from "../core/auto-run";
@@ -19,9 +20,10 @@ import {
   renderDryRunPreview
 } from "../core/execution-controls";
 import { appendExecutionLog, saveExecutionState } from "../core/execution-state";
+import { buildExecutionIterationPrompt } from "../core/handoff";
 import { refreshPlanningAdvice } from "../core/planning-advice";
 import { readPlanningPackState, type PlanningCurrentPosition, type PlanningPackState } from "../core/planning-pack-state";
-import { markPlanningPackAuthored, savePlanningState } from "../core/planning-state";
+import { markPlanningPackAuthored, savePlanningState, setHumanWriteConfirmation } from "../core/planning-state";
 import type { ChatMessage } from "../core/prompts";
 import { DEFAULT_STUDIO_MESSAGES, loadStoredActiveAgentId, loadStudioSession, saveStudioSession } from "../core/studio-session";
 import { getInitialTemplates } from "../core/templates";
@@ -30,7 +32,6 @@ import {
   getPlanningPackPaths,
   listPlanningDirectories,
   normalizePlanId,
-  readText,
   resolvePlanId,
   resolveWorkspace,
   saveActivePlanId,
@@ -462,18 +463,32 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
       setFooter(" Switching workspace... ");
       screen.render();
 
-      workspace = nextWorkspace;
-      planId = await resolvePlanId(workspace);
-      await saveActivePlanId(workspace, planId);
-      messages = await loadStudioSession(workspace, { planId });
-      await refreshEnvironment();
-      await appendSystemMessage(
-        [
-          `Now looking at ${workspace}.`,
-          "",
-          renderWorkspaceSelectionMessage(workspace, latestPackState ?? (await readPlanningPackState(workspace, { planId })))
-        ].join("\n")
-      );
+      const previousWorkspace = workspace;
+      const previousPlanId = planId;
+
+      try {
+        workspace = nextWorkspace;
+        planId = await resolvePlanId(workspace, previousPlanId);
+        await saveActivePlanId(workspace, planId);
+        messages = await loadStudioSession(workspace, { planId });
+        await refreshEnvironment();
+        await appendSystemMessage(
+          [
+            `Now looking at ${workspace}.`,
+            "",
+            renderWorkspaceSelectionMessage(workspace, latestPackState ?? (await readPlanningPackState(workspace, { planId })))
+          ].join("\n")
+        );
+      } catch (error) {
+        workspace = previousWorkspace;
+        planId = previousPlanId;
+        await refreshEnvironment();
+        await appendSystemMessage(
+          `Workspace switch blocked: ${
+            error instanceof Error ? error.message : String(error)
+          }\nUse \`/workspace <path>\` after creating or selecting a named plan in that repo.`
+        );
+      }
       return;
     }
 
@@ -533,6 +548,75 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
     if (command === "/readiness") {
       const packState = latestPackState ?? (await readPlanningPackState(workspace, { planId }));
       await appendSystemMessage(renderReadinessMessage(packState));
+      return;
+    }
+
+    if (command === "/review") {
+      const packState = latestPackState ?? (await readPlanningPackState(workspace, { planId }));
+      const paths = getPlanningPackPaths(workspace, { planId });
+      await appendSystemMessage(
+        [
+          `Human review checklist for plan \`${planId}\`:`,
+          `- ${paths.plan}`,
+          `- ${paths.context}`,
+          `- ${paths.tracker}`,
+          `- ${paths.handoff}`,
+          `- ${paths.nextPrompt}`,
+          "",
+          packState.humanWriteConfirmed
+            ? `Human write confirmation: confirmed (${packState.humanWriteConfirmedAt ?? "timestamp unavailable"})`
+            : "Human write confirmation: pending",
+          "Run `/open all` to open every planning doc in VS Code.",
+          "Run `/confirm-plan` after human review is complete."
+        ].join("\n")
+      );
+      return;
+    }
+
+    if (command.startsWith("/open")) {
+      const requestedTarget = command.slice("/open".length).trim().toLowerCase();
+      const target = requestedTarget.length > 0 ? requestedTarget : "all";
+      const paths = getPlanningPackPaths(workspace, { planId });
+      const openTargets = resolveOpenTargets(paths, target);
+
+      if (openTargets.length === 0) {
+        await appendSystemMessage(
+          "Usage: `/open [all|plan|context|tracker|handoff|prompt|dir]`"
+        );
+        return;
+      }
+
+      const openResult = await openInVsCode(openTargets);
+      await appendSystemMessage(
+        openResult.ok
+          ? `Opened ${openTargets.length === 1 ? "target" : "targets"} in VS Code:\n${openTargets.join("\n")}`
+          : [
+              `Could not launch VS Code automatically: ${openResult.reason}`,
+              "Open manually with:",
+              `code ${openTargets.map((targetPath) => `"${targetPath}"`).join(" ")}`
+            ].join("\n")
+      );
+      return;
+    }
+
+    if (command === "/confirm-plan") {
+      const packState = latestPackState ?? (await readPlanningPackState(workspace, { planId }));
+
+      if (!packState.packPresent) {
+        await appendSystemMessage("No planning pack is present for this plan yet. Run `/plan new <id>` first.");
+        return;
+      }
+
+      await setHumanWriteConfirmation(workspace, true, { planId });
+      await refreshEnvironment();
+      await appendSystemMessage("Human write confirmation recorded. `/write` is now allowed once readiness is satisfied.");
+      return;
+    }
+
+    if (command === "/revoke-plan-confirmation") {
+      await setHumanWriteConfirmation(workspace, false, { planId });
+      await refreshEnvironment();
+      await appendSystemMessage("Human write confirmation revoked. `/write` is now blocked until `/confirm-plan` is run again.");
       return;
     }
 
@@ -602,10 +686,11 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
           "1. Talk normally to sharpen the plan against the real repo.",
           "2. Use `/plans`, `/plan`, and `/plan new <id>` to manage named planning packs in this workspace.",
           "3. Use `/readiness` to see what context is still missing before you write the pack.",
-          "4. Run `/advice` for an AI assessment of the problem statement, clarity, research gaps, and next move.",
-          "5. Run `/write` when the plan is ready to put on disk.",
-          "6. Run `/preview` for a safe execution preview, `/run` for one execution step, or `/auto [max]` for continuous execution.",
-          "7. Run `/stop` to stop auto mode after the current iteration.",
+          "4. Run `/review` and `/open [all|plan|context|tracker|prompt|handoff|dir]` for human review.",
+          "5. Run `/confirm-plan` after a human has reviewed and approved writing.",
+          "6. Run `/write` after readiness and confirmation are both satisfied.",
+          "7. Run `/preview` for a safe execution preview, `/run` for one execution step, or `/auto [max]` for continuous execution.",
+          "8. Run `/stop` to stop auto mode after the current iteration.",
           "",
           "Controls:",
           "- `Enter` sends the current message or command.",
@@ -618,7 +703,6 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
     }
 
     if (command === "/preview") {
-      const paths: PlanningPackPaths = getPlanningPackPaths(workspace, { planId });
       const packState = await readPlanningPackState(workspace, { planId });
 
       if (!packState.packPresent) {
@@ -626,14 +710,36 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
         return;
       }
 
-      const prompt = await readText(paths.nextPrompt);
+      const handoffPrompt = await buildExecutionIterationPrompt(workspace, packState, { planId });
       await appendSystemMessage(
-        renderDryRunPreview(prompt, packState.nextStepSummary, packState.currentPosition.nextRecommended).join("\n")
+        renderDryRunPreview(handoffPrompt.prompt, packState.nextStepSummary, packState.currentPosition.nextRecommended).join("\n")
       );
       return;
     }
 
     if (command === "/write") {
+      const packState = latestPackState ?? (await readPlanningPackState(workspace, { planId }));
+
+      if (!packState.readiness.readyToWrite) {
+        await appendSystemMessage(
+          [
+            "Planning pack write blocked: readiness requirements are not fully satisfied yet.",
+            "Run `/readiness` to see missing signals, then continue the planning conversation."
+          ].join("\n")
+        );
+        return;
+      }
+
+      if (!packState.humanWriteConfirmed) {
+        await appendSystemMessage(
+          [
+            "Planning pack write blocked: explicit human confirmation is required.",
+            "Run `/review` and `/open all`, then run `/confirm-plan` after approval."
+          ].join("\n")
+        );
+        return;
+      }
+
       startBusy("pack");
 
       try {
@@ -652,7 +758,6 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
     }
 
     if (command === "/run") {
-      const paths: PlanningPackPaths = getPlanningPackPaths(workspace, { planId });
       const packState = await readPlanningPackState(workspace, { planId });
 
       if (!hasQueuedNextStep(packState.currentPosition.nextRecommended)) {
@@ -663,15 +768,17 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
       startBusy("run");
 
       try {
-        const prompt = await readText(paths.nextPrompt);
-        const result = await runNextPrompt(workspace, prompt, { planId });
+        const handoffPrompt = await buildExecutionIterationPrompt(workspace, packState, { planId });
+        const result = await runNextPrompt(workspace, handoffPrompt.prompt, { planId });
         await saveExecutionState(workspace, "success", "studio", result, { planId });
         await appendExecutionLog(workspace, "success", "studio", result, {
           planId,
           stepLabel: packState.nextStepSummary?.id ?? packState.currentPosition.nextRecommended
         });
         await refreshAdvice(false);
-        await appendSystemMessage(`Execution run finished. ${getPrimaryAgentAdapter().label} summary:\n${result}`);
+        await appendSystemMessage(
+          `Execution run finished. Handoff source: ${handoffPrompt.handoffDoc.displayPath}.\n${getPrimaryAgentAdapter().label} summary:\n${result}`
+        );
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         await saveExecutionState(workspace, "failure", "studio", message, { planId });
@@ -910,24 +1017,31 @@ export function formatPlanningPackSummary(workspace: string, packState: Planning
   const planId = packState.planId ?? "default";
   const readinessScore = packState.readiness?.score ?? 0;
   const readinessTotal = packState.readiness?.total ?? 4;
-  const docsPresent = packState.docsPresent ?? (packState.packPresent ? 4 : 0);
+  const docsPresent = packState.docsPresent ?? (packState.packPresent ? 5 : 0);
   const lines = [
     `state: ${describePlanningPackState(packState)}`,
     `plan: ${planId}`,
     `dir: ${getPlanningPackPaths(workspace, { planId }).relativeDir}`,
-    `docs: ${docsPresent}/4`,
-    `readiness: ${readinessScore}/${readinessTotal}`
+    `docs: ${docsPresent}/5`,
+    `readiness: ${readinessScore}/${readinessTotal}`,
+    `human gate: ${packState.humanWriteConfirmed ? "confirmed" : "pending"}`
   ];
 
   const mode = deriveDisplayMode(packState);
   const readyToWrite = packState.readiness?.readyToWrite ?? false;
 
   if (mode === "Gathering Context" || mode === "Ready to Write") {
-    lines.push(readyToWrite ? "next: /write will create or refresh the planning doc set" : "next: keep gathering context or run /readiness");
+    lines.push(
+      readyToWrite
+        ? packState.humanWriteConfirmed
+          ? "next: /write will create or refresh the planning doc set"
+          : "next: /review, /open all, and /confirm-plan before /write"
+        : "next: keep gathering context or run /readiness"
+    );
   } else if (mode === "Ready to Execute" || mode === "Execution Active" || mode === "Auto Running") {
     lines.push("next: /preview, /run, or /auto when ready");
   } else if (!packState.packPresent) {
-    lines.push("next: /plan new <id> or /write to create the planning doc set");
+    lines.push("next: /plan new <id> to create the planning doc set");
   } else {
     lines.push("next: add or queue the next execution-ready step");
   }
@@ -945,11 +1059,12 @@ export function renderWorkspaceSelectionMessage(workspace: string, packState: Pl
     `- planning dir: ${getPlanningPackPaths(workspace, { planId }).relativeDir}`,
     `- plan status: ${describePlanningPackState(packState)}`,
     `- readiness: ${packState.readiness.score}/${packState.readiness.total}`,
+    `- human write gate: ${packState.humanWriteConfirmed ? "confirmed" : "pending"}`,
     "",
     "Use `/workspace <path>` to switch repos.",
     "Use `/plans` to inspect plan directories and `/plan <id>` to switch plans.",
     !packState.packPresent || packState.mode === "Gathering Context" || packState.mode === "Ready to Write"
-      ? "Use `/write` when you want to put the current plan on disk."
+      ? "Use `/review`, `/open all`, `/confirm-plan`, then `/write` when the plan is ready."
       : "Use `/write` when you want to refresh the selected plan from this transcript."
   ].join("\n");
 }
@@ -1080,8 +1195,9 @@ function renderStatusMessage(workspace: string, packState: PlanningPackState): s
     `Plan: ${packState.planId}`,
     `Planning dir: ${getPlanningPackPaths(workspace, { planId: packState.planId }).relativeDir}`,
     `Mode: ${packState.mode}${packState.hasFailureOverlay ? " [last run failed]" : ""}`,
-    `Docs: ${packState.docsPresent}/4`,
+    `Docs: ${packState.docsPresent}/5`,
     `Readiness: ${packState.readiness.score}/${packState.readiness.total}${packState.readiness.readyToWrite ? " (ready to write)" : ""}`,
+    `Human write gate: ${packState.humanWriteConfirmed ? `confirmed (${packState.humanWriteConfirmedAt ?? "timestamp unavailable"})` : "pending"}`,
     `Execution activated: ${packState.executionActivated ? "yes" : "no"}`,
     `Auto mode: ${packState.autoRun?.status ?? "idle"}`,
     `Next step: ${packState.nextStepSummary?.id ?? packState.currentPosition.nextRecommended ?? "none queued"}`
@@ -1103,8 +1219,11 @@ function renderReadinessMessage(packState: PlanningPackState): string {
     packState.readiness.missingLabels.length > 0
       ? `Missing: ${packState.readiness.missingLabels.join(", ")}`
       : "Missing: none",
+    `Human write gate: ${packState.humanWriteConfirmed ? "confirmed" : "pending"}`,
     packState.readiness.readyToWrite
-      ? "Next: run `/write` to create or refresh the planning doc set."
+      ? packState.humanWriteConfirmed
+        ? "Next: run `/write` to create or refresh the planning doc set."
+        : "Next: run `/review`, then `/confirm-plan` before `/write`."
       : "Next: keep gathering repo truth, constraints, and the first execution slice."
   ].join("\n");
 }
@@ -1124,6 +1243,59 @@ function removeLastCodePoint(value: string): string {
   return Array.from(value).slice(0, -1).join("");
 }
 
+function resolveOpenTargets(paths: PlanningPackPaths, target: string): string[] {
+  switch (target) {
+    case "all":
+      return [paths.plan, paths.context, paths.tracker, paths.handoff, paths.nextPrompt];
+    case "plan":
+      return [paths.plan];
+    case "context":
+      return [paths.context];
+    case "tracker":
+      return [paths.tracker];
+    case "handoff":
+      return [paths.handoff];
+    case "prompt":
+      return [paths.nextPrompt];
+    case "dir":
+      return [paths.dir];
+    default:
+      return [];
+  }
+}
+
+async function openInVsCode(targets: string[]): Promise<{ ok: boolean; reason?: string }> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const child = spawn("code", targets, {
+      detached: true,
+      stdio: "ignore",
+      shell: process.platform === "win32"
+    });
+
+    const finish = (result: { ok: boolean; reason?: string }) => {
+      if (settled) {
+        return;
+      }
+
+      settled = true;
+      resolve(result);
+    };
+
+    child.once("error", (error) => {
+      finish({
+        ok: false,
+        reason: error instanceof Error ? error.message : String(error)
+      });
+    });
+
+    setTimeout(() => {
+      child.unref();
+      finish({ ok: true });
+    }, 60);
+  });
+}
+
 function renderPlanUsageMessage(currentPlanId: string, paths: PlanningPackPaths): string {
   return [
     `Current plan: ${currentPlanId}`,
@@ -1132,7 +1304,10 @@ function renderPlanUsageMessage(currentPlanId: string, paths: PlanningPackPaths)
     "Commands:",
     "- `/plans` lists available plans",
     "- `/plan <id>` switches the active plan",
-    "- `/plan new <id>` creates a named plan scaffold"
+    "- `/plan new <id>` creates a named plan scaffold",
+    "- `/review` shows planning docs for human review",
+    "- `/open all` opens planning docs in VS Code",
+    "- `/confirm-plan` records explicit human approval for `/write`"
   ].join("\n");
 }
 
@@ -1140,7 +1315,7 @@ async function renderPlansMessage(workspace: string, currentPlanId: string): Pro
   const refs = await listPlanningDirectories(workspace);
 
   if (refs.length === 0) {
-    return "No planning packs exist yet.\nUse `/plan new <id>` or `/write` to create one.";
+    return "No planning packs exist yet.\nUse `/plan new <id>` to create one.";
   }
 
   const states = await Promise.all(refs.map((ref) => readPlanningPackState(workspace, { planId: ref.planId })));
@@ -1149,7 +1324,7 @@ async function renderPlansMessage(workspace: string, currentPlanId: string): Pro
     "Plans:",
     ...states.map(
       (state) =>
-        `- ${state.planId}${state.planId === currentPlanId ? " [active]" : ""}: ${state.packDir} | ${state.mode} | docs ${state.docsPresent}/4 | readiness ${state.readiness.score}/${state.readiness.total} | auto ${state.autoRun?.status ?? "idle"}`
+        `- ${state.planId}${state.planId === currentPlanId ? " [active]" : ""}: ${state.packDir} | ${state.mode} | docs ${state.docsPresent}/5 | readiness ${state.readiness.score}/${state.readiness.total} | human ${state.humanWriteConfirmed ? "confirmed" : "pending"} | auto ${state.autoRun?.status ?? "idle"}`
     )
   ].join("\n");
 }

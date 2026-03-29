@@ -1,8 +1,9 @@
 import { appendExecutionLog, saveExecutionState } from "./execution-state";
 import { formatStepLabel } from "./execution-controls";
+import { buildExecutionIterationPrompt } from "./handoff";
 import { readPlanningPackState, isExecutionReadyState, type PlanningPackState } from "./planning-pack-state";
 import { loadAutoRunState, updateAutoRunState, type AutoRunSource, type AutoRunState } from "./auto-run-state";
-import { getPlanningPackPaths, readText, type PlanningPathOptions } from "./workspace";
+import type { PlanningPathOptions } from "./workspace";
 import { runNextPrompt } from "./agent";
 
 const DEFAULT_AUTO_MAX_STEPS = 10;
@@ -209,10 +210,11 @@ async function executeIteration(
   afterState: PlanningPackState;
 }> {
   const planOptions: PlanningPathOptions = { planId: options.planId };
-  const paths = getPlanningPackPaths(workspaceRoot, planOptions);
-  const prompt = await readText(paths.nextPrompt);
   const targetStepId = beforeState.currentPosition.nextRecommended;
   const stepLabel = formatStepLabel(beforeState.nextStepSummary, beforeState.currentPosition.nextRecommended);
+  const { prompt, handoffDoc } = await buildExecutionIterationPrompt(workspaceRoot, beforeState, planOptions);
+
+  await emit(options, `Execution handoff source: ${handoffDoc.displayPath}`);
 
   let firstAttempt: { ok: boolean; message: string };
 
@@ -240,7 +242,7 @@ async function executeIteration(
     });
     return {
       success: true,
-      summary: `Completed ${stepLabel ?? targetStepId ?? "the current step"} and advanced the tracker.`,
+      summary: `Advanced tracker state for ${stepLabel ?? targetStepId ?? "the current step"}.`,
       afterState: firstAfterState
     };
   }
@@ -262,7 +264,7 @@ async function executeIteration(
       });
       return {
         success: true,
-        summary: `Completed ${stepLabel ?? targetStepId ?? "the current step"} after one reconciliation retry.`,
+        summary: `Advanced tracker state for ${stepLabel ?? targetStepId ?? "the current step"} after one reconciliation retry.`,
         afterState: retryAfterState
       };
     }
@@ -290,7 +292,7 @@ async function executeIteration(
       });
       return {
         success: true,
-        summary: `Completed ${stepLabel ?? targetStepId ?? "the current step"} after reconciliation.`,
+        summary: `Advanced tracker state for ${stepLabel ?? targetStepId ?? "the current step"} after reconciliation.`,
         afterState: retryAfterState
       };
     }
@@ -328,6 +330,14 @@ function hasTrackerAdvanced(
     return true;
   }
 
+  if (
+    beforeState.currentPosition.updatedAt &&
+    afterState.currentPosition.updatedAt &&
+    beforeState.currentPosition.updatedAt !== afterState.currentPosition.updatedAt
+  ) {
+    return true;
+  }
+
   if (afterState.nextStepSummary && afterState.nextStepSummary.id === targetStepId) {
     const status = afterState.nextStepSummary.status.toLowerCase();
     if (status === "done" || status === "skipped") {
@@ -335,7 +345,24 @@ function hasTrackerAdvanced(
     }
   }
 
+  const beforeTargetSummary = beforeState.nextStepSummary?.id === targetStepId ? beforeState.nextStepSummary : null;
+  const afterTargetSummary = afterState.nextStepSummary?.id === targetStepId ? afterState.nextStepSummary : null;
+
+  if (beforeTargetSummary && afterTargetSummary) {
+    if (normalizeTrackerValue(beforeTargetSummary.status) !== normalizeTrackerValue(afterTargetSummary.status)) {
+      return true;
+    }
+
+    if (normalizeTrackerValue(beforeTargetSummary.notes) !== normalizeTrackerValue(afterTargetSummary.notes)) {
+      return true;
+    }
+  }
+
   return false;
+}
+
+function normalizeTrackerValue(value: string): string {
+  return value.replace(/\s+/g, " ").trim().toLowerCase();
 }
 
 async function finalizeAutoRun(

@@ -21,3 +21,12 @@ test("init --plan creates a named planning pack and activates it", async () => {
   assert.equal(planningState?.packMode, "scaffolded");
   assert.match(paths.relativeDir, /\.srgical\/plans\/release-readiness/);
 });
+
+test("init without --plan fails because an explicit named plan is required", async () => {
+  const workspace = await createTempWorkspace("srgical-init-missing-plan-");
+
+  await assert.rejects(
+    () => runInitCommand(workspace),
+    /requires an explicit named plan/i
+  );
+});

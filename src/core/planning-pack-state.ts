@@ -1,7 +1,13 @@
 import { loadPlanningAdviceState, type PlanningAdviceState } from "./advice-state";
 import { loadAutoRunState, type AutoRunState } from "./auto-run-state";
 import { loadExecutionState, type ExecutionState } from "./execution-state";
-import { inferLegacyPackMode, loadPlanningState, type PlanningPackMode, type PlanningStateFile } from "./planning-state";
+import {
+  hasHumanWriteConfirmation,
+  inferLegacyPackMode,
+  loadPlanningState,
+  type PlanningPackMode,
+  type PlanningStateFile
+} from "./planning-state";
 import { DEFAULT_STUDIO_MESSAGES, loadStudioSessionState } from "./studio-session";
 import { fileExists, getPlanningPackPaths, planningPackExists, readText, type PlanningPathOptions } from "./workspace";
 
@@ -56,6 +62,8 @@ export type PlanningPackState = {
   planningState: PlanningStateFile | null;
   packMode: PlanningPackMode;
   readiness: PlanningReadiness;
+  humanWriteConfirmed: boolean;
+  humanWriteConfirmedAt: string | null;
   advice: PlanningAdviceState | null;
   autoRun: AutoRunState | null;
   executionActivated: boolean;
@@ -95,6 +103,7 @@ export async function readPlanningPackState(
 
   const readiness = buildReadiness(studioSession.messages, nextStepSummary);
   const packMode = planningState?.packMode ?? inferLegacyPackMode(currentPosition);
+  const humanWriteConfirmed = hasHumanWriteConfirmation(planningState);
   const executionActivated = Boolean(
     lastExecution ||
       (autoRun && autoRun.status !== "idle") ||
@@ -121,6 +130,8 @@ export async function readPlanningPackState(
     planningState,
     packMode,
     readiness,
+    humanWriteConfirmed,
+    humanWriteConfirmedAt: planningState?.humanConfirmedForWriteAt ?? null,
     advice,
     autoRun,
     executionActivated,
@@ -235,7 +246,8 @@ async function countPresentDocs(paths: ReturnType<typeof getPlanningPackPaths>):
     fileExists(paths.plan),
     fileExists(paths.context),
     fileExists(paths.tracker),
-    fileExists(paths.nextPrompt)
+    fileExists(paths.nextPrompt),
+    fileExists(paths.handoff)
   ]);
 
   return checks.filter(Boolean).length;

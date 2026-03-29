@@ -27,10 +27,10 @@ test("preparePlanningPackForWrite archives the active pack when no next step is 
   await writeText(paths.executionLog, "# Execution Log\n");
 
   const result = await preparePlanningPackForWrite(workspace);
-  const archiveDir = path.join(workspace, ".srgical", "planning-1");
+  const archiveDir = path.join(workspace, ".srgical", "plans", "default", "planning-1");
 
   assert.equal(result.archived, true);
-  assert.equal(result.archiveDir, ".srgical/planning-1");
+  assert.equal(result.archiveDir, ".srgical/plans/default/planning-1");
   assert.match(await readText(path.join(archiveDir, "01-product-plan.md")), /# Old Plan/);
   assert.match(await readText(path.join(archiveDir, "02-agent-context-kickoff.md")), /# Old Context/);
   assert.match(await readText(path.join(archiveDir, "04-next-agent-prompt.md")), /# Old Prompt/);

@@ -86,7 +86,7 @@ export function formatExecutionFailureMessage(
     `Reason: ${errorMessage}`,
     "",
     "Recovery:",
-    "- Review `.srgical/04-next-agent-prompt.md` and `.srgical/03-detailed-implementation-plan.md`.",
+    "- Review `.srgical/HandoffDoc.md` (or `.srgical/04-next-agent-prompt.md`) and `.srgical/03-detailed-implementation-plan.md`.",
     "- Inspect `.srgical/execution-state.json` for the latest recorded failure summary."
   ];
 

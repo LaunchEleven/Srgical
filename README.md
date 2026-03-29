@@ -3,13 +3,50 @@
 `srgical` is a local-first orchestration CLI for the workflow you have already been using manually:
 
 1. talk to an AI until the plan is sharp,
-2. write a four-file planning pack into the repo,
+2. write a five-file planning pack into the repo,
 3. repeatedly execute the next eligible step,
 4. force validation and handoff updates every time.
 
 The current launch slice supports local `codex`, local `claude`, and local `auggie` installs through the same
 `.srgical/` workflow. `srgical` detects which supported tools are actually installed, keeps the planning pack
 agent-neutral, and lets you choose the active agent for the current workspace session.
+
+## Quick Start
+
+Install `srgical`, then make sure at least one supported local agent CLI is installed (`codex`, `claude`, or `auggie`).
+
+```bash
+npm install -g @launch11/srgical
+srgical doctor --plan release-readiness
+```
+
+Create a named plan pack (required):
+
+```bash
+srgical init --plan release-readiness
+```
+
+Open studio and build context:
+
+```bash
+srgical studio --plan release-readiness
+```
+
+Inside studio:
+
+1. talk through scope/constraints and use `/readiness` + `/advice`
+2. run `/review` and `/open all` for human doc review
+3. run `/confirm-plan` (human approval gate)
+4. run `/write`
+5. execute with `/preview`, `/run`, or `/auto 10` (`/stop` to stop after current iteration)
+
+CLI execution path:
+
+```bash
+srgical run-next --plan release-readiness --dry-run
+srgical run-next --plan release-readiness
+srgical run-next --plan release-readiness --auto --max-steps 10
+```
 
 ## Why This Exists
 
@@ -19,7 +56,7 @@ plan. It creates momentum:
 - a stable architecture file,
 - a current-context handoff log,
 - a step-by-step tracker,
-- and a repeatable next-agent prompt that keeps execution disciplined.
+- and a canonical execution handoff document that keeps execution disciplined.
 
 `srgical` turns that from a repeated copy-paste ritual into a product.
 
@@ -37,13 +74,13 @@ This repo currently ships the foundation for:
 - `srgical changelog`
   Points straight at the installed version's release notes and the local packaged changelog.
 - `srgical init`
-  Creates a local `.srgical/` planning pack from built-in templates, with `--plan <id>` for named plans.
+  Creates a named local `.srgical/plans/<id>/` planning pack from built-in templates. `--plan <id>` is required.
 - `srgical studio`
   Opens a full-screen planning studio where you can switch between named plans, inspect readiness with `/readiness`,
-  inspect supported tools with `/agents`, refresh AI guidance with `/advice`, and explicitly trigger pack writes,
-  single-step execution, or `/auto`.
+  inspect supported tools with `/agents`, refresh AI guidance with `/advice`, run human review with `/review` and
+  `/open`, confirm with `/confirm-plan`, and then trigger pack writes, single-step execution, or `/auto`.
 - `srgical run-next`
-  Replays the generated next-agent prompt through the active agent, with `--plan <id>` for plan targeting,
+  Replays the generated execution handoff through the active agent, with `--plan <id>` for plan targeting,
   `--dry-run` for safe preview, `--agent <id>` for a one-run override, and `--auto` for bounded multi-step execution.
 
 ## Supported Agents
@@ -132,8 +169,9 @@ npm install -g @launch11/srgical
 ```bash
 npm install
 npm run build
-node dist/index.js doctor
-node dist/index.js studio
+node dist/index.js init --plan release-readiness
+node dist/index.js doctor --plan release-readiness
+node dist/index.js studio --plan release-readiness
 ```
 
 During development:
@@ -147,21 +185,21 @@ Typical flow once a workspace has a pack:
 ```bash
 node dist/index.js --version
 node dist/index.js about
-node dist/index.js doctor
+node dist/index.js doctor --plan release-readiness
 node dist/index.js changelog
 node dist/index.js init --plan release-readiness
 node dist/index.js studio --plan release-readiness
-node dist/index.js run-next --dry-run
-node dist/index.js run-next
-node dist/index.js run-next --auto --max-steps 10
+node dist/index.js run-next --plan release-readiness --dry-run
+node dist/index.js run-next --plan release-readiness
+node dist/index.js run-next --plan release-readiness --auto --max-steps 10
 ```
 
 To override the active workspace agent for one execution only:
 
 ```bash
-node dist/index.js run-next --agent codex
-node dist/index.js run-next --agent claude
-node dist/index.js run-next --agent augment
+node dist/index.js run-next --plan release-readiness --agent codex
+node dist/index.js run-next --plan release-readiness --agent claude
+node dist/index.js run-next --plan release-readiness --agent augment
 ```
 
 Inside the studio, the footer is intentionally minimal:
@@ -181,6 +219,12 @@ plain-English summary of:
 - whether the current plan state is clear or still fuzzy,
 - what research or repo truth still needs to be gathered,
 - and the best next move right now.
+
+Before `/write`, a human must review and confirm:
+
+- use `/review` to get the checklist and file targets
+- use `/open all` to open the planning docs in VS Code
+- use `/confirm-plan` to unlock `/write`
 
 ## Current Claude Caveat
 

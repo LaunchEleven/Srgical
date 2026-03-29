@@ -135,6 +135,17 @@ Updated By: srgical
 | ID | Status | Depends On | Scope | Acceptance | Notes |
 | --- | --- | --- | --- | --- | --- |
 | EXEC-001 | pending | PLAN-001 | Execute the next eligible implementation slice from the tracker. | The selected slice is complete, validated, and logged. | Pending tracker detail. |
+  `;
+}
+
+export function buildHandoffTemplate(paths: PlanningPackPaths): string {
+  const planDir = paths.relativeDir;
+
+  return `# HandoffDoc
+
+This is the canonical execution handoff for the current plan.
+
+${buildExecutionHandoffBody(planDir)}
 `;
 }
 
@@ -143,7 +154,25 @@ export function buildNextPromptTemplate(paths: PlanningPackPaths): string {
 
   return `# Next Agent Prompt
 
-You are continuing the current project from the existing repo state. Do not restart product design or casually rewrite
+Compatibility document retained for older workflows.
+The canonical execution handoff now lives in \`${planDir}/HandoffDoc.md\`.
+
+${buildExecutionHandoffBody(planDir)}
+`;
+}
+
+export function getInitialTemplates(paths: PlanningPackPaths): Record<string, string> {
+  return {
+    [paths.plan]: buildPlanTemplate(paths.root),
+    [paths.context]: buildContextTemplate(paths),
+    [paths.tracker]: buildTrackerTemplate(),
+    [paths.nextPrompt]: buildNextPromptTemplate(paths),
+    [paths.handoff]: buildHandoffTemplate(paths)
+  };
+}
+
+function buildExecutionHandoffBody(planDir: string): string {
+  return `You are continuing the current project from the existing repo state. Do not restart product design or casually rewrite
 the whole codebase.
 
 ## Read Order
@@ -178,15 +207,5 @@ the whole codebase.
 
 - Stop after finishing the chosen step block.
 - Stop before broadening into a different subsystem unless the tracker explicitly calls for it.
-- Stop and record a blocker if new architecture work is required.
-`;
-}
-
-export function getInitialTemplates(paths: PlanningPackPaths): Record<string, string> {
-  return {
-    [paths.plan]: buildPlanTemplate(paths.root),
-    [paths.context]: buildContextTemplate(paths),
-    [paths.tracker]: buildTrackerTemplate(),
-    [paths.nextPrompt]: buildNextPromptTemplate(paths)
-  };
+- Stop and record a blocker if new architecture work is required.`;
 }

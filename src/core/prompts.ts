@@ -56,6 +56,7 @@ Read the conversation transcript below and update or create the following files 
 - 02-agent-context-kickoff.md
 - 03-detailed-implementation-plan.md
 - 04-next-agent-prompt.md
+- HandoffDoc.md (canonical execution handoff)
 
 Operating rules:
 - Start from the repo truth snapshot below, not from generic assumptions.
@@ -70,7 +71,8 @@ Quality bar:
 - 01-product-plan.md should capture the real product direction, locked decisions, and current repo findings.
 - 02-agent-context-kickoff.md should capture current repo truth, working agreements, current position, and a concise handoff log.
 - 03-detailed-implementation-plan.md should keep a readable status legend, current position, phase-based next steps, and concrete notes.
-- 04-next-agent-prompt.md should enforce incremental execution, validation, tracker updates, and stop conditions.
+- HandoffDoc.md should enforce incremental execution, validation, tracker updates, and stop conditions.
+- 04-next-agent-prompt.md should remain aligned with HandoffDoc.md for compatibility with older execution flows.
 - The tracker should stay execution-ready: use concrete step IDs, realistic acceptance criteria, and concise validation notes instead of filler.
 
 Repo truth snapshot:
@@ -143,7 +145,8 @@ async function buildRepoTruthSnapshot(workspaceRoot: string, options: PlanningPa
     planSnippet,
     contextSnippet,
     trackerSnippet,
-    nextPromptSnippet
+    nextPromptSnippet,
+    handoffSnippet
   ] = await Promise.all([
     summarizePackageManifest(workspaceRoot),
     listDirectoryEntries(workspaceRoot),
@@ -155,7 +158,8 @@ async function buildRepoTruthSnapshot(workspaceRoot: string, options: PlanningPa
     readOptionalAbsoluteSnippet(paths.plan, workspaceRoot, FILE_SNIPPET_LIMIT),
     readOptionalAbsoluteSnippet(paths.context, workspaceRoot, FILE_SNIPPET_LIMIT),
     readOptionalAbsoluteSnippet(paths.tracker, workspaceRoot, FILE_SNIPPET_LIMIT),
-    readOptionalAbsoluteSnippet(paths.nextPrompt, workspaceRoot, FILE_SNIPPET_LIMIT)
+    readOptionalAbsoluteSnippet(paths.nextPrompt, workspaceRoot, FILE_SNIPPET_LIMIT),
+    readOptionalAbsoluteSnippet(paths.handoff, workspaceRoot, FILE_SNIPPET_LIMIT)
   ]);
 
   return [
@@ -187,7 +191,9 @@ async function buildRepoTruthSnapshot(workspaceRoot: string, options: PlanningPa
     "",
     renderNamedSnippet(".srgical/03-detailed-implementation-plan.md", trackerSnippet),
     "",
-    renderNamedSnippet(".srgical/04-next-agent-prompt.md", nextPromptSnippet)
+    renderNamedSnippet(".srgical/04-next-agent-prompt.md", nextPromptSnippet),
+    "",
+    renderNamedSnippet(".srgical/HandoffDoc.md", handoffSnippet)
   ].join("\n");
 }
 
@@ -198,7 +204,7 @@ function renderPlanningStateSummary(packState: PlanningPackState): string {
     `- packPresent: ${packState.packPresent}`,
     `- packMode: ${packState.packMode}`,
     `- mode: ${packState.mode}`,
-    `- docsPresent: ${packState.docsPresent}/4`,
+    `- docsPresent: ${packState.docsPresent}/5`,
     `- readiness: ${packState.readiness.score}/${packState.readiness.total}`,
     `- readinessReadyToWrite: ${packState.readiness.readyToWrite}`,
     `- missingReadinessSignals: ${packState.readiness.missingLabels.join(", ") || "none"}`,
