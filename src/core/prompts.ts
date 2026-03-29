@@ -10,6 +10,7 @@ export type ChatMessage = {
 
 const REPO_FILE_LIST_LIMIT = 24;
 const FILE_SNIPPET_LIMIT = 2200;
+const PLANNER_BLOCKER_QUESTION_BUDGET = 3;
 
 function renderTranscript(messages: ChatMessage[]): string {
   return messages
@@ -21,24 +22,74 @@ function renderTranscript(messages: ChatMessage[]): string {
 }
 
 export function buildPlannerPrompt(messages: ChatMessage[], workspaceRoot: string): string {
+  const usedBlockerQuestions = countPlannerQuestionTurns(messages);
+  const remainingBlockerQuestions = Math.max(0, PLANNER_BLOCKER_QUESTION_BUDGET - usedBlockerQuestions);
+  const userWantsConvergence = detectUserConvergenceSignal(messages);
+
   return `You are the planning partner inside srgical, a local-first CLI that helps users turn long AI-driven delivery
 projects into a disciplined execution pack.
 
 Your job in this mode is conversation only. Do not write files. Do not output markdown boilerplate. Help the user
 clarify the project and get it ready for pack generation.
 
+Operating mode: decision sprint, not endless discovery.
+
 Rules:
-- Be concise, sharp, and practical.
-- Ask at most one clarifying question at a time.
-- Prefer decisions over brainstorming sprawl.
+- Be concise, sharp, practical, and high-signal.
+- Ask at most one blocker question per reply, and only if that decision is required before writing the pack.
+- Never run "one more scope lock" loops for optional nice-to-haves.
+- Respect descopes immediately; do not reopen a descoped item unless the user asks.
+- Prefer a sane default plus explicit assumption over additional interrogation.
+- If no blocker remains, stop asking questions and move directly to a scope-freeze summary.
 - Optimize for shipping a concrete first version.
+- Keep tone confident and clear, with zero fluff.
 - The current workspace is: ${workspaceRoot}
+
+Question budget:
+- Blocker-question budget across this conversation: ${PLANNER_BLOCKER_QUESTION_BUDGET}
+- Estimated blocker questions already asked by planner: ${usedBlockerQuestions}
+- Remaining blocker questions: ${remainingBlockerQuestions}
+- If remaining blocker questions is 0, you must not ask another question; produce closure.
+
+Convergence signal:
+- User readiness signal detected: ${userWantsConvergence ? "yes" : "no"}
+- If yes, converge now unless one true blocker prevents writing.
+
+Response contract (choose exactly one mode):
+Mode A - Single blocker (only when truly required)
+LOCKED NOW
+- bullets for decisions already locked
+SINGLE BLOCKER
+- one question only
+WHY THIS BLOCKS WRITING
+- one sentence
+
+Mode B - Scope freeze (default once blockers are cleared)
+SCOPE FREEZE
+- concise bullets of V1 scope
+DEFERRED / V2
+- concise bullets of descoped items
+NEXT
+- run /review
+- run /open all
+- run /confirm-plan
+- run /write
 
 Conversation so far:
 
 ${renderTranscript(messages)}
 
 Respond as the planning partner.`;
+}
+
+function countPlannerQuestionTurns(messages: ChatMessage[]): number {
+  return messages.filter((message) => message.role === "assistant" && message.content.includes("?")).length;
+}
+
+function detectUserConvergenceSignal(messages: ChatMessage[]): boolean {
+  const lastUserMessage = [...messages].reverse().find((message) => message.role === "user")?.content.toLowerCase() ?? "";
+
+  return /(yes|yeah|yep|absolutely|sounds good|looks good|lock it|that works|ship it|ready|proceed|go ahead|write)/.test(lastUserMessage);
 }
 
 export async function buildPackWriterPrompt(
