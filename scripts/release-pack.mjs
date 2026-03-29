@@ -17,12 +17,13 @@ const releaseDir = path.join(root, ".artifacts", "release");
 const githubStagingDir = path.join(root, ".artifacts", "publish", "github-packages");
 const npmStagingDir = path.join(root, ".artifacts", "publish", "npm-public");
 const releaseState = await resolveReleaseState();
+const releaseValidationPlanId = "release-pack";
 
 await rm(releaseDir, { recursive: true, force: true });
 await mkdir(releaseDir, { recursive: true });
 
 runChecked(npmCommand, ["run", "build"], { cwd: root });
-runChecked(process.execPath, ["dist/index.js", "doctor"], { cwd: root });
+runChecked(process.execPath, ["dist/index.js", "doctor", "--plan", releaseValidationPlanId], { cwd: root });
 
 await prepareStagedPackage({
   stagingDir: githubStagingDir,
@@ -63,7 +64,7 @@ const manifest = {
   },
   validation: [
     "npm run build",
-    "node dist/index.js doctor",
+    `node dist/index.js doctor --plan ${releaseValidationPlanId}`,
     "npm pack --pack-destination .artifacts/release (staged package copies)"
   ],
   artifacts: [githubArtifact, npmArtifact],
