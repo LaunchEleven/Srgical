@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { access, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import type { AgentInvocationOptions } from "./agent";
 import { writePlanningPackFallback } from "./local-pack";
 import {
   formatPlanningEpochSummary,
@@ -10,7 +11,6 @@ import {
 } from "./planning-epochs";
 import { buildAdvicePrompt, buildPackWriterPrompt, buildPlannerPrompt, type ChatMessage } from "./prompts";
 import type { PlanningPackState } from "./planning-pack-state";
-import type { PlanningPathOptions } from "./workspace";
 
 export type AugmentStatus = {
   available: boolean;
@@ -24,6 +24,7 @@ type AugmentExecOptions = {
   prompt: string;
   askMode?: boolean;
   maxTurns?: number;
+  onOutputChunk?: (chunk: string) => void;
 };
 
 type AugmentExecResult = {
@@ -37,11 +38,17 @@ type SpawnCaptureResult = {
   stderr: string;
 };
 
+type SpawnCaptureOptions = {
+  onStdoutChunk?: (chunk: string) => void;
+  onStderrChunk?: (chunk: string) => void;
+};
+
 type SpawnCaptureFn = (
   command: string,
   args: string[],
   cwd: string,
-  stdinText?: string
+  stdinText?: string,
+  options?: SpawnCaptureOptions
 ) => Promise<SpawnCaptureResult>;
 
 const AUGMENT_INSTALL_HINT = "install Augment CLI to enable";
@@ -79,13 +86,14 @@ export async function detectAugment(): Promise<AugmentStatus> {
 export async function requestPlannerReply(
   workspaceRoot: string,
   messages: ChatMessage[],
-  _options: PlanningPathOptions = {}
+  options: AgentInvocationOptions = {}
 ): Promise<string> {
   const result = await runAugmentExec({
     cwd: workspaceRoot,
     prompt: buildPlannerPrompt(messages, workspaceRoot),
     askMode: true,
-    maxTurns: 4
+    maxTurns: 4,
+    onOutputChunk: options.onOutputChunk
   });
 
   return result.lastMessage.trim();
@@ -95,13 +103,14 @@ export async function requestPlanningAdvice(
   workspaceRoot: string,
   messages: ChatMessage[],
   packState: PlanningPackState,
-  options: PlanningPathOptions = {}
+  options: AgentInvocationOptions = {}
 ): Promise<string> {
   const result = await runAugmentExec({
     cwd: workspaceRoot,
     prompt: await buildAdvicePrompt(messages, workspaceRoot, packState, options),
     askMode: true,
-    maxTurns: 4
+    maxTurns: 4,
+    onOutputChunk: options.onOutputChunk
   });
 
   return result.lastMessage.trim();
@@ -110,7 +119,7 @@ export async function requestPlanningAdvice(
 export async function writePlanningPack(
   workspaceRoot: string,
   messages: ChatMessage[],
-  options: PlanningPathOptions = {}
+  options: AgentInvocationOptions = {}
 ): Promise<string> {
   const planningEpoch = await preparePlanningPackForWrite(workspaceRoot, options);
   const augmentStatus = await detectAugment();
@@ -132,7 +141,8 @@ export async function writePlanningPack(
     const result = await runAugmentExec({
       cwd: workspaceRoot,
       prompt: await buildPackWriterPrompt(messages, workspaceRoot, options),
-      maxTurns: 24
+      maxTurns: 24,
+      onOutputChunk: options.onOutputChunk
     });
 
     return appendPlanningEpochSummary(planningEpoch, result.lastMessage.trim());
@@ -159,12 +169,13 @@ export async function writePlanningPack(
 export async function runNextPrompt(
   workspaceRoot: string,
   prompt: string,
-  _options: PlanningPathOptions = {}
+  options: AgentInvocationOptions = {}
 ): Promise<string> {
   const result = await runAugmentExec({
     cwd: workspaceRoot,
     prompt,
-    maxTurns: 24
+    maxTurns: 24,
+    onOutputChunk: options.onOutputChunk
   });
 
   return result.lastMessage.trim();
@@ -220,7 +231,9 @@ async function runAugmentExec(options: AugmentExecOptions): Promise<AugmentExecR
   await writeFile(rulesFile, AUGMENT_DEFAULT_RULES, "utf8");
 
   try {
-    const result = await spawnAndCaptureImpl(command, args, options.cwd);
+    const result = await spawnAndCaptureImpl(command, args, options.cwd, undefined, {
+      onStdoutChunk: options.onOutputChunk
+    });
     return {
       stdout: result.stdout,
       stderr: result.stderr,
@@ -285,7 +298,8 @@ function spawnAndCaptureBase(
   command: string,
   args: string[],
   cwd: string,
-  stdinText?: string
+  stdinText?: string,
+  options: SpawnCaptureOptions = {}
 ): Promise<SpawnCaptureResult> {
   return new Promise((resolve, reject) => {
     const spec = buildSpawnSpec(command, args, cwd);
@@ -295,11 +309,15 @@ function spawnAndCaptureBase(
     let stderr = "";
 
     child.stdout.on("data", (chunk: Buffer | string) => {
-      stdout += chunk.toString();
+      const text = chunk.toString();
+      stdout += text;
+      options.onStdoutChunk?.(text);
     });
 
     child.stderr.on("data", (chunk: Buffer | string) => {
-      stderr += chunk.toString();
+      const text = chunk.toString();
+      stderr += text;
+      options.onStderrChunk?.(text);
     });
 
     child.on("error", reject);

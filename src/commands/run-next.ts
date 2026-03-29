@@ -14,6 +14,7 @@ import { buildExecutionIterationPrompt } from "../core/handoff";
 import { readPlanningPackState } from "../core/planning-pack-state";
 import { resolvePlanId, saveActivePlanId } from "../core/workspace";
 import { resolveWorkspace } from "../core/workspace";
+import { paintLine, renderCommandBanner, renderSectionHeading } from "../ui/terminal-theme";
 
 type RunNextCommandOptions = {
   dryRun?: boolean;
@@ -44,9 +45,13 @@ export async function runRunNextCommand(workspaceArg?: string, options: RunNextC
   await saveActivePlanId(workspace, planId);
 
   if (options.auto) {
+    for (const line of renderCommandBanner("srgical", `run-next auto ${planId}`)) {
+      process.stdout.write(`${line}\n`);
+    }
+
     const stopHandler = () => {
       void requestAutoRunStop(workspace, { planId });
-      process.stdout.write("Stop requested. Auto mode will finish the current iteration before stopping.\n");
+      process.stdout.write(`${paintLine("Stop requested. Auto mode will finish the current iteration before stopping.", "warning")}\n`);
     };
 
     process.once("SIGINT", stopHandler);
@@ -58,10 +63,10 @@ export async function runRunNextCommand(workspaceArg?: string, options: RunNextC
         agentId: options.agent,
         maxSteps: options.maxSteps,
         onMessage: (line) => {
-          process.stdout.write(`${line}\n`);
+          process.stdout.write(`${styleRunNextLine(line)}\n`);
         }
       });
-      process.stdout.write(`${result.summary}\n`);
+      process.stdout.write(`${styleRunNextLine(result.summary)}\n`);
       return;
     } finally {
       process.removeListener("SIGINT", stopHandler);
@@ -75,8 +80,13 @@ export async function runRunNextCommand(workspaceArg?: string, options: RunNextC
     ? renderDryRunPreview(prompt, packState.nextStepSummary, packState.currentPosition.nextRecommended)
     : renderExecutionStepLines(packState.nextStepSummary, packState.currentPosition.nextRecommended);
 
-  for (const line of previewLines) {
+  for (const line of renderCommandBanner("srgical", options.dryRun ? `run-next dry run ${planId}` : `run-next ${planId}`)) {
     process.stdout.write(`${line}\n`);
+  }
+  process.stdout.write(`${renderSectionHeading("Execution")}\n`);
+
+  for (const line of previewLines) {
+    process.stdout.write(`${styleRunNextLine(line)}\n`);
   }
 
   if (options.dryRun) {
@@ -84,8 +94,8 @@ export async function runRunNextCommand(workspaceArg?: string, options: RunNextC
   }
 
   process.stdout.write("\n");
-  process.stdout.write(`Running the current execution handoff through ${getPrimaryAgentAdapter().label}...\n`);
-  process.stdout.write(`Execution handoff source: ${handoffPrompt.handoffDoc.displayPath}\n`);
+  process.stdout.write(`${paintLine(`Running the current execution handoff through ${getPrimaryAgentAdapter().label}...`, "brand", { bold: true })}\n`);
+  process.stdout.write(`${paintLine(`Execution handoff source: ${handoffPrompt.handoffDoc.displayPath}`, "muted")}\n`);
   try {
     const result = await runNextPrompt(workspace, prompt, {
       agentId: options.agent,
@@ -96,7 +106,7 @@ export async function runRunNextCommand(workspaceArg?: string, options: RunNextC
       planId,
       stepLabel: formatStepLabel(packState.nextStepSummary, packState.currentPosition.nextRecommended)
     });
-    process.stdout.write(`${result}\n`);
+    process.stdout.write(`${paintLine(result, "success")}\n`);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     await saveExecutionState(workspace, "failure", "run-next", message, { planId });
@@ -113,4 +123,36 @@ export async function runRunNextCommand(workspaceArg?: string, options: RunNextC
       )
     );
   }
+}
+
+function styleRunNextLine(line: string): string {
+  if (!line) {
+    return line;
+  }
+
+  if (line.startsWith("Auto mode failed") || line.startsWith("Execution failed")) {
+    return paintLine(line, "danger", { bold: true });
+  }
+
+  if (line.startsWith("Auto mode completed") || line.startsWith("Auto mode started")) {
+    return paintLine(line, "brand", { bold: true });
+  }
+
+  if (line.startsWith("Dry run only")) {
+    return paintLine(line, "warning");
+  }
+
+  if (line.startsWith("Execution dry run") || line.startsWith("Prompt preview")) {
+    return paintLine(line, "section", { bold: true });
+  }
+
+  if (line.startsWith("Next step:") || line.startsWith("Scope:") || line.startsWith("Acceptance:") || line.startsWith("Notes:")) {
+    return paintLine(line, "info");
+  }
+
+  if (line.includes("completed") || line.includes("succeeded")) {
+    return paintLine(line, "success");
+  }
+
+  return line;
 }

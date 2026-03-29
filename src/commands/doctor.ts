@@ -2,6 +2,7 @@ import process from "node:process";
 import { resolvePrimaryAgent, type AgentStatus } from "../core/agent";
 import { readPlanningPackState, type PlanningStepSummary } from "../core/planning-pack-state";
 import { isGitRepo, listPlanningDirectories, resolvePlanId, resolveWorkspace } from "../core/workspace";
+import { paintLine, renderCommandBanner, renderSectionHeading, toneForAvailabilityLine } from "../ui/terminal-theme";
 
 type DoctorCommandOptions = {
   planId?: string | null;
@@ -18,14 +19,27 @@ export async function runDoctorCommand(workspaceArg?: string, options: DoctorCom
   ]);
 
   const { status: activeAgent, statuses } = resolvedAgent;
+  const nextMove = selectedPlanState.packPresent
+    ? selectedPlanState.mode === "Ready to Write" || selectedPlanState.mode === "Gathering Context"
+      ? "Next move: run `srgical studio` to refine the plan, run `/review`, then `/confirm-plan` before `/write`."
+      : selectedPlanState.mode === "Ready to Execute" || selectedPlanState.mode === "Execution Active" || selectedPlanState.mode === "Auto Running"
+        ? "Next move: run `srgical run-next --plan <id>` for one step or `srgical run-next --plan <id> --auto` to continue automatically."
+        : "Next move: run `srgical studio` to queue or refine the next execution-ready step."
+    : "Next move: run `srgical init --plan <id>` for a scaffold or `srgical studio --plan <id>` to start planning.";
+
   const lines = [
+    ...renderCommandBanner("srgical", `doctor ${selectedPlanId}`),
+    "",
+    renderSectionHeading("Workspace"),
     `Workspace: ${workspace}`,
     `Git repo: ${gitRepo ? "yes" : "no"}`,
     `Active plan: ${selectedPlanId}`,
     `Active agent: ${activeAgent.label} (${activeAgent.id}) - ${formatAgentAvailability(activeAgent)}`,
     "",
+    renderSectionHeading("Agents"),
     ...renderSupportedAgentLines(statuses, activeAgent.id),
     "",
+    renderSectionHeading("Plans"),
     "Plans:"
   ];
 
@@ -39,20 +53,10 @@ export async function runDoctorCommand(workspaceArg?: string, options: DoctorCom
     }
   }
 
-  lines.push("", `Selected plan details (${selectedPlanId}):`, ...renderPlanDetailLines(selectedPlanState));
+  lines.push("", renderSectionHeading("Selected Plan"), `Selected plan details (${selectedPlanId}):`, ...renderPlanDetailLines(selectedPlanState));
+  lines.push("", renderSectionHeading("Next"), nextMove);
 
-  lines.push(
-    "",
-    selectedPlanState.packPresent
-      ? selectedPlanState.mode === "Ready to Write" || selectedPlanState.mode === "Gathering Context"
-        ? "Next move: run `srgical studio` to refine the plan, run `/review`, then `/confirm-plan` before `/write`."
-        : selectedPlanState.mode === "Ready to Execute" || selectedPlanState.mode === "Execution Active" || selectedPlanState.mode === "Auto Running"
-          ? "Next move: run `srgical run-next --plan <id>` for one step or `srgical run-next --plan <id> --auto` to continue automatically."
-          : "Next move: run `srgical studio` to queue or refine the next execution-ready step."
-      : "Next move: run `srgical init --plan <id>` for a scaffold or `srgical studio --plan <id>` to start planning."
-  );
-
-  process.stdout.write(`${lines.join("\n")}\n`);
+  process.stdout.write(`${lines.map((line) => styleDoctorLine(line)).join("\n")}\n`);
 }
 
 function renderSupportedAgentLines(statuses: AgentStatus[], activeAgentId: string): string[] {
@@ -81,6 +85,30 @@ function renderPlanSummaryLine(
     `execution ${state.executionActivated ? "started" : "not-started"}`,
     `auto ${state.autoRun?.status ?? "idle"}`
   ].join(" | ");
+}
+
+function styleDoctorLine(line: string): string {
+  if (!line || line.includes("\u001b[")) {
+    return line;
+  }
+
+  if (line.startsWith("- ") || line.startsWith("Active agent:")) {
+    return paintLine(line, toneForAvailabilityLine(line));
+  }
+
+  if (line.startsWith("Next move:")) {
+    return paintLine(line, "brand", { bold: true });
+  }
+
+  if (line.startsWith("AI advice: none cached")) {
+    return paintLine(line, "muted");
+  }
+
+  if (line.startsWith("Next Step: unavailable")) {
+    return paintLine(line, "warning");
+  }
+
+  return line;
 }
 
 function formatAgentAvailability(status: AgentStatus): string {

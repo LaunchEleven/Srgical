@@ -4,6 +4,8 @@ import {
   buildStudioHeaderContent,
   formatPlanningPackSummary,
   formatTrackerSummary,
+  isComposerDelimitedBlockOpen,
+  parseComposerPathCompletionRequest,
   renderWorkspaceSelectionMessage,
   resolveStudioWorkspaceInput
 } from "../../src/ui/studio";
@@ -57,6 +59,25 @@ test("resolve-studio-workspace-input resolves relative paths from the current wo
     resolveStudioWorkspaceInput("G:\\code\\Launch11Projects\\srgical", "D:\\sandbox\\fresh"),
     "D:\\sandbox\\fresh"
   );
+});
+
+test("composer delimiter mode stays open until a closing ===== line appears", () => {
+  assert.equal(isComposerDelimitedBlockOpen("hello"), false);
+  assert.equal(isComposerDelimitedBlockOpen("=====\nalpha"), true);
+  assert.equal(isComposerDelimitedBlockOpen("=====\nalpha\n====="), false);
+});
+
+test("parse-composer-path-completion-request extracts token and replacement range", () => {
+  const readRequest = parseComposerPathCompletionRequest("/read src/ui/stu");
+  assert.equal(readRequest?.command, "/read");
+  assert.equal(readRequest?.token, "src/ui/stu");
+  assert.equal(readRequest?.replaceStart, "/read ".length);
+
+  const workspaceRequest = parseComposerPathCompletionRequest("/workspace ../dem");
+  assert.equal(workspaceRequest?.command, "/workspace");
+  assert.equal(workspaceRequest?.token, "../dem");
+
+  assert.equal(parseComposerPathCompletionRequest("regular chat message"), null);
 });
 
 function createPackState(options: {

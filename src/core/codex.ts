@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { access, mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import type { AgentInvocationOptions } from "./agent";
 import { writePlanningPackFallback } from "./local-pack";
 import {
   formatPlanningEpochSummary,
@@ -10,7 +11,6 @@ import {
 } from "./planning-epochs";
 import { buildAdvicePrompt, buildPackWriterPrompt, buildPlannerPrompt, type ChatMessage } from "./prompts";
 import type { PlanningPackState } from "./planning-pack-state";
-import type { PlanningPathOptions } from "./workspace";
 
 export type CodexStatus = {
   available: boolean;
@@ -25,6 +25,7 @@ export type CodexExecOptions = {
   allowWrite?: boolean;
   skipGitRepoCheck?: boolean;
   ephemeral?: boolean;
+  onOutputChunk?: (chunk: string) => void;
 };
 
 type SpawnCaptureResult = {
@@ -32,11 +33,17 @@ type SpawnCaptureResult = {
   stderr: string;
 };
 
+type SpawnCaptureOptions = {
+  onStdoutChunk?: (chunk: string) => void;
+  onStderrChunk?: (chunk: string) => void;
+};
+
 type SpawnCaptureFn = (
   command: string,
   args: string[],
   cwd: string,
-  stdinText?: string
+  stdinText?: string,
+  options?: SpawnCaptureOptions
 ) => Promise<SpawnCaptureResult>;
 
 let codexCommandPromise: Promise<string> | undefined;
@@ -64,14 +71,15 @@ export async function detectCodex(): Promise<CodexStatus> {
 export async function requestPlannerReply(
   workspaceRoot: string,
   messages: ChatMessage[],
-  _options: PlanningPathOptions = {}
+  options: AgentInvocationOptions = {}
 ): Promise<string> {
   const result = await runCodexExec({
     cwd: workspaceRoot,
     prompt: buildPlannerPrompt(messages, workspaceRoot),
     allowWrite: false,
     skipGitRepoCheck: true,
-    ephemeral: true
+    ephemeral: true,
+    onOutputChunk: options.onOutputChunk
   });
 
   return result.lastMessage.trim();
@@ -81,14 +89,15 @@ export async function requestPlanningAdvice(
   workspaceRoot: string,
   messages: ChatMessage[],
   packState: PlanningPackState,
-  options: PlanningPathOptions = {}
+  options: AgentInvocationOptions = {}
 ): Promise<string> {
   const result = await runCodexExec({
     cwd: workspaceRoot,
     prompt: await buildAdvicePrompt(messages, workspaceRoot, packState, options),
     allowWrite: false,
     skipGitRepoCheck: true,
-    ephemeral: true
+    ephemeral: true,
+    onOutputChunk: options.onOutputChunk
   });
 
   return result.lastMessage.trim();
@@ -97,7 +106,7 @@ export async function requestPlanningAdvice(
 export async function writePlanningPack(
   workspaceRoot: string,
   messages: ChatMessage[],
-  options: PlanningPathOptions = {}
+  options: AgentInvocationOptions = {}
 ): Promise<string> {
   const planningEpoch = await preparePlanningPackForWrite(workspaceRoot, options);
   const codexStatus = await detectCodex();
@@ -115,7 +124,8 @@ export async function writePlanningPack(
       prompt: await buildPackWriterPrompt(messages, workspaceRoot, options),
       allowWrite: true,
       skipGitRepoCheck: true,
-      ephemeral: false
+      ephemeral: false,
+      onOutputChunk: options.onOutputChunk
     });
 
     return appendPlanningEpochSummary(planningEpoch, result.lastMessage.trim());
@@ -142,14 +152,15 @@ export async function writePlanningPack(
 export async function runNextPrompt(
   workspaceRoot: string,
   prompt: string,
-  _options: PlanningPathOptions = {}
+  options: AgentInvocationOptions = {}
 ): Promise<string> {
   const result = await runCodexExec({
     cwd: workspaceRoot,
     prompt,
     allowWrite: true,
     skipGitRepoCheck: true,
-    ephemeral: false
+    ephemeral: false,
+    onOutputChunk: options.onOutputChunk
   });
 
   return result.lastMessage.trim();
@@ -204,7 +215,9 @@ async function runCodexExec(options: CodexExecOptions): Promise<CodexExecResult>
   args.push("-");
 
   try {
-    const result = await spawnAndCaptureImpl(command, args, options.cwd, options.prompt);
+    const result = await spawnAndCaptureImpl(command, args, options.cwd, options.prompt, {
+      onStdoutChunk: options.onOutputChunk
+    });
     const lastMessage = await readFile(outputFile, "utf8");
 
     return {
@@ -271,7 +284,8 @@ function spawnAndCaptureBase(
   command: string,
   args: string[],
   cwd: string,
-  stdinText?: string
+  stdinText?: string,
+  options: SpawnCaptureOptions = {}
 ): Promise<SpawnCaptureResult> {
   return new Promise((resolve, reject) => {
     const spec = buildSpawnSpec(command, args, cwd);
@@ -281,11 +295,15 @@ function spawnAndCaptureBase(
     let stderr = "";
 
     child.stdout.on("data", (chunk: Buffer | string) => {
-      stdout += chunk.toString();
+      const text = chunk.toString();
+      stdout += text;
+      options.onStdoutChunk?.(text);
     });
 
     child.stderr.on("data", (chunk: Buffer | string) => {
-      stderr += chunk.toString();
+      const text = chunk.toString();
+      stderr += text;
+      options.onStderrChunk?.(text);
     });
 
     child.on("error", reject);

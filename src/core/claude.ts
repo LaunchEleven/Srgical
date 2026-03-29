@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { access, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import type { AgentInvocationOptions } from "./agent";
 import { writePlanningPackFallback } from "./local-pack";
 import {
   formatPlanningEpochSummary,
@@ -10,7 +11,6 @@ import {
 } from "./planning-epochs";
 import { buildAdvicePrompt, buildPackWriterPrompt, buildPlannerPrompt, type ChatMessage } from "./prompts";
 import type { PlanningPackState } from "./planning-pack-state";
-import type { PlanningPathOptions } from "./workspace";
 
 export type ClaudeStatus = {
   available: boolean;
@@ -27,6 +27,7 @@ type ClaudeExecOptions = {
   permissionMode: ClaudePermissionMode;
   allowedTools?: string[];
   maxTurns?: number;
+  onOutputChunk?: (chunk: string) => void;
 };
 
 type ClaudeExecResult = {
@@ -40,11 +41,17 @@ type SpawnCaptureResult = {
   stderr: string;
 };
 
+type SpawnCaptureOptions = {
+  onStdoutChunk?: (chunk: string) => void;
+  onStderrChunk?: (chunk: string) => void;
+};
+
 type SpawnCaptureFn = (
   command: string,
   args: string[],
   cwd: string,
-  stdinText?: string
+  stdinText?: string,
+  options?: SpawnCaptureOptions
 ) => Promise<SpawnCaptureResult>;
 
 const FOLLOW_APPENDED_PROMPT_QUERY =
@@ -77,13 +84,14 @@ export async function detectClaude(): Promise<ClaudeStatus> {
 export async function requestPlannerReply(
   workspaceRoot: string,
   messages: ChatMessage[],
-  _options: PlanningPathOptions = {}
+  options: AgentInvocationOptions = {}
 ): Promise<string> {
   const result = await runClaudeExec({
     cwd: workspaceRoot,
     prompt: buildPlannerPrompt(messages, workspaceRoot),
     permissionMode: "plan",
-    maxTurns: 4
+    maxTurns: 4,
+    onOutputChunk: options.onOutputChunk
   });
 
   return result.lastMessage.trim();
@@ -93,13 +101,14 @@ export async function requestPlanningAdvice(
   workspaceRoot: string,
   messages: ChatMessage[],
   packState: PlanningPackState,
-  options: PlanningPathOptions = {}
+  options: AgentInvocationOptions = {}
 ): Promise<string> {
   const result = await runClaudeExec({
     cwd: workspaceRoot,
     prompt: await buildAdvicePrompt(messages, workspaceRoot, packState, options),
     permissionMode: "plan",
-    maxTurns: 4
+    maxTurns: 4,
+    onOutputChunk: options.onOutputChunk
   });
 
   return result.lastMessage.trim();
@@ -108,7 +117,7 @@ export async function requestPlanningAdvice(
 export async function writePlanningPack(
   workspaceRoot: string,
   messages: ChatMessage[],
-  options: PlanningPathOptions = {}
+  options: AgentInvocationOptions = {}
 ): Promise<string> {
   const planningEpoch = await preparePlanningPackForWrite(workspaceRoot, options);
   const claudeStatus = await detectClaude();
@@ -132,7 +141,8 @@ export async function writePlanningPack(
       prompt: await buildPackWriterPrompt(messages, workspaceRoot, options),
       permissionMode: "acceptEdits",
       allowedTools: CLAUDE_WRITE_ALLOW_TOOLS,
-      maxTurns: 24
+      maxTurns: 24,
+      onOutputChunk: options.onOutputChunk
     });
 
     return appendPlanningEpochSummary(planningEpoch, result.lastMessage.trim());
@@ -159,14 +169,15 @@ export async function writePlanningPack(
 export async function runNextPrompt(
   workspaceRoot: string,
   prompt: string,
-  _options: PlanningPathOptions = {}
+  options: AgentInvocationOptions = {}
 ): Promise<string> {
   const result = await runClaudeExec({
     cwd: workspaceRoot,
     prompt,
     permissionMode: "acceptEdits",
     allowedTools: CLAUDE_WRITE_ALLOW_TOOLS,
-    maxTurns: 24
+    maxTurns: 24,
+    onOutputChunk: options.onOutputChunk
   });
 
   return result.lastMessage.trim();
@@ -226,7 +237,9 @@ async function runClaudeExec(options: ClaudeExecOptions): Promise<ClaudeExecResu
   args.push("--no-session-persistence", FOLLOW_APPENDED_PROMPT_QUERY);
 
   try {
-    const result = await spawnAndCaptureImpl(command, args, options.cwd);
+    const result = await spawnAndCaptureImpl(command, args, options.cwd, undefined, {
+      onStdoutChunk: options.onOutputChunk
+    });
     return {
       stdout: result.stdout,
       stderr: result.stderr,
@@ -291,7 +304,8 @@ function spawnAndCaptureBase(
   command: string,
   args: string[],
   cwd: string,
-  stdinText?: string
+  stdinText?: string,
+  options: SpawnCaptureOptions = {}
 ): Promise<SpawnCaptureResult> {
   return new Promise((resolve, reject) => {
     const spec = buildSpawnSpec(command, args, cwd);
@@ -301,11 +315,15 @@ function spawnAndCaptureBase(
     let stderr = "";
 
     child.stdout.on("data", (chunk: Buffer | string) => {
-      stdout += chunk.toString();
+      const text = chunk.toString();
+      stdout += text;
+      options.onStdoutChunk?.(text);
     });
 
     child.stderr.on("data", (chunk: Buffer | string) => {
-      stderr += chunk.toString();
+      const text = chunk.toString();
+      stderr += text;
+      options.onStderrChunk?.(text);
     });
 
     child.on("error", reject);

@@ -1,6 +1,7 @@
 import process from "node:process";
 import { getSupportedAgentAdapters } from "../core/agent";
 import { readInstalledPackageInfo } from "../core/package-info";
+import { paintLine, renderCommandBanner, renderSectionHeading } from "../ui/terminal-theme";
 
 export function runAboutCommand(): void {
   process.stdout.write(`${renderAboutSummary()}\n`);
@@ -11,6 +12,9 @@ export function renderAboutSummary(): string {
   const supportedAgents = getSupportedAgentAdapters().map((adapter) => adapter.id).join(", ");
 
   return [
+    ...renderCommandBanner("srgical", "about"),
+    "",
+    renderSectionHeading("Package"),
     "srgical",
     `Version: ${info.version}`,
     `Package: ${info.name}`,
@@ -20,8 +24,12 @@ export function renderAboutSummary(): string {
     info.issuesUrl ? `Issues: ${info.issuesUrl}` : null,
     info.releaseNotesUrl ? `Release notes: ${info.releaseNotesUrl}` : null,
     info.releasesUrl ? `All releases: ${info.releasesUrl}` : null,
+    "",
+    renderSectionHeading("Agents"),
     `Supported agents: ${supportedAgents || "none registered"}`,
-    "Next steps: `srgical doctor`, `srgical studio`, or `srgical changelog`"
+    "",
+    renderSectionHeading("Next"),
+    paintLine("Next steps: `srgical doctor`, `srgical studio`, or `srgical changelog`", "brand", { bold: true })
   ]
     .filter(Boolean)
     .join("\n");

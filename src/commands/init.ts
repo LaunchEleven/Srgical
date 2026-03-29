@@ -2,6 +2,7 @@ import process from "node:process";
 import { savePlanningState } from "../core/planning-state";
 import { getInitialTemplates } from "../core/templates";
 import { ensurePlanningDir, planningPackExists, resolveWorkspace, saveActivePlanId, writeText } from "../core/workspace";
+import { paintLine, renderCommandBanner, renderSectionHeading } from "../ui/terminal-theme";
 
 export async function runInitCommand(workspaceArg?: string, force = false, planId?: string | null): Promise<void> {
   if (!planId || planId.trim().length === 0) {
@@ -26,13 +27,21 @@ export async function runInitCommand(workspaceArg?: string, force = false, planI
 
   process.stdout.write(
     [
-      `Created planning pack for plan \`${paths.planId}\` in ${paths.dir}`,
+      ...renderCommandBanner("srgical", `init ${paths.planId}`),
+      "",
+      paintLine(`Created planning pack for plan \`${paths.planId}\` in ${paths.dir}`, "success", { bold: true }),
+      "",
+      renderSectionHeading("Files"),
       `- ${paths.plan}`,
       `- ${paths.context}`,
       `- ${paths.tracker}`,
       `- ${paths.nextPrompt}`,
       `- ${paths.handoff}`,
-      `Next: run \`srgical doctor --plan ${paths.planId}\` or open \`srgical studio --plan ${paths.planId}\`.`
+      "",
+      renderSectionHeading("Next"),
+      paintLine(`Next: run \`srgical doctor --plan ${paths.planId}\` or open \`srgical studio --plan ${paths.planId}\`.`, "brand", {
+        bold: true
+      })
     ].join("\n") + "\n"
   );
 }

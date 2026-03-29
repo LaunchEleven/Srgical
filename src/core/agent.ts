@@ -37,15 +37,19 @@ export type AgentAdapter = {
   id: string;
   label: string;
   detectStatus(): Promise<AgentStatus>;
-  requestPlannerReply(workspaceRoot: string, messages: ChatMessage[], options?: PlanningPathOptions): Promise<string>;
+  requestPlannerReply(workspaceRoot: string, messages: ChatMessage[], options?: AgentInvocationOptions): Promise<string>;
   requestPlanningAdvice(
     workspaceRoot: string,
     messages: ChatMessage[],
     packState: PlanningPackState,
-    options?: PlanningPathOptions
+    options?: AgentInvocationOptions
   ): Promise<string>;
-  writePlanningPack(workspaceRoot: string, messages: ChatMessage[], options?: PlanningPathOptions): Promise<string>;
-  runNextPrompt(workspaceRoot: string, prompt: string, options?: PlanningPathOptions): Promise<string>;
+  writePlanningPack(workspaceRoot: string, messages: ChatMessage[], options?: AgentInvocationOptions): Promise<string>;
+  runNextPrompt(workspaceRoot: string, prompt: string, options?: AgentInvocationOptions): Promise<string>;
+};
+
+export type AgentInvocationOptions = PlanningPathOptions & {
+  onOutputChunk?: (chunk: string) => void;
 };
 
 export type ResolvedPrimaryAgent = {
@@ -188,7 +192,7 @@ export async function resolveExecutionAgent(
 export async function requestPlannerReply(
   workspaceRoot: string,
   messages: ChatMessage[],
-  options: PlanningPathOptions = {}
+  options: AgentInvocationOptions = {}
 ): Promise<string> {
   const { adapter } = await resolvePrimaryAgent(workspaceRoot, options);
   return adapter.requestPlannerReply(workspaceRoot, messages, options);
@@ -197,7 +201,7 @@ export async function requestPlannerReply(
 export async function writePlanningPack(
   workspaceRoot: string,
   messages: ChatMessage[],
-  options: PlanningPathOptions = {}
+  options: AgentInvocationOptions = {}
 ): Promise<string> {
   const { adapter } = await resolvePrimaryAgent(workspaceRoot, options);
   return adapter.writePlanningPack(workspaceRoot, messages, options);
@@ -207,7 +211,7 @@ export async function requestPlanningAdvice(
   workspaceRoot: string,
   messages: ChatMessage[],
   packState: PlanningPackState,
-  options: PlanningPathOptions = {}
+  options: AgentInvocationOptions = {}
 ): Promise<string> {
   const { adapter } = await resolvePrimaryAgent(workspaceRoot, options);
   return adapter.requestPlanningAdvice(workspaceRoot, messages, packState, options);
@@ -219,10 +223,11 @@ export async function runNextPrompt(
   options: {
     agentId?: string | null;
     planId?: string | null;
+    onOutputChunk?: (chunk: string) => void;
   } = {}
 ): Promise<string> {
   const { adapter } = await resolveExecutionAgent(workspaceRoot, options.agentId, { planId: options.planId });
-  return adapter.runNextPrompt(workspaceRoot, prompt, { planId: options.planId });
+  return adapter.runNextPrompt(workspaceRoot, prompt, { planId: options.planId, onOutputChunk: options.onOutputChunk });
 }
 
 export async function selectPrimaryAgent(

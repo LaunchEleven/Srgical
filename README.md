@@ -35,10 +35,11 @@ srgical studio --plan release-readiness
 Inside studio:
 
 1. talk through scope/constraints and use `/readiness` + `/advice`
-2. run `/review` and `/open all` for human doc review
-3. run `/confirm-plan` (human approval gate)
-4. run `/write`
-5. execute with `/preview`, `/run`, or `/auto 10` (`/stop` to stop after current iteration)
+2. inject repo files directly with `/read <path>` (press `Tab` to autocomplete file paths)
+3. run `/review` and `/open all` (or `/open <path>`) for human doc review
+4. run `/confirm-plan` (human approval gate)
+5. run `/write`
+6. execute with `/preview`, `/run`, or `/auto 10` (`/stop` to stop after current iteration)
 
 CLI execution path:
 
@@ -78,7 +79,8 @@ This repo currently ships the foundation for:
 - `srgical studio`
   Opens a full-screen planning studio where you can switch between named plans, inspect readiness with `/readiness`,
   inspect supported tools with `/agents`, refresh AI guidance with `/advice`, run human review with `/review` and
-  `/open`, confirm with `/confirm-plan`, and then trigger pack writes, single-step execution, or `/auto`.
+  `/open`, inject large file context via `/read <path>`, confirm with `/confirm-plan`, and then trigger pack writes,
+  single-step execution, or `/auto`.
 - `srgical run-next`
   Replays the generated execution handoff through the active agent, with `--plan <id>` for plan targeting,
   `--dry-run` for safe preview, `--agent <id>` for a one-run override, and `--auto` for bounded multi-step execution.
@@ -209,8 +211,16 @@ Inside the studio, the footer is intentionally minimal:
 - `/help` shows the full command set
 - `/quit` exits the studio
 
-The composer is now multiline with a minimum two-line visible input area. `Enter` sends, while `Shift+Enter`,
+The composer is now multiline with an expanded six-line visible input area. `Enter` sends, while `Shift+Enter`,
 `Alt+Enter`, or `Ctrl+J` inserts a newline when the terminal exposes those keys distinctly.
+
+For large context dumps, type `=====` on its own line, paste your block, close with another `=====`, then press
+`Enter` once to submit the full payload. While that delimiter block is open, `Enter` adds newlines instead of sending.
+
+`Tab` and `Shift+Tab` now cycle file-path completions for `/read`, `/open`, and `/workspace`.
+
+Planner replies, `/write`, and `/run` now stream model output into the transcript while the underlying CLI tool is
+still running, so users can see progress live instead of waiting for one final blob.
 
 The studio can also ask the active agent for an AI assessment of the current planning state. Run `/advice` to cache a
 plain-English summary of:

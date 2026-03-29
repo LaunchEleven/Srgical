@@ -1,5 +1,6 @@
 import path from "node:path";
 import { spawn } from "node:child_process";
+import { readdir, stat } from "node:fs/promises";
 import blessed from "blessed";
 import type { PlanningAdviceState } from "../core/advice-state";
 import { executeAutoRun, requestAutoRunStop } from "../core/auto-run";
@@ -32,6 +33,7 @@ import {
   getPlanningPackPaths,
   listPlanningDirectories,
   normalizePlanId,
+  readText,
   resolvePlanId,
   resolveWorkspace,
   saveActivePlanId,
@@ -45,10 +47,30 @@ type StudioOptions = {
 };
 
 type BusyMode = "planner" | "pack" | "run" | "auto";
+type CompletionDirection = 1 | -1;
+
+type ComposerCompletionState = {
+  seedValue: string;
+  replaceStart: number;
+  replaceEnd: number;
+  matches: string[];
+  index: number;
+};
+
+export type ComposerPathCompletionRequest = {
+  command: "/read" | "/open" | "/workspace";
+  token: string;
+  replaceStart: number;
+  replaceEnd: number;
+};
 
 const READY_FOOTER = " PgUp/PgDn scroll   /agents choose tool   /help commands   /quit exit ";
 const ACTIVITY_FRAMES = ["[    ]", "[=   ]", "[==  ]", "[=== ]", "[ ===]", "[  ==]", "[   =]"];
 const COMPOSER_CURSOR = "{#ffb14a-fg}\u2588{/}";
+const COMPOSER_DELIMITER = "=====";
+const CONTEXT_FILE_CHAR_LIMIT = 120_000;
+const COMPLETION_HINT_TTL_MS = 2500;
+const OPEN_TARGET_ALIASES = ["all", "plan", "context", "tracker", "handoff", "prompt", "dir"] as const;
 const escapeBlessedText = (blessed as typeof blessed & { helpers: { escape(text: string): string } }).helpers.escape;
 
 export async function launchStudio(options: StudioOptions = {}): Promise<void> {
@@ -79,7 +101,7 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
     top: 3,
     left: 0,
     width: "72%",
-    height: "100%-8",
+    height: "100%-10",
     tags: true,
     scrollable: true,
     alwaysScroll: true,
@@ -111,7 +133,7 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
     top: 3,
     left: "72%",
     width: "28%",
-    height: "100%-8",
+    height: "100%-10",
     tags: true,
     padding: {
       top: 1,
@@ -136,11 +158,13 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
     bottom: 1,
     left: 0,
     width: "100%",
-    height: 4,
+    height: 6,
     keys: true,
     mouse: true,
     tags: true,
     clickable: true,
+    scrollable: true,
+    alwaysScroll: true,
     padding: {
       top: 0,
       right: 1,
@@ -195,6 +219,11 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
   let autoSummary = "idle";
   let adviceSummary = "run /advice for AI guidance";
   let composerValue = "";
+  let completionState: ComposerCompletionState | null = null;
+  let completionHint: { text: string; expiresAt: number } | null = null;
+  let liveStreamLabel: string | null = null;
+  let liveStreamContent = "";
+  let liveStreamRenderTimer: NodeJS.Timeout | undefined;
 
   function setSidebar(status?: string): void {
     const planningPaths = getPlanningPackPaths(workspace, { planId });
@@ -244,6 +273,18 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
 
   function getFooterContent(): string {
     if (!busy || !busyMode || busyStartedAt === null) {
+      if (completionHint && completionHint.expiresAt <= Date.now()) {
+        completionHint = null;
+      }
+
+      if (completionHint && completionHint.expiresAt > Date.now()) {
+        return ` ${completionHint.text} `;
+      }
+
+      if (isComposerDelimitedBlockOpen(composerValue)) {
+        return ` Paste block active: close with ${COMPOSER_DELIMITER} then press Enter to send `;
+      }
+
       return READY_FOOTER;
     }
 
@@ -287,8 +328,53 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
     }
   }
 
+  function startLiveStream(label: string): void {
+    liveStreamLabel = label;
+    liveStreamContent = "";
+    scheduleLiveStreamRender();
+  }
+
+  function appendLiveStreamChunk(chunk: string): void {
+    if (!liveStreamLabel) {
+      return;
+    }
+
+    const sanitizedChunk = sanitizeModelOutputChunk(chunk);
+    if (!sanitizedChunk) {
+      return;
+    }
+
+    liveStreamContent += sanitizedChunk;
+    scheduleLiveStreamRender();
+  }
+
+  function stopLiveStream(): void {
+    liveStreamLabel = null;
+    liveStreamContent = "";
+    if (liveStreamRenderTimer) {
+      clearTimeout(liveStreamRenderTimer);
+      liveStreamRenderTimer = undefined;
+    }
+    renderTranscript();
+    setFooter();
+    screen.render();
+  }
+
+  function scheduleLiveStreamRender(): void {
+    if (liveStreamRenderTimer) {
+      return;
+    }
+
+    liveStreamRenderTimer = setTimeout(() => {
+      liveStreamRenderTimer = undefined;
+      renderTranscript();
+      setFooter();
+      screen.render();
+    }, 60);
+  }
+
   function renderTranscript(): void {
-    const rendered = messages
+    const renderedMessages = messages
       .map((message) => {
         const tone =
           message.role === "user"
@@ -297,9 +383,18 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
               ? "{#4de2c5-fg}PLANNER{/}"
               : "{#ff7a59-fg}SYSTEM{/}";
 
-        return `${tone}\n${message.content}`;
+        return `${tone}\n${escapeBlessedText(message.content)}`;
       })
       .join("\n\n");
+
+    const liveStreamBlock =
+      liveStreamLabel === null
+        ? ""
+        : `{#4de2c5-fg}${escapeBlessedText(liveStreamLabel)}{/}\n${escapeBlessedText(
+            liveStreamContent.length > 0 ? liveStreamContent : "...waiting for model output"
+          )}`;
+
+    const rendered = [renderedMessages, liveStreamBlock].filter((block) => block.length > 0).join("\n\n");
 
     transcript.setContent(rendered);
     transcript.setScrollPerc(100);
@@ -308,6 +403,22 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
   function renderComposer(): void {
     const escapedValue = escapeBlessedText(composerValue);
     input.setContent(`${escapedValue}${COMPOSER_CURSOR}`);
+    input.setScrollPerc(100);
+  }
+
+  function clearCompletionState(): void {
+    completionState = null;
+  }
+
+  function setCompletionHint(text: string): void {
+    completionHint = {
+      text,
+      expiresAt: Date.now() + COMPLETION_HINT_TTL_MS
+    };
+  }
+
+  function clearCompletionHint(): void {
+    completionHint = null;
   }
 
   function scrollTranscript(lines: number): void {
@@ -335,9 +446,12 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
     const rawValue = composerValue;
     const text = rawValue.trim();
     composerValue = "";
+    clearCompletionState();
+    clearCompletionHint();
     renderComposer();
 
     if (!text || (busy && text !== "/stop")) {
+      setFooter();
       screen.render();
       return;
     }
@@ -346,6 +460,7 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
       await handleSlashCommand(text);
       input.focus();
       renderComposer();
+      setFooter();
       screen.render();
       return;
     }
@@ -361,24 +476,33 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
     renderComposer();
     screen.render();
 
+    startLiveStream(`${getPrimaryAgentAdapter().label.toUpperCase()} STREAM`);
+
     try {
-      const reply = await requestPlannerReply(workspace, messages, { planId });
+      const reply = await requestPlannerReply(workspace, messages, {
+        planId,
+        onOutputChunk: appendLiveStreamChunk
+      });
+      stopLiveStream();
       await appendMessage({
         role: "assistant",
         content: reply
       });
       await refreshAdvice(false);
     } catch (error) {
+      stopLiveStream();
       await appendMessage({
         role: "system",
         content: `Planner call failed: ${error instanceof Error ? error.message : String(error)}`
       });
     } finally {
+      stopLiveStream();
       stopBusy();
       renderTranscript();
       setSidebar();
       setFooter();
       renderComposer();
+      setFooter();
       input.focus();
       screen.render();
     }
@@ -438,6 +562,7 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
 
   async function handleSlashCommand(command: string): Promise<void> {
     if (command === "/quit") {
+      stopLiveStream();
       screen.destroy();
       return;
     }
@@ -573,15 +698,37 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
       return;
     }
 
+    if (command === "/read") {
+      await appendSystemMessage("Usage: `/read <path>` (Tab completes paths).");
+      return;
+    }
+
+    if (command.startsWith("/read ")) {
+      const requestedPath = stripWrappingQuotes(command.slice("/read".length).trim());
+
+      if (!requestedPath) {
+        await appendSystemMessage("Usage: `/read <path>` (Tab completes paths).");
+        return;
+      }
+
+      try {
+        const contextMessage = await loadFileContextMessage(workspace, requestedPath);
+        await appendSystemMessage(contextMessage);
+      } catch (error) {
+        await appendSystemMessage(`Could not read file: ${error instanceof Error ? error.message : String(error)}`);
+      }
+      return;
+    }
+
     if (command.startsWith("/open")) {
-      const requestedTarget = command.slice("/open".length).trim().toLowerCase();
+      const requestedTarget = command.slice("/open".length).trim();
       const target = requestedTarget.length > 0 ? requestedTarget : "all";
       const paths = getPlanningPackPaths(workspace, { planId });
-      const openTargets = resolveOpenTargets(paths, target);
+      const openTargets = resolveOpenTargets(workspace, paths, target);
 
       if (openTargets.length === 0) {
         await appendSystemMessage(
-          "Usage: `/open [all|plan|context|tracker|handoff|prompt|dir]`"
+          "Usage: `/open [all|plan|context|tracker|handoff|prompt|dir|<path>]`"
         );
         return;
       }
@@ -685,16 +832,20 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
           "Workflow:",
           "1. Talk normally to sharpen the plan against the real repo.",
           "2. Use `/plans`, `/plan`, and `/plan new <id>` to manage named planning packs in this workspace.",
-          "3. Use `/readiness` to see what context is still missing before you write the pack.",
-          "4. Run `/review` and `/open [all|plan|context|tracker|prompt|handoff|dir]` for human review.",
-          "5. Run `/confirm-plan` after a human has reviewed and approved writing.",
-          "6. Run `/write` after readiness and confirmation are both satisfied.",
-          "7. Run `/preview` for a safe execution preview, `/run` for one execution step, or `/auto [max]` for continuous execution.",
-          "8. Run `/stop` to stop auto mode after the current iteration.",
+          "3. Use `/read <path>` to inject repo files into the transcript for context gathering.",
+          "4. Use `/readiness` to see what context is still missing before you write the pack.",
+          "5. Run `/review` and `/open [all|plan|context|tracker|prompt|handoff|dir|<path>]` for human review.",
+          "6. Run `/confirm-plan` after a human has reviewed and approved writing.",
+          "7. Run `/write` after readiness and confirmation are both satisfied.",
+          "8. Run `/preview` for a safe execution preview, `/run` for one execution step, or `/auto [max]` for continuous execution.",
+          "9. Run `/stop` to stop auto mode after the current iteration.",
           "",
           "Controls:",
           "- `Enter` sends the current message or command.",
           "- `Shift+Enter`, `Alt+Enter`, or `Ctrl+J` inserts a new line when the terminal exposes those keys distinctly.",
+          `- Type \`${COMPOSER_DELIMITER}\` on its own line to start a large paste block; close with another \`${COMPOSER_DELIMITER}\`.`,
+          "- `Tab` / `Shift+Tab` cycles path completions for `/read`, `/open`, and `/workspace`.",
+          "- Planner, `/write`, and `/run` stream model output live in the transcript while the CLI call is in flight.",
           "- `PageUp` and `PageDown` scroll the transcript.",
           "- `/quit` closes the studio."
         ].join("\n")
@@ -741,15 +892,22 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
       }
 
       startBusy("pack");
+      startLiveStream(`${getPrimaryAgentAdapter().label.toUpperCase()} PACK STREAM`);
 
       try {
-        const result = await writePlanningPack(workspace, messages, { planId });
+        const result = await writePlanningPack(workspace, messages, {
+          planId,
+          onOutputChunk: appendLiveStreamChunk
+        });
+        stopLiveStream();
         await markPlanningPackAuthored(workspace, { planId });
         await refreshAdvice(false);
         await appendSystemMessage(`Planning pack updated for \`${planId}\`. Summary:\n${result}`);
       } catch (error) {
+        stopLiveStream();
         await appendSystemMessage(`Pack generation failed: ${error instanceof Error ? error.message : String(error)}`);
       } finally {
+        stopLiveStream();
         stopBusy();
         await refreshEnvironment();
       }
@@ -766,10 +924,15 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
       }
 
       startBusy("run");
+      startLiveStream(`${getPrimaryAgentAdapter().label.toUpperCase()} EXEC STREAM`);
 
       try {
         const handoffPrompt = await buildExecutionIterationPrompt(workspace, packState, { planId });
-        const result = await runNextPrompt(workspace, handoffPrompt.prompt, { planId });
+        const result = await runNextPrompt(workspace, handoffPrompt.prompt, {
+          planId,
+          onOutputChunk: appendLiveStreamChunk
+        });
+        stopLiveStream();
         await saveExecutionState(workspace, "success", "studio", result, { planId });
         await appendExecutionLog(workspace, "success", "studio", result, {
           planId,
@@ -780,6 +943,7 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
           `Execution run finished. Handoff source: ${handoffPrompt.handoffDoc.displayPath}.\n${getPrimaryAgentAdapter().label} summary:\n${result}`
         );
       } catch (error) {
+        stopLiveStream();
         const message = error instanceof Error ? error.message : String(error);
         await saveExecutionState(workspace, "failure", "studio", message, { planId });
         await appendExecutionLog(workspace, "failure", "studio", message, {
@@ -796,6 +960,7 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
           )
         );
       } finally {
+        stopLiveStream();
         stopBusy();
         await refreshEnvironment();
       }
@@ -833,6 +998,66 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
     await appendSystemMessage(`Unknown command: ${command}`);
   }
 
+  async function cycleComposerCompletion(direction: CompletionDirection): Promise<void> {
+    const existingValue = completionState ? applyCompletionState(completionState) : null;
+
+    if (completionState && existingValue === composerValue && completionState.matches.length > 0) {
+      const count = completionState.matches.length;
+      const nextIndex = (completionState.index + (direction > 0 ? 1 : -1) + count) % count;
+      completionState = {
+        ...completionState,
+        index: nextIndex
+      };
+      composerValue = applyCompletionState(completionState);
+      setCompletionHint(
+        count > 1
+          ? `Path ${nextIndex + 1}/${count}: ${completionState.matches[nextIndex]} (Tab to cycle)`
+          : `Path: ${completionState.matches[nextIndex]}`
+      );
+      renderComposer();
+      setFooter();
+      screen.render();
+      return;
+    }
+
+    clearCompletionState();
+    const request = parseComposerPathCompletionRequest(composerValue);
+
+    if (!request) {
+      setCompletionHint("Path completion works with /read, /open, and /workspace.");
+      setFooter();
+      screen.render();
+      return;
+    }
+
+    const matches = await collectPathCompletionMatches(workspace, request);
+
+    if (matches.length === 0) {
+      setCompletionHint(`No matches for: ${request.token || "(current directory)"}`);
+      setFooter();
+      screen.render();
+      return;
+    }
+
+    const initialIndex = direction > 0 ? 0 : matches.length - 1;
+    completionState = {
+      seedValue: composerValue,
+      replaceStart: request.replaceStart,
+      replaceEnd: request.replaceEnd,
+      matches,
+      index: initialIndex
+    };
+    composerValue = applyCompletionState(completionState);
+    setCompletionHint(
+      matches.length > 1
+        ? `Path ${initialIndex + 1}/${matches.length}: ${matches[initialIndex]} (Tab to cycle)`
+        : `Path: ${matches[initialIndex]}`
+    );
+    renderComposer();
+    setFooter();
+    screen.render();
+  }
+
   input.on("click", () => {
     input.focus();
     screen.render();
@@ -843,21 +1068,42 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
       return;
     }
 
+    if (key.name === "tab") {
+      await cycleComposerCompletion(key.shift ? -1 : 1);
+      return;
+    }
+
     if (key.name === "enter" && !key.shift && !key.meta && !key.ctrl) {
+      if (isComposerDelimitedBlockOpen(composerValue)) {
+        clearCompletionState();
+        clearCompletionHint();
+        composerValue += "\n";
+        renderComposer();
+        setFooter();
+        screen.render();
+        return;
+      }
+
       await submitComposer();
       return;
     }
 
     if ((key.name === "enter" && (key.shift || key.meta)) || (key.ctrl && key.name === "j")) {
+      clearCompletionState();
+      clearCompletionHint();
       composerValue += "\n";
       renderComposer();
+      setFooter();
       screen.render();
       return;
     }
 
     if (key.name === "backspace") {
+      clearCompletionState();
+      clearCompletionHint();
       composerValue = removeLastCodePoint(composerValue);
       renderComposer();
+      setFooter();
       screen.render();
       return;
     }
@@ -867,8 +1113,11 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
     }
 
     if (ch && !/^[\x00-\x08\x0b-\x0c\x0e-\x1f\x7f]$/.test(ch)) {
+      clearCompletionState();
+      clearCompletionHint();
       composerValue += ch;
       renderComposer();
+      setFooter();
       screen.render();
     }
   });
@@ -879,6 +1128,7 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
       return;
     }
 
+    stopLiveStream();
     stopBusy();
     screen.destroy();
   });
@@ -1063,6 +1313,7 @@ export function renderWorkspaceSelectionMessage(workspace: string, packState: Pl
     "",
     "Use `/workspace <path>` to switch repos.",
     "Use `/plans` to inspect plan directories and `/plan <id>` to switch plans.",
+    "Use `/read <path>` to inject large file context directly into the transcript.",
     !packState.packPresent || packState.mode === "Gathering Context" || packState.mode === "Ready to Write"
       ? "Use `/review`, `/open all`, `/confirm-plan`, then `/write` when the plan is ready."
       : "Use `/write` when you want to refresh the selected plan from this transcript."
@@ -1243,8 +1494,148 @@ function removeLastCodePoint(value: string): string {
   return Array.from(value).slice(0, -1).join("");
 }
 
-function resolveOpenTargets(paths: PlanningPackPaths, target: string): string[] {
-  switch (target) {
+function sanitizeModelOutputChunk(chunk: string): string {
+  return chunk
+    .replace(/\u001b\[[0-9;?]*[ -/]*[@-~]/g, "")
+    .replace(/\r/g, "")
+    .replace(/\u0000/g, "");
+}
+
+function applyCompletionState(state: ComposerCompletionState): string {
+  return `${state.seedValue.slice(0, state.replaceStart)}${state.matches[state.index] ?? ""}${state.seedValue.slice(state.replaceEnd)}`;
+}
+
+export function isComposerDelimitedBlockOpen(value: string, delimiter = COMPOSER_DELIMITER): boolean {
+  if (!value) {
+    return false;
+  }
+
+  const delimiterCount = value.split(/\r?\n/).filter((line) => line.trim() === delimiter).length;
+  return delimiterCount % 2 === 1;
+}
+
+export function parseComposerPathCompletionRequest(composerValue: string): ComposerPathCompletionRequest | null {
+  const lineStart = composerValue.lastIndexOf("\n") + 1;
+  const line = composerValue.slice(lineStart);
+  const commands = ["/read", "/open", "/workspace"] as const;
+
+  for (const command of commands) {
+    if (!line.startsWith(command)) {
+      continue;
+    }
+
+    const remainder = line.slice(command.length);
+
+    if (remainder.length === 0) {
+      return {
+        command,
+        token: "",
+        replaceStart: composerValue.length,
+        replaceEnd: composerValue.length
+      };
+    }
+
+    if (!/^\s+/.test(remainder)) {
+      return null;
+    }
+
+    const leadingWhitespaceLength = remainder.length - remainder.trimStart().length;
+    const args = remainder.slice(leadingWhitespaceLength);
+    const lastSpaceIndex = args.lastIndexOf(" ");
+    const tokenStartInArgs = lastSpaceIndex >= 0 ? lastSpaceIndex + 1 : 0;
+    const token = args.slice(tokenStartInArgs);
+    const replaceStart = lineStart + command.length + leadingWhitespaceLength + tokenStartInArgs;
+
+    return {
+      command,
+      token,
+      replaceStart,
+      replaceEnd: composerValue.length
+    };
+  }
+
+  return null;
+}
+
+async function collectPathCompletionMatches(workspace: string, request: ComposerPathCompletionRequest): Promise<string[]> {
+  const normalizedToken = stripWrappingQuotes(request.token);
+  const usesWindowsSemantics = shouldUseWindowsPathSemantics(workspace, normalizedToken);
+  const pathModule = usesWindowsSemantics ? path.win32 : path;
+  const preferBackslash = normalizedToken.includes("\\") && !normalizedToken.includes("/");
+  const absoluteInput =
+    normalizedToken.length === 0
+      ? workspace
+      : pathModule.isAbsolute(normalizedToken)
+        ? pathModule.resolve(normalizedToken)
+        : pathModule.resolve(workspace, normalizedToken);
+  const tokenEndsWithSeparator = /[\\/]$/.test(normalizedToken);
+  const lookupDirectory =
+    normalizedToken.length === 0 || tokenEndsWithSeparator ? absoluteInput : pathModule.dirname(absoluteInput);
+  const namePrefix = normalizedToken.length === 0 || tokenEndsWithSeparator ? "" : pathModule.basename(normalizedToken);
+
+  let entries: Awaited<ReturnType<typeof readdir>> = [];
+  try {
+    entries = await readdir(lookupDirectory, { withFileTypes: true });
+  } catch {
+    entries = [];
+  }
+
+  const fileMatches = entries
+    .filter((entry) => entry.name.toLowerCase().startsWith(namePrefix.toLowerCase()))
+    .sort((left, right) => {
+      if (left.isDirectory() !== right.isDirectory()) {
+        return left.isDirectory() ? -1 : 1;
+      }
+      return left.name.localeCompare(right.name);
+    })
+    .map((entry) => {
+      const absoluteCandidate = pathModule.join(lookupDirectory, entry.name);
+      const relativeCandidate = pathModule.isAbsolute(normalizedToken)
+        ? absoluteCandidate
+        : pathModule.relative(workspace, absoluteCandidate) || ".";
+      const normalizedCandidate = normalizePathSeparators(relativeCandidate, preferBackslash);
+      return entry.isDirectory() ? appendTrailingSeparator(normalizedCandidate, preferBackslash) : normalizedCandidate;
+    });
+
+  if (request.command !== "/open") {
+    return fileMatches;
+  }
+
+  const aliasMatches = OPEN_TARGET_ALIASES.filter((alias) => alias.startsWith(normalizedToken.toLowerCase()));
+  const merged = [...aliasMatches, ...fileMatches];
+  return Array.from(new Set(merged));
+}
+
+function normalizePathSeparators(value: string, preferBackslash: boolean): string {
+  return preferBackslash ? value.replace(/\//g, "\\") : value.replace(/\\/g, "/");
+}
+
+function appendTrailingSeparator(value: string, preferBackslash: boolean): string {
+  if (!value) {
+    return value;
+  }
+
+  if (value.endsWith("/") || value.endsWith("\\")) {
+    return value;
+  }
+
+  return `${value}${preferBackslash ? "\\" : "/"}`;
+}
+
+function stripWrappingQuotes(value: string): string {
+  const trimmed = value.trim();
+
+  if (trimmed.length >= 2 && ((trimmed.startsWith("\"") && trimmed.endsWith("\"")) || (trimmed.startsWith("'") && trimmed.endsWith("'")))) {
+    return trimmed.slice(1, -1);
+  }
+
+  return trimmed;
+}
+
+function resolveOpenTargets(workspace: string, paths: PlanningPackPaths, target: string): string[] {
+  const normalized = target.trim().toLowerCase();
+
+  switch (normalized) {
     case "all":
       return [paths.plan, paths.context, paths.tracker, paths.handoff, paths.nextPrompt];
     case "plan":
@@ -1260,7 +1651,7 @@ function resolveOpenTargets(paths: PlanningPackPaths, target: string): string[] 
     case "dir":
       return [paths.dir];
     default:
-      return [];
+      return target.trim().length > 0 ? [resolveStudioWorkspaceInput(workspace, stripWrappingQuotes(target))] : [];
   }
 }
 
@@ -1296,6 +1687,31 @@ async function openInVsCode(targets: string[]): Promise<{ ok: boolean; reason?: 
   });
 }
 
+async function loadFileContextMessage(workspace: string, requestedPath: string): Promise<string> {
+  const absolutePath = resolveStudioWorkspaceInput(workspace, requestedPath);
+  const details = await stat(absolutePath);
+
+  if (details.isDirectory()) {
+    throw new Error(`\`${requestedPath}\` is a directory. Point to a file path instead.`);
+  }
+
+  const relativePath = normalizePathSeparators(path.relative(workspace, absolutePath), false) || absolutePath;
+  const raw = await readText(absolutePath);
+  const normalized = raw.replace(/\r\n/g, "\n");
+  const content = normalized.length <= CONTEXT_FILE_CHAR_LIMIT ? normalized : `${normalized.slice(0, CONTEXT_FILE_CHAR_LIMIT).trimEnd()}\n... [truncated]`;
+  const lineCount = content.length === 0 ? 0 : content.split("\n").length;
+
+  return [
+    `Loaded context file: \`${relativePath}\``,
+    `Size: ${Math.min(normalized.length, CONTEXT_FILE_CHAR_LIMIT)} characters${normalized.length > CONTEXT_FILE_CHAR_LIMIT ? ` (truncated from ${normalized.length})` : ""}`,
+    `Lines: ${lineCount}`,
+    "",
+    `===== BEGIN FILE ${relativePath} =====`,
+    content,
+    `===== END FILE ${relativePath} =====`
+  ].join("\n");
+}
+
 function renderPlanUsageMessage(currentPlanId: string, paths: PlanningPackPaths): string {
   return [
     `Current plan: ${currentPlanId}`,
@@ -1305,8 +1721,10 @@ function renderPlanUsageMessage(currentPlanId: string, paths: PlanningPackPaths)
     "- `/plans` lists available plans",
     "- `/plan <id>` switches the active plan",
     "- `/plan new <id>` creates a named plan scaffold",
+    "- `/read <path>` injects a file into the transcript as context",
     "- `/review` shows planning docs for human review",
     "- `/open all` opens planning docs in VS Code",
+    "- `/open <path>` opens any repo file or folder in VS Code",
     "- `/confirm-plan` records explicit human approval for `/write`"
   ].join("\n");
 }

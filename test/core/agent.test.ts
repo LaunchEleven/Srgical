@@ -10,6 +10,7 @@ import {
   selectPrimaryAgent,
   setAgentAdaptersForTesting,
   type AgentAdapter,
+  type AgentInvocationOptions,
   type AgentStatus
 } from "../../src/core/agent";
 import type { ChatMessage } from "../../src/core/prompts";
@@ -96,6 +97,33 @@ test("planner requests delegate through the resolved primary adapter", async (t)
 
   assert.equal(reply, "claude");
   assert.deepEqual(calls, ["claude"]);
+});
+
+test("planner requests pass through optional streaming callbacks", async (t) => {
+  const chunks: string[] = [];
+
+  setAgentAdaptersForTesting([
+    createFakeAdapter({
+      id: "codex",
+      label: "Codex",
+      status: availableStatus("codex", "Codex"),
+      onPlannerReply: async (_workspaceRoot, _messages, options) => {
+        options?.onOutputChunk?.("stream chunk 1");
+        options?.onOutputChunk?.("stream chunk 2");
+        return "done";
+      }
+    })
+  ]);
+  t.after(resetAgentAdaptersForTesting);
+
+  const reply = await requestPlannerReply("workspace", [{ role: "user", content: "plan" }], {
+    onOutputChunk: (chunk) => {
+      chunks.push(chunk);
+    }
+  });
+
+  assert.equal(reply, "done");
+  assert.deepEqual(chunks, ["stream chunk 1", "stream chunk 2"]);
 });
 
 test("detect-primary-agent honors the stored workspace session selection", async (t) => {
@@ -253,24 +281,24 @@ test("resolve-execution-agent rejects an unavailable override without changing t
   assert.equal((await detectPrimaryAgent(workspace)).id, "codex");
 });
 
-function createFakeAdapter(options: {
+function createFakeAdapter(adapterOptions: {
   id: string;
   label: string;
   status: AgentStatus;
-  onPlannerReply?: (workspaceRoot: string, messages: ChatMessage[]) => Promise<string>;
+  onPlannerReply?: (workspaceRoot: string, messages: ChatMessage[], options?: AgentInvocationOptions) => Promise<string>;
 }): AgentAdapter {
   return {
-    id: options.id,
-    label: options.label,
+    id: adapterOptions.id,
+    label: adapterOptions.label,
     async detectStatus(): Promise<AgentStatus> {
-      return options.status;
+      return adapterOptions.status;
     },
-    async requestPlannerReply(workspaceRoot: string, messages: ChatMessage[]): Promise<string> {
-      if (options.onPlannerReply) {
-        return options.onPlannerReply(workspaceRoot, messages);
+    async requestPlannerReply(workspaceRoot: string, messages: ChatMessage[], invocationOptions?: AgentInvocationOptions): Promise<string> {
+      if (adapterOptions.onPlannerReply) {
+        return adapterOptions.onPlannerReply(workspaceRoot, messages, invocationOptions);
       }
 
-      return `${options.id}-planner`;
+      return `${adapterOptions.id}-planner`;
     },
     async requestPlanningAdvice(): Promise<string> {
       return JSON.stringify({
@@ -284,10 +312,10 @@ function createFakeAdapter(options: {
       });
     },
     async writePlanningPack(): Promise<string> {
-      return `${options.id}-pack`;
+      return `${adapterOptions.id}-pack`;
     },
     async runNextPrompt(): Promise<string> {
-      return `${options.id}-run`;
+      return `${adapterOptions.id}-run`;
     }
   };
 }

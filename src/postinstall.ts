@@ -1,5 +1,6 @@
 import process from "node:process";
 import { readInstalledPackageInfo } from "./core/package-info";
+import { paintLine, renderCommandBanner, renderSectionHeading } from "./ui/terminal-theme";
 
 if (require.main === module) {
   runPostinstall();
@@ -15,10 +16,14 @@ export function renderPostinstallMessage(): string {
   const info = readInstalledPackageInfo();
 
   return [
+    ...renderCommandBanner("srgical", "installed"),
     "",
-    `srgical ${info.version} is ready.`,
+    renderSectionHeading("Ready"),
+    paintLine(`srgical ${info.version} is ready.`, "success", { bold: true }),
     info.releaseNotesUrl ? `Release notes: ${info.releaseNotesUrl}` : null,
-    "Start here: srgical doctor",
+    "",
+    renderSectionHeading("Next"),
+    paintLine("Start here: srgical doctor", "brand", { bold: true }),
     "More: srgical about",
     ""
   ]
