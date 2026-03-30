@@ -65,6 +65,8 @@ export type ComposerPathCompletionRequest = {
   replaceEnd: number;
 };
 
+type ComposerCompletionKeyPress = Pick<blessed.Widgets.Events.IKeyEventArg, "name" | "shift" | "ctrl" | "meta" | "sequence" | "full">;
+
 export type AgentSelectionCommand =
   | { kind: "status" }
   | { kind: "usage" }
@@ -1192,8 +1194,9 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
       return;
     }
 
-    if (key.name === "tab") {
-      await cycleComposerCompletion(key.shift ? -1 : 1);
+    const completionDirection = resolvePathCompletionDirectionFromKeypress(ch, key);
+    if (completionDirection !== null) {
+      await cycleComposerCompletion(completionDirection);
       return;
     }
 
@@ -1740,6 +1743,25 @@ export function shouldTreatEnterAsPastedNewline(
   const graceMs = options.graceMs ?? PASTE_ENTER_GRACE_MS;
   const minChars = options.minChars ?? PASTE_BURST_CHAR_THRESHOLD;
   return now - lastComposerInputAt <= graceMs && rapidComposerInputChars >= minChars;
+}
+
+export function resolvePathCompletionDirectionFromKeypress(
+  ch: string,
+  key: ComposerCompletionKeyPress
+): CompletionDirection | null {
+  if (key.name === "tab") {
+    return key.shift ? -1 : 1;
+  }
+
+  if (key.full === "S-tab" || key.sequence === "\x1b[Z") {
+    return -1;
+  }
+
+  if (ch === "\t" || key.full === "C-i" || (key.ctrl && key.name === "i")) {
+    return 1;
+  }
+
+  return null;
 }
 
 export function parseComposerPathCompletionRequest(composerValue: string): ComposerPathCompletionRequest | null {

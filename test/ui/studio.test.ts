@@ -9,6 +9,7 @@ import {
   getVisibleTranscriptMessages,
   shouldTreatEnterAsPastedNewline,
   parseComposerPathCompletionRequest,
+  resolvePathCompletionDirectionFromKeypress,
   resolveStudioTerminal,
   resolveTranscriptScrollProfile,
   renderWorkspaceSelectionMessage,
@@ -91,6 +92,59 @@ test("should-treat-enter-as-pasted-newline ignores normal typing cadence", () =>
   assert.equal(shouldTreatEnterAsPastedNewline(now - 200, 12, now), false);
   assert.equal(shouldTreatEnterAsPastedNewline(now - 20, 2, now), false);
   assert.equal(shouldTreatEnterAsPastedNewline(null, 12, now), false);
+});
+
+test("resolve-path-completion-direction-from-keypress handles standard tab and shift+tab", () => {
+  assert.equal(
+    resolvePathCompletionDirectionFromKeypress("", {
+      name: "tab",
+      shift: false,
+      ctrl: false,
+      meta: false,
+      sequence: "\t",
+      full: "tab"
+    }),
+    1
+  );
+  assert.equal(
+    resolvePathCompletionDirectionFromKeypress("", {
+      name: "tab",
+      shift: true,
+      ctrl: false,
+      meta: false,
+      sequence: "\x1b[Z",
+      full: "S-tab"
+    }),
+    -1
+  );
+});
+
+test("resolve-path-completion-direction-from-keypress handles mac ctrl+i tab variants", () => {
+  assert.equal(
+    resolvePathCompletionDirectionFromKeypress("\t", {
+      name: "i",
+      shift: false,
+      ctrl: true,
+      meta: false,
+      sequence: "\t",
+      full: "C-i"
+    }),
+    1
+  );
+});
+
+test("resolve-path-completion-direction-from-keypress ignores non-tab keys", () => {
+  assert.equal(
+    resolvePathCompletionDirectionFromKeypress("a", {
+      name: "a",
+      shift: false,
+      ctrl: false,
+      meta: false,
+      sequence: "a",
+      full: "a"
+    }),
+    null
+  );
 });
 
 test("parse-composer-path-completion-request extracts token and replacement range", () => {
