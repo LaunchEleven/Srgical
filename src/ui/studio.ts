@@ -76,6 +76,11 @@ export type OpenCommandParseResult = {
   trailingPrompt: string | null;
 };
 
+export type ReadTargetFiles = {
+  files: string[];
+  directoryLabel: string | null;
+};
+
 export type CommandHistoryCursor = {
   entries: string[];
   index: number | null;
@@ -106,6 +111,7 @@ const COMPLETION_HINT_TTL_MS = 2500;
 const RAPID_INPUT_INTERVAL_MS = 25;
 const PASTE_ENTER_GRACE_MS = 45;
 const PASTE_BURST_CHAR_THRESHOLD = 4;
+const ESC_META_GRACE_MS = 140;
 const COMMAND_HISTORY_LIMIT = 200;
 const OPEN_TARGET_ALIASES = ["all", "plan", "context", "tracker", "handoff", "prompt", "dir"] as const;
 const STUDIO_TERMINAL_FALLBACK = "xterm";
@@ -270,6 +276,7 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
   let completionHint: { text: string; expiresAt: number } | null = null;
   let lastComposerInputAt: number | null = null;
   let rapidComposerInputChars = 0;
+  let lastStandaloneEscapeAt: number | null = null;
   let liveStreamLabel: string | null = null;
   let liveStreamContent = "";
   let liveStreamRenderTimer: NodeJS.Timeout | undefined;
@@ -886,23 +893,32 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
       return;
     }
 
-    if (command === "/read") {
-      await appendSystemMessage("Usage: `/read <path>` (Tab completes paths).");
-      return;
-    }
-
-    if (command.startsWith("/read ")) {
-      const readCommand = await parseReadCommandInput(workspace, command.slice("/read".length));
-      const requestedPath = stripWrappingQuotes(readCommand.requestedPath);
+    if (command === "/read" || command.startsWith("/read ")) {
+      const readCommand =
+        command === "/read"
+          ? {
+              requestedPath: ".",
+              trailingPrompt: null
+            }
+          : await parseReadCommandInput(workspace, command.slice("/read".length));
+      const requestedPath = stripWrappingQuotes(readCommand.requestedPath || ".");
 
       if (!requestedPath) {
-        await appendSystemMessage("Usage: `/read <path>` (Tab completes paths).");
+        await appendSystemMessage("Usage: `/read [path]` (no path defaults to current directory, non-recursive).");
         return;
       }
 
       try {
-        const contextMessage = await loadFileContextMessage(workspace, requestedPath);
-        await appendSystemMessage(contextMessage);
+        const targets = await collectReadTargetFiles(workspace, requestedPath);
+
+        if (targets.directoryLabel) {
+          await appendSystemMessage(`Reading ${targets.files.length} file(s) from \`${targets.directoryLabel}\` (non-recursive).`);
+        }
+
+        for (const targetPath of targets.files) {
+          const contextMessage = await loadFileContextMessage(workspace, targetPath);
+          await appendSystemMessage(contextMessage);
+        }
 
         if (readCommand.trailingPrompt) {
           await submitUserPrompt(readCommand.trailingPrompt);
@@ -913,7 +929,7 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
             `Could not read file: ${error instanceof Error ? error.message : String(error)}`,
             readCommand.trailingPrompt
               ? `Tip: \`/read\` accepts only a file path. I treated \`${requestedPath}\` as the path and did not run follow-up text \`${readCommand.trailingPrompt}\` because the file load failed.`
-              : "Tip: use `/read <path>` only, then ask your question as a separate message."
+              : "Tip: use `/read [path]` (or `/read` for current directory) and ask questions in a separate message."
           ].join("\n")
         );
       }
@@ -1044,7 +1060,7 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
           "Workflow:",
           "1. Talk normally to sharpen the plan against the real repo.",
           "2. Use `/plans`, `/plan`, and `/plan new <id>` to manage named planning packs in this workspace.",
-          "3. Use `/read <path>` to inject repo files into the transcript for context gathering.",
+          "3. Use `/read [path]` to inject repo files into the transcript for context gathering (`/read` defaults to current directory, non-recursive).",
           "4. Use `/readiness` to see what context is still missing before you write the pack.",
           "5. Run `/write` to generate the first grounded draft from the transcript.",
           "6. Then run `/review` and `/open [all|plan|context|tracker|prompt|handoff|dir|<path>]` for human review.",
@@ -1061,7 +1077,7 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
           "- `Up` / `Down` cycles previously submitted slash commands.",
           "- `Shift+Enter`, `Alt+Enter`, or `Ctrl+J` inserts a new line when the terminal exposes those keys distinctly.",
           "- `Ctrl+W`, `Alt/Option+Backspace`, or `Ctrl+Backspace` deletes the previous word in the composer.",
-          "- `/read <path> <follow-up>` auto-sends the follow-up text as the next user prompt after the file is loaded.",
+          "- `/read [path] <follow-up>` auto-sends the follow-up text as the next user prompt after file context is loaded.",
           "- `/workspace <path> <follow-up>` auto-sends the follow-up text after a successful workspace switch.",
           "- Large paste blocks are accepted directly; no delimiter syntax is required.",
           "- `Tab` / `Shift+Tab` cycles path completions for `/read`, `/open`, and `/workspace`.",
@@ -1292,22 +1308,32 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
       return;
     }
 
+    const keyTimestamp = Date.now();
+
     if (key.name === "pageup" || key.name === "ppage" || key.name === "pagedown" || key.name === "npage") {
+      return;
+    }
+
+    if (key.name === "escape" && !key.ctrl && !key.meta) {
+      lastStandaloneEscapeAt = keyTimestamp;
       return;
     }
 
     const completionDirection = resolvePathCompletionDirectionFromKeypress(ch, key);
     if (completionDirection !== null) {
+      lastStandaloneEscapeAt = null;
       await cycleComposerCompletion(completionDirection);
       return;
     }
 
     if (key.name === "up" && !key.ctrl && !key.meta) {
+      lastStandaloneEscapeAt = null;
       restoreCommandFromHistory(-1);
       return;
     }
 
     if (key.name === "down" && !key.ctrl && !key.meta) {
+      lastStandaloneEscapeAt = null;
       restoreCommandFromHistory(1);
       return;
     }
@@ -1323,11 +1349,18 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
     }
 
     if ((key.name === "enter" && (key.shift || key.meta)) || (key.ctrl && key.name === "j")) {
+      lastStandaloneEscapeAt = null;
       appendComposerNewline();
       return;
     }
 
-    if (shouldDeletePreviousWordFromComposer(key)) {
+    if (
+      shouldDeletePreviousWordFromComposer(
+        key,
+        wasEscPrefixForWordDelete(lastStandaloneEscapeAt, keyTimestamp, ESC_META_GRACE_MS) && isBackspaceOrDeleteKey(key)
+      )
+    ) {
+      lastStandaloneEscapeAt = null;
       resetCommandHistoryNavigation();
       resetComposerInputBurst();
       clearCompletionState();
@@ -1340,6 +1373,7 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
     }
 
     if (key.name === "backspace") {
+      lastStandaloneEscapeAt = null;
       resetCommandHistoryNavigation();
       resetComposerInputBurst();
       clearCompletionState();
@@ -1352,11 +1386,13 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
     }
 
     if (key.ctrl || key.meta) {
+      lastStandaloneEscapeAt = null;
       return;
     }
 
     const normalizedChunk = normalizeComposerInputChunk(ch, lastComposerInputAt, rapidComposerInputChars);
     if (normalizedChunk) {
+      lastStandaloneEscapeAt = null;
       resetCommandHistoryNavigation();
       clearCompletionState();
       clearCompletionHint();
@@ -1365,6 +1401,11 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
       renderComposer();
       setFooter();
       screen.render();
+      return;
+    }
+
+    if (lastStandaloneEscapeAt !== null && keyTimestamp - lastStandaloneEscapeAt > ESC_META_GRACE_MS) {
+      lastStandaloneEscapeAt = null;
     }
   });
 
@@ -1882,8 +1923,12 @@ export function removeLastWordChunk(value: string): string {
   return codePoints.slice(0, cursor).join("");
 }
 
-export function shouldDeletePreviousWordFromComposer(key: ComposerEditKeyPress): boolean {
+export function shouldDeletePreviousWordFromComposer(key: ComposerEditKeyPress, precededByEscape = false): boolean {
   if (key.ctrl && key.name === "w") {
+    return true;
+  }
+
+  if (precededByEscape && isBackspaceOrDeleteKey(key)) {
     return true;
   }
 
@@ -1904,6 +1949,18 @@ export function shouldDeletePreviousWordFromComposer(key: ComposerEditKeyPress):
   }
 
   return false;
+}
+
+function isBackspaceOrDeleteKey(key: ComposerEditKeyPress): boolean {
+  return key.name === "backspace" || key.name === "delete";
+}
+
+export function wasEscPrefixForWordDelete(
+  lastStandaloneEscapeAt: number | null,
+  now = Date.now(),
+  graceMs = ESC_META_GRACE_MS
+): boolean {
+  return lastStandaloneEscapeAt !== null && now - lastStandaloneEscapeAt <= graceMs;
 }
 
 function sanitizeModelOutputChunk(chunk: string): string {
@@ -2067,6 +2124,38 @@ export async function parseReadCommandInput(workspace: string, rawInput: string)
   return {
     requestedPath: trimmed,
     trailingPrompt: null
+  };
+}
+
+export async function collectReadTargetFiles(workspace: string, requestedPath: string): Promise<ReadTargetFiles> {
+  const absoluteTarget = resolveStudioWorkspaceInput(workspace, requestedPath);
+  const details = await stat(absoluteTarget);
+
+  if (!details.isDirectory()) {
+    const relativeFile = normalizePathSeparators(path.relative(workspace, absoluteTarget), false) || absoluteTarget;
+    return {
+      files: [relativeFile],
+      directoryLabel: null
+    };
+  }
+
+  const entries = await readdir(absoluteTarget, { withFileTypes: true, encoding: "utf8" });
+  const files = entries
+    .filter((entry) => entry.isFile())
+    .sort((left, right) => left.name.localeCompare(right.name))
+    .map((entry) => {
+      const absoluteFile = path.join(absoluteTarget, entry.name);
+      return normalizePathSeparators(path.relative(workspace, absoluteFile), false) || absoluteFile;
+    });
+  const directoryLabel = normalizePathSeparators(path.relative(workspace, absoluteTarget), false) || ".";
+
+  if (files.length === 0) {
+    throw new Error(`\`${directoryLabel}\` has no files to read (non-recursive mode skips subdirectories).`);
+  }
+
+  return {
+    files,
+    directoryLabel
   };
 }
 

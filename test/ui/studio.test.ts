@@ -10,6 +10,7 @@ import {
   formatTrackerSummary,
   getVisibleTranscriptMessages,
   appendCommandHistoryEntry,
+  collectReadTargetFiles,
   navigateCommandHistory,
   normalizeComposerInputChunk,
   parseOpenCommandInput,
@@ -17,6 +18,7 @@ import {
   removeLastWordChunk,
   shouldTreatEnterAsPastedNewline,
   shouldDeletePreviousWordFromComposer,
+  wasEscPrefixForWordDelete,
   parseComposerPathCompletionRequest,
   resolvePathCompletionDirectionFromKeypress,
   resolveStudioTerminal,
@@ -169,6 +171,20 @@ test("should-delete-previous-word-from-composer supports common terminal shortcu
   assert.equal(shouldDeletePreviousWordFromComposer({ name: "delete", ctrl: true, meta: false, full: "C-delete", sequence: "\u001b[3;5~" }), true);
   assert.equal(shouldDeletePreviousWordFromComposer({ name: "backspace", ctrl: false, meta: false, full: "backspace", sequence: "\u007f" }), false);
   assert.equal(shouldDeletePreviousWordFromComposer({ name: "x", ctrl: false, meta: false, full: "x", sequence: "x" }), false);
+  assert.equal(
+    shouldDeletePreviousWordFromComposer(
+      { name: "backspace", ctrl: false, meta: false, full: "backspace", sequence: "\u007f" },
+      true
+    ),
+    true
+  );
+});
+
+test("was-esc-prefix-for-word-delete honors the grace window", () => {
+  const now = 1_000;
+  assert.equal(wasEscPrefixForWordDelete(now - 50, now, 140), true);
+  assert.equal(wasEscPrefixForWordDelete(now - 200, now, 140), false);
+  assert.equal(wasEscPrefixForWordDelete(null, now, 140), false);
 });
 
 test("resolve-path-completion-direction-from-keypress handles standard tab and shift+tab", () => {
@@ -246,6 +262,41 @@ test("parse-read-command-input supports quoted and unquoted paths with spaces", 
   const quoted = await parseReadCommandInput(workspace, "\"docs/my notes.md\" summarize this");
   assert.equal(quoted.requestedPath, "docs/my notes.md");
   assert.equal(quoted.trailingPrompt, "summarize this");
+});
+
+test("collect-read-target-files returns a single file target unchanged", async () => {
+  const workspace = await createTempWorkspace("srgical-studio-read-target-file-");
+  await writeFile(path.join(workspace, ".eslintrc.json"), "{\"root\":true}", "utf8");
+
+  const target = await collectReadTargetFiles(workspace, ".eslintrc.json");
+  assert.deepEqual(target.files, [".eslintrc.json"]);
+  assert.equal(target.directoryLabel, null);
+});
+
+test("collect-read-target-files lists only direct files when targeting a directory", async () => {
+  const workspace = await createTempWorkspace("srgical-studio-read-target-directory-");
+  const nestedDir = path.join(workspace, "nested");
+  await mkdir(nestedDir, { recursive: true });
+  await writeFile(path.join(workspace, "b.txt"), "b", "utf8");
+  await writeFile(path.join(workspace, "a.txt"), "a", "utf8");
+  await writeFile(path.join(nestedDir, "inner.txt"), "inner", "utf8");
+
+  const target = await collectReadTargetFiles(workspace, ".");
+  assert.deepEqual(target.files, ["a.txt", "b.txt"]);
+  assert.equal(target.directoryLabel, ".");
+});
+
+test("collect-read-target-files errors when a directory has no direct files", async () => {
+  const workspace = await createTempWorkspace("srgical-studio-read-target-empty-directory-");
+  const containerDir = path.join(workspace, "only-subdirs");
+  const nestedDir = path.join(containerDir, "nested");
+  await mkdir(nestedDir, { recursive: true });
+  await writeFile(path.join(nestedDir, "inner.txt"), "inner", "utf8");
+
+  await assert.rejects(
+    () => collectReadTargetFiles(workspace, "only-subdirs"),
+    /non-recursive mode skips subdirectories/
+  );
 });
 
 test("parse-open-command-input defaults to all and supports alias + trailing text", async () => {

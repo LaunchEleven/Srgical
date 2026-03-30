@@ -35,7 +35,7 @@ srgical studio --plan release-readiness
 Inside studio:
 
 1. talk through scope/constraints and use `/readiness` + `/advice`
-2. inject repo files directly with `/read <path>` (press `Tab` to autocomplete file paths)
+2. inject repo files directly with `/read [path]` (press `Tab` to autocomplete file paths; omit `path` to read the current directory non-recursively)
 3. run `/write` to generate the first grounded draft from transcript context
 4. run `/review` and `/open all` (or `/open <path>`) for human doc review
 5. run `/confirm-plan` (required before authored-plan refresh writes)
@@ -80,7 +80,7 @@ This repo currently ships the foundation for:
 - `srgical studio`
   Opens a full-screen planning studio where you can switch between named plans, inspect readiness with `/readiness`,
   inspect supported tools with `/agents`, refresh AI guidance with `/advice`, run human review with `/review` and
-  `/open`, inject large file context via `/read <path>`, confirm with `/confirm-plan` for authored-plan refresh writes,
+  `/open`, inject large file context via `/read [path]` (or `/read` for the current directory, non-recursive), confirm with `/confirm-plan` for authored-plan refresh writes,
   and then trigger pack writes,
   single-step execution, or `/auto`.
 - `srgical run-next`
@@ -227,6 +227,7 @@ new lines so big blocks land cleanly in the composer.
 
 `Tab` and `Shift+Tab` now cycle file-path completions for `/read`, `/open`, and `/workspace`.
 When using `/read`, any trailing text after the path is auto-submitted as the next user prompt once file context is loaded.
+If the path is omitted, `/read` loads every file in the current directory (non-recursive).
 When using `/workspace`, trailing text after the path is auto-submitted after a successful switch.
 When using `/open`, trailing text after the target is ignored with a hint so path parsing stays predictable.
 
