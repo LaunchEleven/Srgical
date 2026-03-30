@@ -9,6 +9,8 @@ import {
   formatPlanningPackSummary,
   formatTrackerSummary,
   getVisibleTranscriptMessages,
+  appendCommandHistoryEntry,
+  navigateCommandHistory,
   normalizeComposerInputChunk,
   parseOpenCommandInput,
   parseReadCommandInput,
@@ -118,6 +120,35 @@ test("normalize-composer-input-chunk keeps printable input and drops control cha
   const now = 1_000;
   assert.equal(normalizeComposerInputChunk("a", null, 0, now), "a");
   assert.equal(normalizeComposerInputChunk("\u0007", null, 0, now), null);
+});
+
+test("append-command-history-entry stores slash commands and avoids duplicate repeats", () => {
+  assert.deepEqual(appendCommandHistoryEntry([], "hello"), []);
+  assert.deepEqual(appendCommandHistoryEntry([], "/help"), ["/help"]);
+  assert.deepEqual(appendCommandHistoryEntry(["/help"], "/help"), ["/help"]);
+  assert.deepEqual(appendCommandHistoryEntry(["/help"], "   /read src/ui/studio.ts   "), ["/help", "/read src/ui/studio.ts"]);
+});
+
+test("navigate-command-history walks backward and forward through command history", () => {
+  const base = { entries: ["/help", "/read src/ui/studio.ts"], index: null, draft: "" };
+
+  const firstUp = navigateCommandHistory(base, "/rea", -1);
+  assert.equal(firstUp.changed, true);
+  assert.equal(firstUp.value, "/read src/ui/studio.ts");
+  assert.equal(firstUp.cursor.index, 1);
+  assert.equal(firstUp.cursor.draft, "/rea");
+
+  const secondUp = navigateCommandHistory(firstUp.cursor, firstUp.value, -1);
+  assert.equal(secondUp.value, "/help");
+  assert.equal(secondUp.cursor.index, 0);
+
+  const down = navigateCommandHistory(secondUp.cursor, secondUp.value, 1);
+  assert.equal(down.value, "/read src/ui/studio.ts");
+  assert.equal(down.cursor.index, 1);
+
+  const downToDraft = navigateCommandHistory(down.cursor, down.value, 1);
+  assert.equal(downToDraft.value, "/rea");
+  assert.equal(downToDraft.cursor.index, null);
 });
 
 test("remove-last-word-chunk trims the previous word and trailing whitespace", () => {

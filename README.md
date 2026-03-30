@@ -220,6 +220,7 @@ The composer is now multiline with an expanded six-line visible input area. `Ent
 `Alt+Enter`, or `Ctrl+J` inserts a newline when the terminal exposes those keys distinctly.
 For faster editing, `Ctrl+W`, `Alt/Option+Backspace`, and `Ctrl+Backspace` (when exposed by the terminal) delete the
 previous word in the composer.
+`Up` and `Down` cycle previously submitted slash commands.
 
 Large context dumps can be pasted directly with no delimiter syntax. Studio automatically keeps rapid paste bursts as
 new lines so big blocks land cleanly in the composer.

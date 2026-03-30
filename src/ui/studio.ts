@@ -49,6 +49,7 @@ type StudioOptions = {
 
 type BusyMode = "planner" | "pack" | "run" | "auto";
 type CompletionDirection = 1 | -1;
+type CommandHistoryDirection = 1 | -1;
 
 type ComposerCompletionState = {
   seedValue: string;
@@ -75,6 +76,12 @@ export type OpenCommandParseResult = {
   trailingPrompt: string | null;
 };
 
+export type CommandHistoryCursor = {
+  entries: string[];
+  index: number | null;
+  draft: string;
+};
+
 type ComposerCompletionKeyPress = Pick<blessed.Widgets.Events.IKeyEventArg, "name" | "shift" | "ctrl" | "meta" | "sequence" | "full">;
 type ComposerEditKeyPress = Pick<blessed.Widgets.Events.IKeyEventArg, "name" | "ctrl" | "meta" | "full" | "sequence">;
 
@@ -99,6 +106,7 @@ const COMPLETION_HINT_TTL_MS = 2500;
 const RAPID_INPUT_INTERVAL_MS = 25;
 const PASTE_ENTER_GRACE_MS = 45;
 const PASTE_BURST_CHAR_THRESHOLD = 4;
+const COMMAND_HISTORY_LIMIT = 200;
 const OPEN_TARGET_ALIASES = ["all", "plan", "context", "tracker", "handoff", "prompt", "dir"] as const;
 const STUDIO_TERMINAL_FALLBACK = "xterm";
 const SAFE_MAC_STUDIO_TERMINALS = new Set(["xterm", "screen", "screen-256color", "tmux", "tmux-256color"]);
@@ -255,6 +263,9 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
   let autoSummary = "idle";
   let adviceSummary = "run /advice for AI guidance";
   let composerValue = "";
+  let commandHistoryEntries: string[] = [];
+  let commandHistoryIndex: number | null = null;
+  let commandHistoryDraft = "";
   let completionState: ComposerCompletionState | null = null;
   let completionHint: { text: string; expiresAt: number } | null = null;
   let lastComposerInputAt: number | null = null;
@@ -500,6 +511,7 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
   }
 
   function appendComposerNewline(): void {
+    resetCommandHistoryNavigation();
     clearCompletionState();
     clearCompletionHint();
     composerValue += "\n";
@@ -511,6 +523,37 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
 
   function scrollTranscript(lines: number): void {
     transcript.scroll(lines);
+    screen.render();
+  }
+
+  function resetCommandHistoryNavigation(): void {
+    commandHistoryIndex = null;
+    commandHistoryDraft = "";
+  }
+
+  function restoreCommandFromHistory(direction: CommandHistoryDirection): void {
+    const result = navigateCommandHistory(
+      {
+        entries: commandHistoryEntries,
+        index: commandHistoryIndex,
+        draft: commandHistoryDraft
+      },
+      composerValue,
+      direction
+    );
+
+    if (!result.changed) {
+      return;
+    }
+
+    commandHistoryIndex = result.cursor.index;
+    commandHistoryDraft = result.cursor.draft;
+    composerValue = result.value;
+    resetComposerInputBurst();
+    clearCompletionState();
+    clearCompletionHint();
+    renderComposer();
+    setFooter();
     screen.render();
   }
 
@@ -546,6 +589,8 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
     }
 
     if (text.startsWith("/")) {
+      commandHistoryEntries = appendCommandHistoryEntry(commandHistoryEntries, text);
+      resetCommandHistoryNavigation();
       await handleSlashCommand(text);
 
       if (studioClosed) {
@@ -559,6 +604,7 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
       return;
     }
 
+    resetCommandHistoryNavigation();
     await submitUserPrompt(text);
   }
 
@@ -1004,6 +1050,7 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
           "",
           "Controls:",
           "- `Enter` sends the current message or command.",
+          "- `Up` / `Down` cycles previously submitted slash commands.",
           "- `Shift+Enter`, `Alt+Enter`, or `Ctrl+J` inserts a new line when the terminal exposes those keys distinctly.",
           "- `Ctrl+W`, `Alt/Option+Backspace`, or `Ctrl+Backspace` deletes the previous word in the composer.",
           "- `/read <path> <follow-up>` auto-sends the follow-up text as the next user prompt after the file is loaded.",
@@ -1247,6 +1294,16 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
       return;
     }
 
+    if (key.name === "up" && !key.ctrl && !key.meta) {
+      restoreCommandFromHistory(-1);
+      return;
+    }
+
+    if (key.name === "down" && !key.ctrl && !key.meta) {
+      restoreCommandFromHistory(1);
+      return;
+    }
+
     if (key.name === "enter" && !key.shift && !key.meta && !key.ctrl) {
       if (shouldTreatEnterAsPastedNewline(lastComposerInputAt, rapidComposerInputChars)) {
         appendComposerNewline();
@@ -1263,6 +1320,7 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
     }
 
     if (shouldDeletePreviousWordFromComposer(key)) {
+      resetCommandHistoryNavigation();
       resetComposerInputBurst();
       clearCompletionState();
       clearCompletionHint();
@@ -1274,6 +1332,7 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
     }
 
     if (key.name === "backspace") {
+      resetCommandHistoryNavigation();
       resetComposerInputBurst();
       clearCompletionState();
       clearCompletionHint();
@@ -1290,6 +1349,7 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
 
     const normalizedChunk = normalizeComposerInputChunk(ch, lastComposerInputAt, rapidComposerInputChars);
     if (normalizedChunk) {
+      resetCommandHistoryNavigation();
       clearCompletionState();
       clearCompletionHint();
       composerValue += normalizedChunk;
@@ -1862,6 +1922,79 @@ export function shouldTreatEnterAsPastedNewline(
   const graceMs = options.graceMs ?? PASTE_ENTER_GRACE_MS;
   const minChars = options.minChars ?? PASTE_BURST_CHAR_THRESHOLD;
   return now - lastComposerInputAt <= graceMs && rapidComposerInputChars >= minChars;
+}
+
+export function appendCommandHistoryEntry(entries: string[], command: string): string[] {
+  const normalized = command.trim();
+
+  if (!normalized.startsWith("/")) {
+    return entries;
+  }
+
+  if (entries[entries.length - 1] === normalized) {
+    return entries;
+  }
+
+  const nextEntries = [...entries, normalized];
+  return nextEntries.length > COMMAND_HISTORY_LIMIT ? nextEntries.slice(nextEntries.length - COMMAND_HISTORY_LIMIT) : nextEntries;
+}
+
+export function navigateCommandHistory(
+  cursor: CommandHistoryCursor,
+  currentValue: string,
+  direction: CommandHistoryDirection
+): { cursor: CommandHistoryCursor; value: string; changed: boolean } {
+  if (cursor.entries.length === 0) {
+    return {
+      cursor,
+      value: currentValue,
+      changed: false
+    };
+  }
+
+  if (direction < 0) {
+    const nextIndex = cursor.index === null ? cursor.entries.length - 1 : Math.max(0, cursor.index - 1);
+    return {
+      cursor: {
+        entries: cursor.entries,
+        index: nextIndex,
+        draft: cursor.index === null ? currentValue : cursor.draft
+      },
+      value: cursor.entries[nextIndex] ?? currentValue,
+      changed: true
+    };
+  }
+
+  if (cursor.index === null) {
+    return {
+      cursor,
+      value: currentValue,
+      changed: false
+    };
+  }
+
+  if (cursor.index < cursor.entries.length - 1) {
+    const nextIndex = cursor.index + 1;
+    return {
+      cursor: {
+        entries: cursor.entries,
+        index: nextIndex,
+        draft: cursor.draft
+      },
+      value: cursor.entries[nextIndex] ?? currentValue,
+      changed: true
+    };
+  }
+
+  return {
+    cursor: {
+      entries: cursor.entries,
+      index: null,
+      draft: ""
+    },
+    value: cursor.draft,
+    changed: true
+  };
 }
 
 export function resolvePathCompletionDirectionFromKeypress(
