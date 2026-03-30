@@ -244,6 +244,7 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
   let liveStreamLabel: string | null = null;
   let liveStreamContent = "";
   let liveStreamRenderTimer: NodeJS.Timeout | undefined;
+  let studioClosed = false;
 
   function setSidebar(status?: string): void {
     const planningPaths = getPlanningPackPaths(workspace, { planId });
@@ -347,6 +348,18 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
       clearInterval(activityTimer);
       activityTimer = undefined;
     }
+  }
+
+  function closeStudio(): void {
+    if (studioClosed) {
+      return;
+    }
+
+    studioClosed = true;
+    stopLiveStream();
+    stopBusy();
+
+    screen.destroy();
   }
 
   function startLiveStream(label: string): void {
@@ -516,6 +529,11 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
 
     if (text.startsWith("/")) {
       await handleSlashCommand(text);
+
+      if (studioClosed) {
+        return;
+      }
+
       input.focus();
       renderComposer();
       setFooter();
@@ -620,8 +638,7 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
 
   async function handleSlashCommand(command: string): Promise<void> {
     if (command === "/quit") {
-      stopLiveStream();
-      screen.destroy();
+      closeStudio();
       return;
     }
 
@@ -1127,11 +1144,19 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
   }
 
   input.on("click", () => {
+    if (studioClosed) {
+      return;
+    }
+
     input.focus();
     screen.render();
   });
 
   input.on("keypress", async (ch: string, key: blessed.Widgets.Events.IKeyEventArg) => {
+    if (studioClosed) {
+      return;
+    }
+
     if (key.name === "pageup" || key.name === "ppage" || key.name === "pagedown" || key.name === "npage") {
       return;
     }
@@ -1188,9 +1213,7 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
       return;
     }
 
-    stopLiveStream();
-    stopBusy();
-    screen.destroy();
+    closeStudio();
   });
 
   for (const element of [screen, transcript, input]) {
@@ -1212,6 +1235,12 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
   input.focus();
   await refreshEnvironment();
   await ensureFirstRunOrientation();
+
+  if (!studioClosed) {
+    await new Promise<void>((resolve) => {
+      screen.once("destroy", () => resolve());
+    });
+  }
 
   async function ensureFirstRunOrientation(): Promise<void> {
     if (!latestPackState || !isDefaultStudioSession(messages)) {
