@@ -70,7 +70,15 @@ export type AgentSelectionCommand =
   | { kind: "usage" }
   | { kind: "select"; requestedId: string };
 
-const READY_FOOTER = " PgUp/PgDn scroll   /agents [id] tool   /help commands   /quit exit ";
+type TranscriptScrollProfile = {
+  footerHint: string;
+  helpLine: string;
+  pageUpKeys: string[];
+  pageDownKeys: string[];
+};
+
+const TRANSCRIPT_PAGE_UP_KEYS = ["pageup", "ppage", "C-u"];
+const TRANSCRIPT_PAGE_DOWN_KEYS = ["pagedown", "npage", "C-d"];
 const ACTIVITY_FRAMES = ["[    ]", "[=   ]", "[==  ]", "[=== ]", "[ ===]", "[  ==]", "[   =]"];
 const COMPOSER_CURSOR = "{#ffb14a-fg}\u2588{/}";
 const COMPOSER_DELIMITER = "=====";
@@ -84,6 +92,8 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
   let planId = await resolvePlanId(workspace, options.planId);
   await saveActivePlanId(workspace, planId);
   let messages = await loadStudioSession(workspace, { planId });
+  const transcriptScrollProfile = resolveTranscriptScrollProfile();
+  const readyFooter = buildReadyFooter(transcriptScrollProfile.footerHint);
   const screen = blessed.screen({
     smartCSR: true,
     fullUnicode: true,
@@ -200,7 +210,7 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
       fg: "#bfb8c7",
       bg: "#1b1a1f"
     },
-    content: READY_FOOTER
+    content: readyFooter
   });
 
   screen.append(header);
@@ -291,7 +301,7 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
         return ` Paste block active: close with ${COMPOSER_DELIMITER} then press Enter to send `;
       }
 
-      return READY_FOOTER;
+      return readyFooter;
     }
 
     return ` ${getActivityFrame()} ${describeBusyMode(busyMode)}   elapsed ${formatElapsed(Date.now() - busyStartedAt)}   planner and agent calls can take a moment `;
@@ -862,7 +872,7 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
           `- Type \`${COMPOSER_DELIMITER}\` on its own line to start a large paste block; close with another \`${COMPOSER_DELIMITER}\`.`,
           "- `Tab` / `Shift+Tab` cycles path completions for `/read`, `/open`, and `/workspace`.",
           "- Planner, `/write`, and `/run` stream model output live in the transcript while the CLI call is in flight.",
-          "- `PageUp` and `PageDown` scroll the transcript.",
+          transcriptScrollProfile.helpLine,
           "- `/quit` closes the studio."
         ].join("\n")
       );
@@ -1150,11 +1160,11 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
   });
 
   for (const element of [screen, transcript, input]) {
-    element.key(["pageup", "ppage"], () => {
+    element.key(transcriptScrollProfile.pageUpKeys, () => {
       scrollTranscript(-5);
     });
 
-    element.key(["pagedown", "npage"], () => {
+    element.key(transcriptScrollProfile.pageDownKeys, () => {
       scrollTranscript(5);
     });
   }
@@ -1189,6 +1199,29 @@ function describeBusyMode(mode: BusyMode): string {
     case "auto":
       return `running auto mode via ${getPrimaryAgentAdapter().label}`;
   }
+}
+
+export function resolveTranscriptScrollProfile(platform: NodeJS.Platform = process.platform): TranscriptScrollProfile {
+  if (platform === "darwin") {
+    return {
+      footerHint: "Fn+Up/Fn+Down scroll",
+      helpLine:
+        "- `Fn+Up` and `Fn+Down` scroll the transcript (`PageUp`/`PageDown` on external keyboards). `Ctrl+U`/`Ctrl+D` also works.",
+      pageUpKeys: [...TRANSCRIPT_PAGE_UP_KEYS],
+      pageDownKeys: [...TRANSCRIPT_PAGE_DOWN_KEYS]
+    };
+  }
+
+  return {
+    footerHint: "PgUp/PgDn scroll",
+    helpLine: "- `PageUp` and `PageDown` scroll the transcript. `Ctrl+U`/`Ctrl+D` also works.",
+    pageUpKeys: [...TRANSCRIPT_PAGE_UP_KEYS],
+    pageDownKeys: [...TRANSCRIPT_PAGE_DOWN_KEYS]
+  };
+}
+
+function buildReadyFooter(scrollHint: string): string {
+  return ` ${scrollHint}   /agents [id] tool   /help commands   /quit exit `;
 }
 
 function formatElapsed(durationMs: number): string {

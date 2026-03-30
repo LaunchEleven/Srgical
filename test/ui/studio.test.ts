@@ -7,6 +7,7 @@ import {
   formatTrackerSummary,
   isComposerDelimitedBlockOpen,
   parseComposerPathCompletionRequest,
+  resolveTranscriptScrollProfile,
   renderWorkspaceSelectionMessage,
   resolveStudioWorkspaceInput
 } from "../../src/ui/studio";
@@ -106,6 +107,26 @@ test("parse-agent-selection-command keeps /agent as a compatibility alias", () =
   assert.deepEqual(parseAgentSelectionCommand("/agent"), { kind: "usage" });
   assert.deepEqual(parseAgentSelectionCommand("/agent claude"), { kind: "select", requestedId: "claude" });
   assert.equal(parseAgentSelectionCommand("/agentsclaude"), null);
+});
+
+test("resolve-transcript-scroll-profile uses mac-specific labels with fallback keys", () => {
+  const profile = resolveTranscriptScrollProfile("darwin");
+  assert.equal(profile.footerHint, "Fn+Up/Fn+Down scroll");
+  assert.match(profile.helpLine, /Fn\+Up/);
+  assert.ok(profile.pageUpKeys.includes("pageup"));
+  assert.ok(profile.pageDownKeys.includes("pagedown"));
+  assert.ok(profile.pageUpKeys.includes("C-u"));
+  assert.ok(profile.pageDownKeys.includes("C-d"));
+});
+
+test("resolve-transcript-scroll-profile uses page-up labels on non-mac platforms", () => {
+  const profile = resolveTranscriptScrollProfile("win32");
+  assert.equal(profile.footerHint, "PgUp/PgDn scroll");
+  assert.match(profile.helpLine, /PageUp/);
+  assert.ok(profile.pageUpKeys.includes("pageup"));
+  assert.ok(profile.pageDownKeys.includes("pagedown"));
+  assert.ok(profile.pageUpKeys.includes("C-u"));
+  assert.ok(profile.pageDownKeys.includes("C-d"));
 });
 
 function createPackState(options: {
