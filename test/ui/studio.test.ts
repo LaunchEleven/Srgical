@@ -158,13 +158,14 @@ test("get-visible-transcript-messages returns only the active transcript window"
 });
 
 test("resolve-studio-terminal keeps stable mac term names and normalizes case", () => {
-  assert.equal(resolveStudioTerminal("darwin", "XTERM-256COLOR"), "xterm-256color");
+  assert.equal(resolveStudioTerminal("darwin", "XTERM"), "xterm");
   assert.equal(resolveStudioTerminal("darwin", "tmux-256color"), "tmux-256color");
 });
 
-test("resolve-studio-terminal falls back on mac for exotic term names", () => {
-  assert.equal(resolveStudioTerminal("darwin", "xterm-kitty"), "xterm-256color");
-  assert.equal(resolveStudioTerminal("darwin", "xterm-ghostty"), "xterm-256color");
+test("resolve-studio-terminal falls back on mac for unsupported or problematic terms", () => {
+  assert.equal(resolveStudioTerminal("darwin", "xterm-256color"), "xterm");
+  assert.equal(resolveStudioTerminal("darwin", "xterm-kitty"), "xterm");
+  assert.equal(resolveStudioTerminal("darwin", "xterm-ghostty"), "xterm");
 });
 
 test("resolve-studio-terminal keeps non-mac term names unchanged", () => {

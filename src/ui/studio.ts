@@ -87,8 +87,8 @@ const RAPID_INPUT_INTERVAL_MS = 25;
 const PASTE_ENTER_GRACE_MS = 45;
 const PASTE_BURST_CHAR_THRESHOLD = 4;
 const OPEN_TARGET_ALIASES = ["all", "plan", "context", "tracker", "handoff", "prompt", "dir"] as const;
-const STUDIO_TERMINAL_FALLBACK = "xterm-256color";
-const SAFE_MAC_STUDIO_TERMINALS = new Set(["xterm", "xterm-256color", "screen", "screen-256color", "tmux", "tmux-256color"]);
+const STUDIO_TERMINAL_FALLBACK = "xterm";
+const SAFE_MAC_STUDIO_TERMINALS = new Set(["xterm", "screen", "screen-256color", "tmux", "tmux-256color"]);
 const escapeBlessedText = (blessed as typeof blessed & { helpers: { escape(text: string): string } }).helpers.escape;
 
 export async function launchStudio(options: StudioOptions = {}): Promise<void> {
