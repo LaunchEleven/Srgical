@@ -3,10 +3,13 @@ import assert from "node:assert/strict";
 import {
   parseAgentSelectionCommand,
   buildStudioHeaderContent,
+  clampTranscriptStartIndex,
   formatPlanningPackSummary,
   formatTrackerSummary,
+  getVisibleTranscriptMessages,
   shouldTreatEnterAsPastedNewline,
   parseComposerPathCompletionRequest,
+  resolveStudioTerminal,
   resolveTranscriptScrollProfile,
   renderWorkspaceSelectionMessage,
   resolveStudioWorkspaceInput
@@ -133,6 +136,39 @@ test("resolve-transcript-scroll-profile uses page-up labels on non-mac platforms
   assert.ok(profile.pageDownKeys.includes("pagedown"));
   assert.ok(profile.pageUpKeys.includes("C-u"));
   assert.ok(profile.pageDownKeys.includes("C-d"));
+});
+
+test("clamp-transcript-start-index keeps transcript window bounds safe", () => {
+  assert.equal(clampTranscriptStartIndex(-3, 5), 0);
+  assert.equal(clampTranscriptStartIndex(2, 5), 2);
+  assert.equal(clampTranscriptStartIndex(999, 5), 5);
+  assert.equal(clampTranscriptStartIndex(Number.NaN, 5), 0);
+});
+
+test("get-visible-transcript-messages returns only the active transcript window", () => {
+  const history = [
+    { role: "assistant" as const, content: "boot" },
+    { role: "user" as const, content: "step one" },
+    { role: "assistant" as const, content: "step two" }
+  ];
+
+  assert.deepEqual(getVisibleTranscriptMessages(history, 0), history);
+  assert.deepEqual(getVisibleTranscriptMessages(history, 2), [history[2]]);
+  assert.deepEqual(getVisibleTranscriptMessages(history, history.length), []);
+});
+
+test("resolve-studio-terminal keeps stable mac term names and normalizes case", () => {
+  assert.equal(resolveStudioTerminal("darwin", "XTERM-256COLOR"), "xterm-256color");
+  assert.equal(resolveStudioTerminal("darwin", "tmux-256color"), "tmux-256color");
+});
+
+test("resolve-studio-terminal falls back on mac for exotic term names", () => {
+  assert.equal(resolveStudioTerminal("darwin", "xterm-kitty"), "xterm-256color");
+  assert.equal(resolveStudioTerminal("darwin", "xterm-ghostty"), "xterm-256color");
+});
+
+test("resolve-studio-terminal keeps non-mac term names unchanged", () => {
+  assert.equal(resolveStudioTerminal("linux", "xterm-kitty"), "xterm-kitty");
 });
 
 function createPackState(options: {

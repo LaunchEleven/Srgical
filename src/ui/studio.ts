@@ -87,18 +87,23 @@ const RAPID_INPUT_INTERVAL_MS = 25;
 const PASTE_ENTER_GRACE_MS = 45;
 const PASTE_BURST_CHAR_THRESHOLD = 4;
 const OPEN_TARGET_ALIASES = ["all", "plan", "context", "tracker", "handoff", "prompt", "dir"] as const;
+const STUDIO_TERMINAL_FALLBACK = "xterm-256color";
+const SAFE_MAC_STUDIO_TERMINALS = new Set(["xterm", "xterm-256color", "screen", "screen-256color", "tmux", "tmux-256color"]);
 const escapeBlessedText = (blessed as typeof blessed & { helpers: { escape(text: string): string } }).helpers.escape;
 
 export async function launchStudio(options: StudioOptions = {}): Promise<void> {
   let workspace = resolveWorkspace(options.workspace);
   let planId = await resolvePlanId(workspace, options.planId);
   await saveActivePlanId(workspace, planId);
-  let messages = await loadStudioSession(workspace, { planId });
+  let historyMessages = await loadStudioSession(workspace, { planId });
+  let transcriptStartIndex = 0;
   const transcriptScrollProfile = resolveTranscriptScrollProfile();
   const readyFooter = buildReadyFooter(transcriptScrollProfile.footerHint);
+  const terminal = resolveStudioTerminal();
   const screen = blessed.screen({
     smartCSR: true,
     fullUnicode: true,
+    terminal,
     title: "srgical studio"
   });
 
@@ -408,7 +413,7 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
   }
 
   function renderTranscript(): void {
-    const renderedMessages = messages
+    const renderedMessages = getVisibleTranscriptMessages(historyMessages, transcriptStartIndex)
       .map((message) => {
         const tone =
           message.role === "user"
@@ -497,8 +502,8 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
   }
 
   async function appendMessage(message: ChatMessage): Promise<void> {
-    messages.push(message);
-    await saveStudioSession(workspace, messages, { planId });
+    historyMessages.push(message);
+    await saveStudioSession(workspace, historyMessages, { planId });
   }
 
   async function appendSystemMessage(content: string): Promise<void> {
@@ -555,7 +560,7 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
     startLiveStream(`${getPrimaryAgentAdapter().label.toUpperCase()} STREAM`);
 
     try {
-      const reply = await requestPlannerReply(workspace, messages, {
+      const reply = await requestPlannerReply(workspace, historyMessages, {
         planId,
         onOutputChunk: appendLiveStreamChunk
       });
@@ -617,13 +622,14 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
   async function switchPlan(nextPlanId: string): Promise<void> {
     planId = normalizePlanId(nextPlanId);
     await saveActivePlanId(workspace, planId);
-    messages = await loadStudioSession(workspace, { planId });
+    historyMessages = await loadStudioSession(workspace, { planId });
+    transcriptStartIndex = 0;
     await refreshEnvironment();
   }
 
   async function refreshAdvice(showInTranscript = false): Promise<void> {
     try {
-      const advice = await refreshPlanningAdvice(workspace, messages, { planId });
+      const advice = await refreshPlanningAdvice(workspace, historyMessages, { planId });
       await refreshEnvironment();
 
       if (showInTranscript) {
@@ -639,6 +645,28 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
   async function handleSlashCommand(command: string): Promise<void> {
     if (command === "/quit") {
       closeStudio();
+      return;
+    }
+
+    if (command === "/clear") {
+      const visibleMessageCount = getVisibleTranscriptMessages(historyMessages, transcriptStartIndex).length;
+      transcriptStartIndex = historyMessages.length;
+      await appendSystemMessage(
+        visibleMessageCount > 0
+          ? `Transcript cleared (${visibleMessageCount} message${visibleMessageCount === 1 ? "" : "s"} hidden). History is preserved; run \`/history\` to show it again.`
+          : "Transcript already clear. History is preserved; run `/history` to show it again."
+      );
+      return;
+    }
+
+    if (command === "/history") {
+      const wasCleared = clampTranscriptStartIndex(transcriptStartIndex, historyMessages.length) > 0;
+      transcriptStartIndex = 0;
+      await appendSystemMessage(
+        wasCleared
+          ? `Transcript history restored (${historyMessages.length} message${historyMessages.length === 1 ? "" : "s"} visible).`
+          : "Transcript already showing full history."
+      );
       return;
     }
 
@@ -670,7 +698,8 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
         workspace = nextWorkspace;
         planId = await resolvePlanId(workspace, previousPlanId);
         await saveActivePlanId(workspace, planId);
-        messages = await loadStudioSession(workspace, { planId });
+        historyMessages = await loadStudioSession(workspace, { planId });
+        transcriptStartIndex = 0;
         await refreshEnvironment();
         await appendSystemMessage(
           [
@@ -924,6 +953,8 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
           "9. Use `/agents` to inspect support and `/agents <id>` (or `/agent <id>`) to switch the active tool.",
           "10. Run `/preview` for a safe execution preview, `/run` for one execution step, or `/auto [max]` for continuous execution.",
           "11. Run `/stop` to stop auto mode after the current iteration.",
+          "12. Run `/clear` to clear the visible transcript while preserving planning history.",
+          "13. Run `/history` to restore the full transcript history after `/clear`.",
           "",
           "Controls:",
           "- `Enter` sends the current message or command.",
@@ -980,7 +1011,7 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
       startLiveStream(`${getPrimaryAgentAdapter().label.toUpperCase()} PACK STREAM`);
 
       try {
-        const result = await writePlanningPack(workspace, messages, {
+        const result = await writePlanningPack(workspace, historyMessages, {
           planId,
           onOutputChunk: appendLiveStreamChunk
         });
@@ -1243,7 +1274,7 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
   }
 
   async function ensureFirstRunOrientation(): Promise<void> {
-    if (!latestPackState || !isDefaultStudioSession(messages)) {
+    if (!latestPackState || !isDefaultStudioSession(historyMessages)) {
       return;
     }
 
@@ -1283,8 +1314,38 @@ export function resolveTranscriptScrollProfile(platform: NodeJS.Platform = proce
   };
 }
 
+export function resolveStudioTerminal(
+  platform: NodeJS.Platform = process.platform,
+  term = process.env.TERM ?? ""
+): string {
+  const normalized = term.trim().toLowerCase();
+
+  if (!normalized) {
+    return STUDIO_TERMINAL_FALLBACK;
+  }
+
+  if (platform !== "darwin") {
+    return normalized;
+  }
+
+  return SAFE_MAC_STUDIO_TERMINALS.has(normalized) ? normalized : STUDIO_TERMINAL_FALLBACK;
+}
+
 function buildReadyFooter(scrollHint: string): string {
   return ` ${scrollHint}   Enter send   Shift+Enter newline   /agents [id] tool   /help commands   /quit exit `;
+}
+
+export function clampTranscriptStartIndex(transcriptStartIndex: number, messageCount: number): number {
+  if (!Number.isFinite(transcriptStartIndex)) {
+    return 0;
+  }
+
+  const normalizedStartIndex = Math.trunc(transcriptStartIndex);
+  return Math.min(Math.max(0, normalizedStartIndex), Math.max(0, messageCount));
+}
+
+export function getVisibleTranscriptMessages(messages: ChatMessage[], transcriptStartIndex: number): ChatMessage[] {
+  return messages.slice(clampTranscriptStartIndex(transcriptStartIndex, messages.length));
 }
 
 function formatElapsed(durationMs: number): string {

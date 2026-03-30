@@ -211,6 +211,8 @@ Inside the studio, the footer is intentionally minimal:
 - `PgUp/PgDn` scrolls the transcript on Windows/Linux; on macOS use `Fn+Up` / `Fn+Down` (or `Ctrl+U` / `Ctrl+D` on all platforms)
 - `/agents` shows support and current selection
 - `/agents <id>` (or `/agent <id>`) switches the current tool
+- `/clear` hides the current transcript view without deleting planning history
+- `/history` restores the hidden transcript history after `/clear`
 - `/help` shows the full command set
 - `/quit` exits the studio
 
