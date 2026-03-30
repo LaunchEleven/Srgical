@@ -65,7 +65,12 @@ export type ComposerPathCompletionRequest = {
   replaceEnd: number;
 };
 
-const READY_FOOTER = " PgUp/PgDn scroll   /agents choose tool   /help commands   /quit exit ";
+export type AgentSelectionCommand =
+  | { kind: "status" }
+  | { kind: "usage" }
+  | { kind: "select"; requestedId: string };
+
+const READY_FOOTER = " PgUp/PgDn scroll   /agents [id] tool   /help commands   /quit exit ";
 const ACTIVITY_FRAMES = ["[    ]", "[=   ]", "[==  ]", "[=== ]", "[ ===]", "[  ==]", "[   =]"];
 const COMPOSER_CURSOR = "{#ffb14a-fg}\u2588{/}";
 const COMPOSER_DELIMITER = "=====";
@@ -803,18 +808,15 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
       return;
     }
 
-    if (command === "/agents") {
-      const agentState = await resolvePrimaryAgent(workspace, { planId });
-      await appendSystemMessage(renderAgentSelectionMessage(agentState.status, agentState.statuses));
-      return;
-    }
-
-    if (command.startsWith("/agent")) {
-      const requestedId = command.slice("/agent".length).trim().toLowerCase();
-
-      if (!requestedId) {
+    const agentCommand = parseAgentSelectionCommand(command);
+    if (agentCommand) {
+      if (agentCommand.kind === "status" || agentCommand.kind === "usage") {
         const agentState = await resolvePrimaryAgent(workspace, { planId });
-        await appendSystemMessage([buildAgentUsageMessage(), "", renderAgentSelectionMessage(agentState.status, agentState.statuses)].join("\n"));
+        await appendSystemMessage(
+          agentCommand.kind === "usage"
+            ? [buildAgentUsageMessage(), "", renderAgentSelectionMessage(agentState.status, agentState.statuses)].join("\n")
+            : renderAgentSelectionMessage(agentState.status, agentState.statuses)
+        );
         return;
       }
 
@@ -823,7 +825,7 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
       screen.render();
 
       try {
-        const agentState = await selectPrimaryAgent(workspace, requestedId, { planId });
+        const agentState = await selectPrimaryAgent(workspace, agentCommand.requestedId, { planId });
         await appendSystemMessage(
           [`Active agent set to ${agentState.status.label} for plan \`${planId}\`.`, "", renderAgentSelectionMessage(agentState.status, agentState.statuses)].join(
             "\n"
@@ -850,8 +852,9 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
           "6. Then run `/review` and `/open [all|plan|context|tracker|prompt|handoff|dir|<path>]` for human review.",
           "7. Run `/confirm-plan` to approve subsequent refresh writes.",
           "8. Run `/write` again when you want to refresh an authored plan.",
-          "9. Run `/preview` for a safe execution preview, `/run` for one execution step, or `/auto [max]` for continuous execution.",
-          "10. Run `/stop` to stop auto mode after the current iteration.",
+          "9. Use `/agents` to inspect support and `/agents <id>` (or `/agent <id>`) to switch the active tool.",
+          "10. Run `/preview` for a safe execution preview, `/run` for one execution step, or `/auto [max]` for continuous execution.",
+          "11. Run `/stop` to stop auto mode after the current iteration.",
           "",
           "Controls:",
           "- `Enter` sends the current message or command.",
@@ -1353,21 +1356,46 @@ function renderAgentSelectionMessage(activeAgent: AgentStatus, statuses: AgentSt
 }
 
 function buildAgentUsageMessage(): string {
-  const usages = getSupportedAgentAdapters().map((adapter) => `\`/agent ${adapter.id}\``);
+  const usages = getSupportedAgentAdapters().map((adapter) => `\`/agents ${adapter.id}\``);
+  const aliasHint = "Alias: `/agent <id>`.";
 
   if (usages.length === 0) {
-    return "Usage: `/agent <id>`";
+    return `Usage: \`/agents <id>\`. ${aliasHint}`;
   }
 
   if (usages.length === 1) {
-    return `Usage: ${usages[0]}`;
+    return `Usage: ${usages[0]}. ${aliasHint}`;
   }
 
   if (usages.length === 2) {
-    return `Usage: ${usages[0]} or ${usages[1]}`;
+    return `Usage: ${usages[0]} or ${usages[1]}. ${aliasHint}`;
   }
 
-  return `Usage: ${usages.slice(0, -1).join(", ")}, or ${usages[usages.length - 1]}`;
+  return `Usage: ${usages.slice(0, -1).join(", ")}, or ${usages[usages.length - 1]}. ${aliasHint}`;
+}
+
+export function parseAgentSelectionCommand(command: string): AgentSelectionCommand | null {
+  const normalized = command.trim();
+
+  if (normalized === "/agents") {
+    return { kind: "status" };
+  }
+
+  if (normalized === "/agent") {
+    return { kind: "usage" };
+  }
+
+  if (normalized.startsWith("/agents ")) {
+    const requestedId = normalized.slice("/agents".length).trim().toLowerCase();
+    return requestedId ? { kind: "select", requestedId } : { kind: "status" };
+  }
+
+  if (normalized.startsWith("/agent ")) {
+    const requestedId = normalized.slice("/agent".length).trim().toLowerCase();
+    return requestedId ? { kind: "select", requestedId } : { kind: "usage" };
+  }
+
+  return null;
 }
 
 function formatAgentStatusLine(status: AgentStatus, selected: boolean): string {

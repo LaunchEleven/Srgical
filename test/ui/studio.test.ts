@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  parseAgentSelectionCommand,
   buildStudioHeaderContent,
   formatPlanningPackSummary,
   formatTrackerSummary,
@@ -93,6 +94,18 @@ test("parse-composer-path-completion-request extracts token and replacement rang
   assert.equal(workspaceRequest?.token, "../dem");
 
   assert.equal(parseComposerPathCompletionRequest("regular chat message"), null);
+});
+
+test("parse-agent-selection-command supports /agents status and /agents <id> switching", () => {
+  assert.deepEqual(parseAgentSelectionCommand("/agents"), { kind: "status" });
+  assert.deepEqual(parseAgentSelectionCommand("/agents augment"), { kind: "select", requestedId: "augment" });
+  assert.deepEqual(parseAgentSelectionCommand("/agents CODEx"), { kind: "select", requestedId: "codex" });
+});
+
+test("parse-agent-selection-command keeps /agent as a compatibility alias", () => {
+  assert.deepEqual(parseAgentSelectionCommand("/agent"), { kind: "usage" });
+  assert.deepEqual(parseAgentSelectionCommand("/agent claude"), { kind: "select", requestedId: "claude" });
+  assert.equal(parseAgentSelectionCommand("/agentsclaude"), null);
 });
 
 function createPackState(options: {

@@ -209,7 +209,8 @@ node dist/index.js run-next --plan release-readiness --agent augment
 Inside the studio, the footer is intentionally minimal:
 
 - `PgUp/PgDn` scrolls the transcript
-- `/agents` chooses the current tool
+- `/agents` shows support and current selection
+- `/agents <id>` (or `/agent <id>`) switches the current tool
 - `/help` shows the full command set
 - `/quit` exits the studio
 
