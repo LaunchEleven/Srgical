@@ -66,7 +66,7 @@ export type ComposerPathCompletionRequest = {
 };
 
 type ComposerCompletionKeyPress = Pick<blessed.Widgets.Events.IKeyEventArg, "name" | "shift" | "ctrl" | "meta" | "sequence" | "full">;
-type ComposerEditKeyPress = Pick<blessed.Widgets.Events.IKeyEventArg, "name" | "ctrl" | "meta">;
+type ComposerEditKeyPress = Pick<blessed.Widgets.Events.IKeyEventArg, "name" | "ctrl" | "meta" | "full" | "sequence">;
 
 export type AgentSelectionCommand =
   | { kind: "status" }
@@ -1756,7 +1756,19 @@ export function shouldDeletePreviousWordFromComposer(key: ComposerEditKeyPress):
     return true;
   }
 
+  if (key.full === "M-delete" || key.full === "M-backspace") {
+    return true;
+  }
+
   if (key.name === "backspace" && (key.meta || key.ctrl)) {
+    return true;
+  }
+
+  if (key.name === "delete" && (key.meta || key.ctrl)) {
+    return true;
+  }
+
+  if ((key.sequence === "\x1b\x7f" || key.sequence === "\x1b\b") && !key.ctrl) {
     return true;
   }
 

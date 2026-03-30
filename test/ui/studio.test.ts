@@ -104,11 +104,16 @@ test("remove-last-word-chunk trims the previous word and trailing whitespace", (
 });
 
 test("should-delete-previous-word-from-composer supports common terminal shortcuts", () => {
-  assert.equal(shouldDeletePreviousWordFromComposer({ name: "w", ctrl: true, meta: false }), true);
-  assert.equal(shouldDeletePreviousWordFromComposer({ name: "backspace", ctrl: false, meta: true }), true);
-  assert.equal(shouldDeletePreviousWordFromComposer({ name: "backspace", ctrl: true, meta: false }), true);
-  assert.equal(shouldDeletePreviousWordFromComposer({ name: "backspace", ctrl: false, meta: false }), false);
-  assert.equal(shouldDeletePreviousWordFromComposer({ name: "x", ctrl: false, meta: false }), false);
+  assert.equal(shouldDeletePreviousWordFromComposer({ name: "w", ctrl: true, meta: false, full: "C-w", sequence: "\u0017" }), true);
+  assert.equal(
+    shouldDeletePreviousWordFromComposer({ name: "backspace", ctrl: false, meta: true, full: "M-backspace", sequence: "\u001b\u007f" }),
+    true
+  );
+  assert.equal(shouldDeletePreviousWordFromComposer({ name: "backspace", ctrl: true, meta: false, full: "C-backspace", sequence: "\b" }), true);
+  assert.equal(shouldDeletePreviousWordFromComposer({ name: "delete", ctrl: false, meta: true, full: "M-delete", sequence: "\u001b[3;3~" }), true);
+  assert.equal(shouldDeletePreviousWordFromComposer({ name: "delete", ctrl: true, meta: false, full: "C-delete", sequence: "\u001b[3;5~" }), true);
+  assert.equal(shouldDeletePreviousWordFromComposer({ name: "backspace", ctrl: false, meta: false, full: "backspace", sequence: "\u007f" }), false);
+  assert.equal(shouldDeletePreviousWordFromComposer({ name: "x", ctrl: false, meta: false, full: "x", sequence: "x" }), false);
 });
 
 test("resolve-path-completion-direction-from-keypress handles standard tab and shift+tab", () => {
