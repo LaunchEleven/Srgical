@@ -70,6 +70,11 @@ export type ReadCommandParseResult = {
   trailingPrompt: string | null;
 };
 
+export type OpenCommandParseResult = {
+  target: string;
+  trailingPrompt: string | null;
+};
+
 type ComposerCompletionKeyPress = Pick<blessed.Widgets.Events.IKeyEventArg, "name" | "shift" | "ctrl" | "meta" | "sequence" | "full">;
 type ComposerEditKeyPress = Pick<blessed.Widgets.Events.IKeyEventArg, "name" | "ctrl" | "meta" | "full" | "sequence">;
 
@@ -689,7 +694,8 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
     }
 
     if (command.startsWith("/workspace")) {
-      const requestedWorkspace = command.slice("/workspace".length).trim();
+      const workspaceCommand = await parseReadCommandInput(workspace, command.slice("/workspace".length));
+      const requestedWorkspace = workspaceCommand.requestedPath.trim();
 
       if (!requestedWorkspace) {
         const packState = latestPackState ?? (await readPlanningPackState(workspace, { planId }));
@@ -720,14 +726,24 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
             renderWorkspaceSelectionMessage(workspace, latestPackState ?? (await readPlanningPackState(workspace, { planId })))
           ].join("\n")
         );
+
+        if (workspaceCommand.trailingPrompt) {
+          await submitUserPrompt(workspaceCommand.trailingPrompt);
+        }
       } catch (error) {
         workspace = previousWorkspace;
         planId = previousPlanId;
         await refreshEnvironment();
         await appendSystemMessage(
-          `Workspace switch blocked: ${
-            error instanceof Error ? error.message : String(error)
-          }\nUse \`/workspace <path>\` after creating or selecting a named plan in that repo.`
+          [
+            `Workspace switch blocked: ${error instanceof Error ? error.message : String(error)}`,
+            "Use `/workspace <path>` after creating or selecting a named plan in that repo.",
+            workspaceCommand.trailingPrompt
+              ? `Trailing follow-up was not sent because the workspace switch failed: \`${workspaceCommand.trailingPrompt}\`.`
+              : ""
+          ]
+            .filter((line) => line.length > 0)
+            .join("\n")
         );
       }
       return;
@@ -851,8 +867,8 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
     }
 
     if (command.startsWith("/open")) {
-      const requestedTarget = command.slice("/open".length).trim();
-      const target = requestedTarget.length > 0 ? requestedTarget : "all";
+      const openCommand = await parseOpenCommandInput(workspace, command.slice("/open".length));
+      const target = openCommand.target;
       const paths = getPlanningPackPaths(workspace, { planId });
       const openTargets = resolveOpenTargets(workspace, paths, target);
 
@@ -873,6 +889,12 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
               `code ${openTargets.map((targetPath) => `"${targetPath}"`).join(" ")}`
             ].join("\n")
       );
+
+      if (openCommand.trailingPrompt) {
+        await appendSystemMessage(
+          `Ignored trailing text after /open target: \`${openCommand.trailingPrompt}\`.\nSend that as a normal message if you want to ask a follow-up question.`
+        );
+      }
       return;
     }
 
@@ -985,6 +1007,7 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
           "- `Shift+Enter`, `Alt+Enter`, or `Ctrl+J` inserts a new line when the terminal exposes those keys distinctly.",
           "- `Ctrl+W`, `Alt/Option+Backspace`, or `Ctrl+Backspace` deletes the previous word in the composer.",
           "- `/read <path> <follow-up>` auto-sends the follow-up text as the next user prompt after the file is loaded.",
+          "- `/workspace <path> <follow-up>` auto-sends the follow-up text after a successful workspace switch.",
           "- Large paste blocks are accepted directly; no delimiter syntax is required.",
           "- `Tab` / `Shift+Tab` cycles path completions for `/read`, `/open`, and `/workspace`.",
           "- Planner, `/write`, and `/run` stream model output live in the transcript while the CLI call is in flight.",
@@ -1265,11 +1288,12 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
       return;
     }
 
-    if (ch && !/^[\x00-\x08\x0b-\x0c\x0e-\x1f\x7f]$/.test(ch)) {
+    const normalizedChunk = normalizeComposerInputChunk(ch, lastComposerInputAt, rapidComposerInputChars);
+    if (normalizedChunk) {
       clearCompletionState();
       clearCompletionHint();
-      composerValue += ch;
-      noteComposerInput(ch);
+      composerValue += normalizedChunk;
+      noteComposerInput(normalizedChunk);
       renderComposer();
       setFooter();
       screen.render();
@@ -1754,6 +1778,23 @@ function removeLastCodePoint(value: string): string {
   return Array.from(value).slice(0, -1).join("");
 }
 
+export function normalizeComposerInputChunk(
+  chunk: string,
+  lastComposerInputAt: number | null,
+  rapidComposerInputChars: number,
+  now = Date.now()
+): string | null {
+  if (!chunk) {
+    return null;
+  }
+
+  if (chunk === "\r" || chunk === "\n") {
+    return shouldTreatEnterAsPastedNewline(lastComposerInputAt, rapidComposerInputChars, now) ? "\n" : null;
+  }
+
+  return /^[\x00-\x08\x0b-\x0c\x0e-\x1f\x7f]$/.test(chunk) ? null : chunk;
+}
+
 export function removeLastWordChunk(value: string): string {
   if (!value) {
     return value;
@@ -1885,6 +1926,40 @@ export async function parseReadCommandInput(workspace: string, rawInput: string)
   return {
     requestedPath: trimmed,
     trailingPrompt: null
+  };
+}
+
+export async function parseOpenCommandInput(workspace: string, rawInput: string): Promise<OpenCommandParseResult> {
+  const trimmed = rawInput.trim();
+
+  if (!trimmed) {
+    return {
+      target: "all",
+      trailingPrompt: null
+    };
+  }
+
+  const quoted = parseLeadingQuotedValue(trimmed);
+  if (quoted) {
+    return {
+      target: quoted.value,
+      trailingPrompt: quoted.remainder.length > 0 ? quoted.remainder : null
+    };
+  }
+
+  const firstToken = trimmed.split(/\s+/, 1)[0] ?? "";
+  if (OPEN_TARGET_ALIASES.includes(firstToken.toLowerCase() as (typeof OPEN_TARGET_ALIASES)[number])) {
+    const trailingPrompt = trimmed.slice(firstToken.length).trim();
+    return {
+      target: firstToken,
+      trailingPrompt: trailingPrompt.length > 0 ? trailingPrompt : null
+    };
+  }
+
+  const parsedPath = await parseReadCommandInput(workspace, rawInput);
+  return {
+    target: parsedPath.requestedPath,
+    trailingPrompt: parsedPath.trailingPrompt
   };
 }
 

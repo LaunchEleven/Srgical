@@ -9,6 +9,8 @@ import {
   formatPlanningPackSummary,
   formatTrackerSummary,
   getVisibleTranscriptMessages,
+  normalizeComposerInputChunk,
+  parseOpenCommandInput,
   parseReadCommandInput,
   removeLastWordChunk,
   shouldTreatEnterAsPastedNewline,
@@ -98,6 +100,24 @@ test("should-treat-enter-as-pasted-newline ignores normal typing cadence", () =>
   assert.equal(shouldTreatEnterAsPastedNewline(now - 200, 12, now), false);
   assert.equal(shouldTreatEnterAsPastedNewline(now - 20, 2, now), false);
   assert.equal(shouldTreatEnterAsPastedNewline(null, 12, now), false);
+});
+
+test("normalize-composer-input-chunk ignores lone startup returns", () => {
+  const now = 1_000;
+  assert.equal(normalizeComposerInputChunk("\r", null, 0, now), null);
+  assert.equal(normalizeComposerInputChunk("\n", null, 0, now), null);
+});
+
+test("normalize-composer-input-chunk preserves pasted newline bursts", () => {
+  const now = 1_000;
+  assert.equal(normalizeComposerInputChunk("\r", now - 20, 8, now), "\n");
+  assert.equal(normalizeComposerInputChunk("\n", now - 20, 8, now), "\n");
+});
+
+test("normalize-composer-input-chunk keeps printable input and drops control chars", () => {
+  const now = 1_000;
+  assert.equal(normalizeComposerInputChunk("a", null, 0, now), "a");
+  assert.equal(normalizeComposerInputChunk("\u0007", null, 0, now), null);
 });
 
 test("remove-last-word-chunk trims the previous word and trailing whitespace", () => {
@@ -195,6 +215,27 @@ test("parse-read-command-input supports quoted and unquoted paths with spaces", 
   const quoted = await parseReadCommandInput(workspace, "\"docs/my notes.md\" summarize this");
   assert.equal(quoted.requestedPath, "docs/my notes.md");
   assert.equal(quoted.trailingPrompt, "summarize this");
+});
+
+test("parse-open-command-input defaults to all and supports alias + trailing text", async () => {
+  const workspace = await createTempWorkspace("srgical-studio-open-");
+
+  const empty = await parseOpenCommandInput(workspace, "");
+  assert.equal(empty.target, "all");
+  assert.equal(empty.trailingPrompt, null);
+
+  const alias = await parseOpenCommandInput(workspace, "all and then summarize");
+  assert.equal(alias.target, "all");
+  assert.equal(alias.trailingPrompt, "and then summarize");
+});
+
+test("parse-open-command-input resolves path targets with trailing prose", async () => {
+  const workspace = await createTempWorkspace("srgical-studio-open-path-");
+  await writeFile(path.join(workspace, ".eslintrc.json"), "{\"root\":true}", "utf8");
+
+  const parsed = await parseOpenCommandInput(workspace, ".eslintrc.json explain this");
+  assert.equal(parsed.target, ".eslintrc.json");
+  assert.equal(parsed.trailingPrompt, "explain this");
 });
 
 test("parse-composer-path-completion-request extracts token and replacement range", () => {
