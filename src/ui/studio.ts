@@ -554,6 +554,10 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
       return;
     }
 
+    await submitUserPrompt(text);
+  }
+
+  async function submitUserPrompt(text: string): Promise<void> {
     startBusy("planner");
     await appendMessage({
       role: "user",
@@ -831,16 +835,14 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
         await appendSystemMessage(contextMessage);
 
         if (readCommand.trailingPrompt) {
-          await appendSystemMessage(
-            `Ignored trailing text after the path: \`${readCommand.trailingPrompt}\`.\nSend that as a normal message after \`/read\` to ask follow-up questions.`
-          );
+          await submitUserPrompt(readCommand.trailingPrompt);
         }
       } catch (error) {
         await appendSystemMessage(
           [
             `Could not read file: ${error instanceof Error ? error.message : String(error)}`,
             readCommand.trailingPrompt
-              ? `Tip: \`/read\` accepts only a file path. I treated \`${requestedPath}\` as the path and ignored \`${readCommand.trailingPrompt}\`.`
+              ? `Tip: \`/read\` accepts only a file path. I treated \`${requestedPath}\` as the path and did not run follow-up text \`${readCommand.trailingPrompt}\` because the file load failed.`
               : "Tip: use `/read <path>` only, then ask your question as a separate message."
           ].join("\n")
         );
@@ -982,6 +984,7 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
           "- `Enter` sends the current message or command.",
           "- `Shift+Enter`, `Alt+Enter`, or `Ctrl+J` inserts a new line when the terminal exposes those keys distinctly.",
           "- `Ctrl+W`, `Alt/Option+Backspace`, or `Ctrl+Backspace` deletes the previous word in the composer.",
+          "- `/read <path> <follow-up>` auto-sends the follow-up text as the next user prompt after the file is loaded.",
           "- Large paste blocks are accepted directly; no delimiter syntax is required.",
           "- `Tab` / `Shift+Tab` cycles path completions for `/read`, `/open`, and `/workspace`.",
           "- Planner, `/write`, and `/run` stream model output live in the transcript while the CLI call is in flight.",

@@ -225,6 +225,7 @@ Large context dumps can be pasted directly with no delimiter syntax. Studio auto
 new lines so big blocks land cleanly in the composer.
 
 `Tab` and `Shift+Tab` now cycle file-path completions for `/read`, `/open`, and `/workspace`.
+When using `/read`, any trailing text after the path is auto-submitted as the next user prompt once file context is loaded.
 
 Planner replies, `/write`, and `/run` now stream model output into the transcript while the underlying CLI tool is
 still running, so users can see progress live instead of waiting for one final blob.
