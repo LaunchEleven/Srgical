@@ -1,5 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { mkdir, writeFile } from "node:fs/promises";
+import path from "node:path";
 import {
   parseAgentSelectionCommand,
   buildStudioHeaderContent,
@@ -7,6 +9,7 @@ import {
   formatPlanningPackSummary,
   formatTrackerSummary,
   getVisibleTranscriptMessages,
+  parseReadCommandInput,
   removeLastWordChunk,
   shouldTreatEnterAsPastedNewline,
   shouldDeletePreviousWordFromComposer,
@@ -18,6 +21,7 @@ import {
   resolveStudioWorkspaceInput
 } from "../../src/ui/studio";
 import type { PlanningPackState } from "../../src/core/planning-pack-state";
+import { createTempWorkspace } from "../helpers/workspace";
 
 test("format-planning-pack-summary makes an unwritten plan obvious", () => {
   const workspace = "G:\\code\\Launch11Projects\\demo";
@@ -167,6 +171,30 @@ test("resolve-path-completion-direction-from-keypress ignores non-tab keys", () 
     }),
     null
   );
+});
+
+test("parse-read-command-input separates trailing prompt text from an existing path", async () => {
+  const workspace = await createTempWorkspace("srgical-studio-read-");
+  await writeFile(path.join(workspace, ".eslintrc.json"), "{\"root\":true}", "utf8");
+
+  const parsed = await parseReadCommandInput(workspace, ".eslintrc.json and tell me about it");
+  assert.equal(parsed.requestedPath, ".eslintrc.json");
+  assert.equal(parsed.trailingPrompt, "and tell me about it");
+});
+
+test("parse-read-command-input supports quoted and unquoted paths with spaces", async () => {
+  const workspace = await createTempWorkspace("srgical-studio-read-spaces-");
+  const docsDir = path.join(workspace, "docs");
+  await mkdir(docsDir, { recursive: true });
+  await writeFile(path.join(docsDir, "my notes.md"), "# notes", "utf8");
+
+  const unquoted = await parseReadCommandInput(workspace, "docs/my notes.md summarize this");
+  assert.equal(unquoted.requestedPath, "docs/my notes.md");
+  assert.equal(unquoted.trailingPrompt, "summarize this");
+
+  const quoted = await parseReadCommandInput(workspace, "\"docs/my notes.md\" summarize this");
+  assert.equal(quoted.requestedPath, "docs/my notes.md");
+  assert.equal(quoted.trailingPrompt, "summarize this");
 });
 
 test("parse-composer-path-completion-request extracts token and replacement range", () => {

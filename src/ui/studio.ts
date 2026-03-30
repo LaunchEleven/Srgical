@@ -65,6 +65,11 @@ export type ComposerPathCompletionRequest = {
   replaceEnd: number;
 };
 
+export type ReadCommandParseResult = {
+  requestedPath: string;
+  trailingPrompt: string | null;
+};
+
 type ComposerCompletionKeyPress = Pick<blessed.Widgets.Events.IKeyEventArg, "name" | "shift" | "ctrl" | "meta" | "sequence" | "full">;
 type ComposerEditKeyPress = Pick<blessed.Widgets.Events.IKeyEventArg, "name" | "ctrl" | "meta" | "full" | "sequence">;
 
@@ -813,7 +818,8 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
     }
 
     if (command.startsWith("/read ")) {
-      const requestedPath = stripWrappingQuotes(command.slice("/read".length).trim());
+      const readCommand = await parseReadCommandInput(workspace, command.slice("/read".length));
+      const requestedPath = stripWrappingQuotes(readCommand.requestedPath);
 
       if (!requestedPath) {
         await appendSystemMessage("Usage: `/read <path>` (Tab completes paths).");
@@ -823,8 +829,21 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
       try {
         const contextMessage = await loadFileContextMessage(workspace, requestedPath);
         await appendSystemMessage(contextMessage);
+
+        if (readCommand.trailingPrompt) {
+          await appendSystemMessage(
+            `Ignored trailing text after the path: \`${readCommand.trailingPrompt}\`.\nSend that as a normal message after \`/read\` to ask follow-up questions.`
+          );
+        }
       } catch (error) {
-        await appendSystemMessage(`Could not read file: ${error instanceof Error ? error.message : String(error)}`);
+        await appendSystemMessage(
+          [
+            `Could not read file: ${error instanceof Error ? error.message : String(error)}`,
+            readCommand.trailingPrompt
+              ? `Tip: \`/read\` accepts only a file path. I treated \`${requestedPath}\` as the path and ignored \`${readCommand.trailingPrompt}\`.`
+              : "Tip: use `/read <path>` only, then ask your question as a separate message."
+          ].join("\n")
+        );
       }
       return;
     }
@@ -1820,6 +1839,52 @@ export function resolvePathCompletionDirectionFromKeypress(
   return null;
 }
 
+export async function parseReadCommandInput(workspace: string, rawInput: string): Promise<ReadCommandParseResult> {
+  const trimmed = rawInput.trim();
+
+  if (!trimmed) {
+    return {
+      requestedPath: "",
+      trailingPrompt: null
+    };
+  }
+
+  const quoted = parseLeadingQuotedValue(trimmed);
+  if (quoted) {
+    return {
+      requestedPath: quoted.value,
+      trailingPrompt: quoted.remainder.length > 0 ? quoted.remainder : null
+    };
+  }
+
+  const parts = trimmed.split(/\s+/).filter((part) => part.length > 0);
+
+  for (let count = parts.length; count >= 1; count -= 1) {
+    const candidatePath = parts.slice(0, count).join(" ");
+    const absoluteCandidate = resolveStudioWorkspaceInput(workspace, candidatePath);
+
+    if (await doesPathExist(absoluteCandidate)) {
+      const trailing = parts.slice(count).join(" ").trim();
+      return {
+        requestedPath: candidatePath,
+        trailingPrompt: trailing.length > 0 ? trailing : null
+      };
+    }
+  }
+
+  if (parts.length > 1) {
+    return {
+      requestedPath: parts[0] ?? "",
+      trailingPrompt: parts.slice(1).join(" ").trim() || null
+    };
+  }
+
+  return {
+    requestedPath: trimmed,
+    trailingPrompt: null
+  };
+}
+
 export function parseComposerPathCompletionRequest(composerValue: string): ComposerPathCompletionRequest | null {
   const lineStart = composerValue.lastIndexOf("\n") + 1;
   const line = composerValue.slice(lineStart);
@@ -1858,6 +1923,39 @@ export function parseComposerPathCompletionRequest(composerValue: string): Compo
       replaceStart,
       replaceEnd: composerValue.length
     };
+  }
+
+  return null;
+}
+
+function parseLeadingQuotedValue(value: string): { value: string; remainder: string } | null {
+  const quote = value[0];
+
+  if (quote !== "\"" && quote !== "'") {
+    return null;
+  }
+
+  let escaped = false;
+
+  for (let index = 1; index < value.length; index += 1) {
+    const current = value[index];
+
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+
+    if (current === "\\") {
+      escaped = true;
+      continue;
+    }
+
+    if (current === quote) {
+      return {
+        value: value.slice(1, index),
+        remainder: value.slice(index + 1).trim()
+      };
+    }
   }
 
   return null;
@@ -1910,6 +2008,15 @@ async function collectPathCompletionMatches(workspace: string, request: Composer
   const aliasMatches = OPEN_TARGET_ALIASES.filter((alias) => alias.startsWith(normalizedToken.toLowerCase()));
   const merged = [...aliasMatches, ...fileMatches];
   return Array.from(new Set(merged));
+}
+
+async function doesPathExist(target: string): Promise<boolean> {
+  try {
+    await stat(target);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function normalizePathSeparators(value: string, preferBackslash: boolean): string {
