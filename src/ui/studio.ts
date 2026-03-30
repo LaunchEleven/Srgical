@@ -81,9 +81,11 @@ const TRANSCRIPT_PAGE_UP_KEYS = ["pageup", "ppage", "C-u"];
 const TRANSCRIPT_PAGE_DOWN_KEYS = ["pagedown", "npage", "C-d"];
 const ACTIVITY_FRAMES = ["[    ]", "[=   ]", "[==  ]", "[=== ]", "[ ===]", "[  ==]", "[   =]"];
 const COMPOSER_CURSOR = "{#ffb14a-fg}\u2588{/}";
-const COMPOSER_DELIMITER = "=====";
 const CONTEXT_FILE_CHAR_LIMIT = 120_000;
 const COMPLETION_HINT_TTL_MS = 2500;
+const RAPID_INPUT_INTERVAL_MS = 25;
+const PASTE_ENTER_GRACE_MS = 45;
+const PASTE_BURST_CHAR_THRESHOLD = 4;
 const OPEN_TARGET_ALIASES = ["all", "plan", "context", "tracker", "handoff", "prompt", "dir"] as const;
 const escapeBlessedText = (blessed as typeof blessed & { helpers: { escape(text: string): string } }).helpers.escape;
 
@@ -237,6 +239,8 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
   let composerValue = "";
   let completionState: ComposerCompletionState | null = null;
   let completionHint: { text: string; expiresAt: number } | null = null;
+  let lastComposerInputAt: number | null = null;
+  let rapidComposerInputChars = 0;
   let liveStreamLabel: string | null = null;
   let liveStreamContent = "";
   let liveStreamRenderTimer: NodeJS.Timeout | undefined;
@@ -297,8 +301,9 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
         return ` ${completionHint.text} `;
       }
 
-      if (isComposerDelimitedBlockOpen(composerValue)) {
-        return ` Paste block active: close with ${COMPOSER_DELIMITER} then press Enter to send `;
+      if (composerValue.includes("\n")) {
+        const lineCount = composerValue.split("\n").length;
+        return ` Draft: ${lineCount} lines (${composerValue.length} chars)   Enter send   Shift+Enter newline `;
       }
 
       return readyFooter;
@@ -437,6 +442,42 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
     completionHint = null;
   }
 
+  function resetComposerInputBurst(): void {
+    lastComposerInputAt = null;
+    rapidComposerInputChars = 0;
+  }
+
+  function noteComposerInput(chunk: string): void {
+    if (!chunk) {
+      return;
+    }
+
+    const now = Date.now();
+    const chunkLength = Array.from(chunk).length;
+
+    if (chunkLength === 0) {
+      return;
+    }
+
+    if (lastComposerInputAt !== null && now - lastComposerInputAt <= RAPID_INPUT_INTERVAL_MS) {
+      rapidComposerInputChars += chunkLength;
+    } else {
+      rapidComposerInputChars = chunkLength;
+    }
+
+    lastComposerInputAt = now;
+  }
+
+  function appendComposerNewline(): void {
+    clearCompletionState();
+    clearCompletionHint();
+    composerValue += "\n";
+    noteComposerInput("\n");
+    renderComposer();
+    setFooter();
+    screen.render();
+  }
+
   function scrollTranscript(lines: number): void {
     transcript.scroll(lines);
     screen.render();
@@ -462,6 +503,7 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
     const rawValue = composerValue;
     const text = rawValue.trim();
     composerValue = "";
+    resetComposerInputBurst();
     clearCompletionState();
     clearCompletionHint();
     renderComposer();
@@ -869,7 +911,7 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
           "Controls:",
           "- `Enter` sends the current message or command.",
           "- `Shift+Enter`, `Alt+Enter`, or `Ctrl+J` inserts a new line when the terminal exposes those keys distinctly.",
-          `- Type \`${COMPOSER_DELIMITER}\` on its own line to start a large paste block; close with another \`${COMPOSER_DELIMITER}\`.`,
+          "- Large paste blocks are accepted directly; no delimiter syntax is required.",
           "- `Tab` / `Shift+Tab` cycles path completions for `/read`, `/open`, and `/workspace`.",
           "- Planner, `/write`, and `/run` stream model output live in the transcript while the CLI call is in flight.",
           transcriptScrollProfile.helpLine,
@@ -1100,13 +1142,8 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
     }
 
     if (key.name === "enter" && !key.shift && !key.meta && !key.ctrl) {
-      if (isComposerDelimitedBlockOpen(composerValue)) {
-        clearCompletionState();
-        clearCompletionHint();
-        composerValue += "\n";
-        renderComposer();
-        setFooter();
-        screen.render();
+      if (shouldTreatEnterAsPastedNewline(lastComposerInputAt, rapidComposerInputChars)) {
+        appendComposerNewline();
         return;
       }
 
@@ -1115,16 +1152,12 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
     }
 
     if ((key.name === "enter" && (key.shift || key.meta)) || (key.ctrl && key.name === "j")) {
-      clearCompletionState();
-      clearCompletionHint();
-      composerValue += "\n";
-      renderComposer();
-      setFooter();
-      screen.render();
+      appendComposerNewline();
       return;
     }
 
     if (key.name === "backspace") {
+      resetComposerInputBurst();
       clearCompletionState();
       clearCompletionHint();
       composerValue = removeLastCodePoint(composerValue);
@@ -1142,6 +1175,7 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
       clearCompletionState();
       clearCompletionHint();
       composerValue += ch;
+      noteComposerInput(ch);
       renderComposer();
       setFooter();
       screen.render();
@@ -1221,7 +1255,7 @@ export function resolveTranscriptScrollProfile(platform: NodeJS.Platform = proce
 }
 
 function buildReadyFooter(scrollHint: string): string {
-  return ` ${scrollHint}   /agents [id] tool   /help commands   /quit exit `;
+  return ` ${scrollHint}   Enter send   Shift+Enter newline   /agents [id] tool   /help commands   /quit exit `;
 }
 
 function formatElapsed(durationMs: number): string {
@@ -1603,13 +1637,19 @@ function applyCompletionState(state: ComposerCompletionState): string {
   return `${state.seedValue.slice(0, state.replaceStart)}${state.matches[state.index] ?? ""}${state.seedValue.slice(state.replaceEnd)}`;
 }
 
-export function isComposerDelimitedBlockOpen(value: string, delimiter = COMPOSER_DELIMITER): boolean {
-  if (!value) {
+export function shouldTreatEnterAsPastedNewline(
+  lastComposerInputAt: number | null,
+  rapidComposerInputChars: number,
+  now = Date.now(),
+  options: { graceMs?: number; minChars?: number } = {}
+): boolean {
+  if (lastComposerInputAt === null) {
     return false;
   }
 
-  const delimiterCount = value.split(/\r?\n/).filter((line) => line.trim() === delimiter).length;
-  return delimiterCount % 2 === 1;
+  const graceMs = options.graceMs ?? PASTE_ENTER_GRACE_MS;
+  const minChars = options.minChars ?? PASTE_BURST_CHAR_THRESHOLD;
+  return now - lastComposerInputAt <= graceMs && rapidComposerInputChars >= minChars;
 }
 
 export function parseComposerPathCompletionRequest(composerValue: string): ComposerPathCompletionRequest | null {

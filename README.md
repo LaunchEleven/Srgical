@@ -217,8 +217,8 @@ Inside the studio, the footer is intentionally minimal:
 The composer is now multiline with an expanded six-line visible input area. `Enter` sends, while `Shift+Enter`,
 `Alt+Enter`, or `Ctrl+J` inserts a newline when the terminal exposes those keys distinctly.
 
-For large context dumps, type `=====` on its own line, paste your block, close with another `=====`, then press
-`Enter` once to submit the full payload. While that delimiter block is open, `Enter` adds newlines instead of sending.
+Large context dumps can be pasted directly with no delimiter syntax. Studio automatically keeps rapid paste bursts as
+new lines so big blocks land cleanly in the composer.
 
 `Tab` and `Shift+Tab` now cycle file-path completions for `/read`, `/open`, and `/workspace`.
 

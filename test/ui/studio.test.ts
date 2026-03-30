@@ -5,7 +5,7 @@ import {
   buildStudioHeaderContent,
   formatPlanningPackSummary,
   formatTrackerSummary,
-  isComposerDelimitedBlockOpen,
+  shouldTreatEnterAsPastedNewline,
   parseComposerPathCompletionRequest,
   resolveTranscriptScrollProfile,
   renderWorkspaceSelectionMessage,
@@ -78,10 +78,16 @@ test("resolve-studio-workspace-input resolves relative paths from the current wo
   );
 });
 
-test("composer delimiter mode stays open until a closing ===== line appears", () => {
-  assert.equal(isComposerDelimitedBlockOpen("hello"), false);
-  assert.equal(isComposerDelimitedBlockOpen("=====\nalpha"), true);
-  assert.equal(isComposerDelimitedBlockOpen("=====\nalpha\n====="), false);
+test("should-treat-enter-as-pasted-newline catches rapid paste bursts", () => {
+  const now = 1_000;
+  assert.equal(shouldTreatEnterAsPastedNewline(now - 20, 12, now), true);
+});
+
+test("should-treat-enter-as-pasted-newline ignores normal typing cadence", () => {
+  const now = 1_000;
+  assert.equal(shouldTreatEnterAsPastedNewline(now - 200, 12, now), false);
+  assert.equal(shouldTreatEnterAsPastedNewline(now - 20, 2, now), false);
+  assert.equal(shouldTreatEnterAsPastedNewline(null, 12, now), false);
 });
 
 test("parse-composer-path-completion-request extracts token and replacement range", () => {
