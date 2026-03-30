@@ -576,17 +576,25 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
   async function submitComposer(): Promise<void> {
     const rawValue = composerValue;
     const text = rawValue.trim();
+
+    if (!text) {
+      setFooter();
+      screen.render();
+      return;
+    }
+
+    if (busy && text !== "/stop") {
+      setCompletionHint("Studio is busy. Wait for the current task or run /stop.");
+      setFooter();
+      screen.render();
+      return;
+    }
+
     composerValue = "";
     resetComposerInputBurst();
     clearCompletionState();
     clearCompletionHint();
     renderComposer();
-
-    if (!text || (busy && text !== "/stop")) {
-      setFooter();
-      screen.render();
-      return;
-    }
 
     if (text.startsWith("/")) {
       commandHistoryEntries = appendCommandHistoryEntry(commandHistoryEntries, text);
