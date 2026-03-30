@@ -7,7 +7,9 @@ import {
   formatPlanningPackSummary,
   formatTrackerSummary,
   getVisibleTranscriptMessages,
+  removeLastWordChunk,
   shouldTreatEnterAsPastedNewline,
+  shouldDeletePreviousWordFromComposer,
   parseComposerPathCompletionRequest,
   resolvePathCompletionDirectionFromKeypress,
   resolveStudioTerminal,
@@ -92,6 +94,21 @@ test("should-treat-enter-as-pasted-newline ignores normal typing cadence", () =>
   assert.equal(shouldTreatEnterAsPastedNewline(now - 200, 12, now), false);
   assert.equal(shouldTreatEnterAsPastedNewline(now - 20, 2, now), false);
   assert.equal(shouldTreatEnterAsPastedNewline(null, 12, now), false);
+});
+
+test("remove-last-word-chunk trims the previous word and trailing whitespace", () => {
+  assert.equal(removeLastWordChunk(""), "");
+  assert.equal(removeLastWordChunk("hello"), "");
+  assert.equal(removeLastWordChunk("hello world"), "hello ");
+  assert.equal(removeLastWordChunk("hello world   "), "hello ");
+});
+
+test("should-delete-previous-word-from-composer supports common terminal shortcuts", () => {
+  assert.equal(shouldDeletePreviousWordFromComposer({ name: "w", ctrl: true, meta: false }), true);
+  assert.equal(shouldDeletePreviousWordFromComposer({ name: "backspace", ctrl: false, meta: true }), true);
+  assert.equal(shouldDeletePreviousWordFromComposer({ name: "backspace", ctrl: true, meta: false }), true);
+  assert.equal(shouldDeletePreviousWordFromComposer({ name: "backspace", ctrl: false, meta: false }), false);
+  assert.equal(shouldDeletePreviousWordFromComposer({ name: "x", ctrl: false, meta: false }), false);
 });
 
 test("resolve-path-completion-direction-from-keypress handles standard tab and shift+tab", () => {

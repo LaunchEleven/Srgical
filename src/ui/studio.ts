@@ -66,6 +66,7 @@ export type ComposerPathCompletionRequest = {
 };
 
 type ComposerCompletionKeyPress = Pick<blessed.Widgets.Events.IKeyEventArg, "name" | "shift" | "ctrl" | "meta" | "sequence" | "full">;
+type ComposerEditKeyPress = Pick<blessed.Widgets.Events.IKeyEventArg, "name" | "ctrl" | "meta">;
 
 export type AgentSelectionCommand =
   | { kind: "status" }
@@ -961,6 +962,7 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
           "Controls:",
           "- `Enter` sends the current message or command.",
           "- `Shift+Enter`, `Alt+Enter`, or `Ctrl+J` inserts a new line when the terminal exposes those keys distinctly.",
+          "- `Ctrl+W`, `Alt/Option+Backspace`, or `Ctrl+Backspace` deletes the previous word in the composer.",
           "- Large paste blocks are accepted directly; no delimiter syntax is required.",
           "- `Tab` / `Shift+Tab` cycles path completions for `/read`, `/open`, and `/workspace`.",
           "- Planner, `/write`, and `/run` stream model output live in the transcript while the CLI call is in flight.",
@@ -1212,6 +1214,17 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
 
     if ((key.name === "enter" && (key.shift || key.meta)) || (key.ctrl && key.name === "j")) {
       appendComposerNewline();
+      return;
+    }
+
+    if (shouldDeletePreviousWordFromComposer(key)) {
+      resetComposerInputBurst();
+      clearCompletionState();
+      clearCompletionHint();
+      composerValue = removeLastWordChunk(composerValue);
+      renderComposer();
+      setFooter();
+      screen.render();
       return;
     }
 
@@ -1717,6 +1730,37 @@ function renderAdviceMessage(advice: PlanningAdviceState): string {
 
 function removeLastCodePoint(value: string): string {
   return Array.from(value).slice(0, -1).join("");
+}
+
+export function removeLastWordChunk(value: string): string {
+  if (!value) {
+    return value;
+  }
+
+  const codePoints = Array.from(value);
+  let cursor = codePoints.length;
+
+  while (cursor > 0 && /\s/.test(codePoints[cursor - 1] ?? "")) {
+    cursor -= 1;
+  }
+
+  while (cursor > 0 && !/\s/.test(codePoints[cursor - 1] ?? "")) {
+    cursor -= 1;
+  }
+
+  return codePoints.slice(0, cursor).join("");
+}
+
+export function shouldDeletePreviousWordFromComposer(key: ComposerEditKeyPress): boolean {
+  if (key.ctrl && key.name === "w") {
+    return true;
+  }
+
+  if (key.name === "backspace" && (key.meta || key.ctrl)) {
+    return true;
+  }
+
+  return false;
 }
 
 function sanitizeModelOutputChunk(chunk: string): string {
