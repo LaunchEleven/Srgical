@@ -39,7 +39,7 @@ export async function runInitCommand(workspaceArg?: string, force = false, planI
       `- ${paths.handoff}`,
       "",
       renderSectionHeading("Next"),
-      paintLine(`Next: run \`srgical doctor --plan ${paths.planId}\` or open \`srgical studio --plan ${paths.planId}\`.`, "brand", {
+      paintLine(`Next: run \`srgical doctor --plan ${paths.planId}\` or open \`srgical studio plan --plan ${paths.planId}\`.`, "brand", {
         bold: true
       })
     ].join("\n") + "\n"

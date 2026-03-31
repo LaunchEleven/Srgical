@@ -24,6 +24,7 @@ export type PlanningPackPaths = {
   nextPrompt: string;
   handoff: string;
   studioSession: string;
+  studioOperateConfig: string;
   executionState: string;
   executionLog: string;
   planningState: string;
@@ -72,6 +73,7 @@ export function getPlanningPackPaths(root: string, options: PlanningPathOptions 
     nextPrompt: path.join(dir, "04-next-agent-prompt.md"),
     handoff: path.join(dir, "HandoffDoc.md"),
     studioSession: path.join(dir, "studio-session.json"),
+    studioOperateConfig: path.join(dir, "studio-operate-config.json"),
     executionState: path.join(dir, "execution-state.json"),
     executionLog: path.join(dir, "execution-log.md"),
     planningState: path.join(dir, "planning-state.json"),

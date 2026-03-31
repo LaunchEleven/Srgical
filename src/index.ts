@@ -6,7 +6,8 @@ import { runChangelogCommand } from "./commands/changelog";
 import { runDoctorCommand } from "./commands/doctor";
 import { runInitCommand } from "./commands/init";
 import { runRunNextCommand } from "./commands/run-next";
-import { runStudioCommand } from "./commands/studio";
+import { runStudioConfigCommand } from "./commands/studio-config";
+import { runStudioOperateCommand, runStudioPlanCommand } from "./commands/studio";
 import { runVersionCommand } from "./commands/version";
 import { readInstalledPackageInfo } from "./core/package-info";
 
@@ -63,14 +64,116 @@ program
     await runInitCommand(workspace, Boolean(options.force), options.plan);
   });
 
-program
+const studioCommand = program
   .command("studio")
+  .description("Open studio experiences for planning, operation, and operate-mode config.")
+  .argument("[workspace]", "Workspace path")
+  .option("--plan <id>", "Planning pack id to use")
+  .action(async (workspace, options: { plan?: string }) => {
+    await runStudioPlanCommand(workspace, { planId: options.plan });
+  });
+
+studioCommand
+  .command("plan")
   .description("Open the planning studio.")
   .argument("[workspace]", "Workspace path")
   .option("--plan <id>", "Planning pack id to open")
-  .action(async (workspace, options: { plan?: string }) => {
-    await runStudioCommand(workspace, { planId: options.plan });
+  .action(async (workspace, options: { plan?: string }, command: Command) => {
+    const parentPlan = command.parent?.opts<{ plan?: string }>().plan;
+    await runStudioPlanCommand(workspace, { planId: options.plan ?? parentPlan });
   });
+
+studioCommand
+  .command("operate")
+  .description("Open the operate studio for execution automation.")
+  .argument("[workspace]", "Workspace path")
+  .option("--plan <id>", "Planning pack id to operate")
+  .action(async (workspace, options: { plan?: string }, command: Command) => {
+    const parentPlan = command.parent?.opts<{ plan?: string }>().plan;
+    await runStudioOperateCommand(workspace, { planId: options.plan ?? parentPlan });
+  });
+
+studioCommand
+  .command("config")
+  .description("Show or update operate-mode config (pause-for-PR + guidance references).")
+  .argument("[workspace]", "Workspace path")
+  .option("--plan <id>", "Planning pack id to configure")
+  .option("--pause-pr", "Enable pause-for-PR checkpoints between operate iterations")
+  .option("--no-pause-pr", "Disable pause-for-PR checkpoints")
+  .option("--set-reference <path>", "Replace reference guidance paths (repeatable)", collectPathOption, [])
+  .option("--add-reference <path>", "Append a reference guidance path (repeatable)", collectPathOption, [])
+  .option("--clear-references", "Clear all reference guidance paths")
+  .action(
+    async (
+      workspace,
+      options: {
+        plan?: string;
+        pausePr?: boolean;
+        setReference?: string[];
+        addReference?: string[];
+        clearReferences?: boolean;
+      },
+      command: Command
+    ) => {
+      const parentPlan = command.parent?.opts<{ plan?: string }>().plan;
+      await runStudioConfigCommand(workspace, {
+        planId: options.plan ?? parentPlan,
+        pausePr: options.pausePr,
+        setReference: options.setReference,
+        addReference: options.addReference,
+        clearReferences: Boolean(options.clearReferences)
+      });
+    }
+  );
+
+program
+  .command("ssp")
+  .description("Shortcut for `srgical studio plan`.")
+  .argument("[workspace]", "Workspace path")
+  .option("--plan <id>", "Planning pack id to open")
+  .action(async (workspace, options: { plan?: string }) => {
+    await runStudioPlanCommand(workspace, { planId: options.plan });
+  });
+
+program
+  .command("sso")
+  .description("Shortcut for `srgical studio operate`.")
+  .argument("[workspace]", "Workspace path")
+  .option("--plan <id>", "Planning pack id to operate")
+  .action(async (workspace, options: { plan?: string }) => {
+    await runStudioOperateCommand(workspace, { planId: options.plan });
+  });
+
+program
+  .command("ssc")
+  .description("Shortcut for `srgical studio config`.")
+  .argument("[workspace]", "Workspace path")
+  .option("--plan <id>", "Planning pack id to configure")
+  .option("--pause-pr", "Enable pause-for-PR checkpoints between operate iterations")
+  .option("--no-pause-pr", "Disable pause-for-PR checkpoints")
+  .option("--set-reference <path>", "Replace reference guidance paths (repeatable)", collectPathOption, [])
+  .option("--add-reference <path>", "Append a reference guidance path (repeatable)", collectPathOption, [])
+  .option("--clear-references", "Clear all reference guidance paths")
+  .action(
+    async (
+      workspace,
+      options: {
+        plan?: string;
+        pausePr?: boolean;
+        setReference?: string[];
+        addReference?: string[];
+        clearReferences?: boolean;
+      }
+    ) => {
+      await runStudioConfigCommand(workspace, {
+        planId: options.plan,
+        pausePr: options.pausePr,
+        setReference: options.setReference,
+        addReference: options.addReference,
+        clearReferences: Boolean(options.clearReferences)
+      });
+    }
+  );
 
 program
   .command("run-next")
@@ -99,4 +202,13 @@ program.parseAsync(process.argv).catch((error: unknown) => {
 
 function isStandaloneVersionRequest(args: string[]): boolean {
   return args.length === 1 && (args[0] === "--version" || args[0] === "-V");
+}
+
+function collectPathOption(value: string, previous: string[]): string[] {
+  const segments = value
+    .split(",")
+    .map((segment) => segment.trim())
+    .filter((segment) => segment.length > 0);
+
+  return [...previous, ...segments];
 }

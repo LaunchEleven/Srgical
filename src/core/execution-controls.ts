@@ -38,7 +38,7 @@ export function formatNoQueuedNextStepMessage(source: "studio" | "run-next"): st
   return [
     "No next recommended step is currently queued in `.srgical/03-detailed-implementation-plan.md`.",
     source === "run-next"
-      ? "Run `srgical studio` to queue more work or update the tracker before executing again."
+      ? "Run `srgical studio plan` (or `srgical ssp`) to queue more work or update the tracker before executing again."
       : "Use the planning studio to queue more work or update the tracker before running execution again."
   ].join("\n");
 }

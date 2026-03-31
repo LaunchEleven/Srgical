@@ -96,7 +96,10 @@ test("doctor reports all supported agents and the queued next step", async (t) =
   assert.match(output, /Clarity: mostly clear/);
   assert.match(output, /Research: confirm validation command, confirm expected output surface/);
   assert.match(output, /Next: Review EXEC001 acceptance and then run the step\./);
-  assert.match(output, /Next move: run `srgical run-next --plan <id>` for one step or `srgical run-next --plan <id> --auto` to continue automatically\./);
+  assert.match(
+    output,
+    /Next move: run `srgical studio operate --plan <id>` \(or `srgical sso --plan <id>`\) for guided automation, or `srgical run-next --plan <id>` for direct execution\./
+  );
 });
 
 test("doctor reports missing supported agents safely when no next step is queued", async (t) => {
@@ -147,7 +150,10 @@ test("doctor reports missing supported agents safely when no next step is queued
   assert.match(output, /Tracker does not currently expose a next recommended step\./);
   assert.match(output, /Mode: Plan Written - Needs Step/);
   assert.match(output, /AI advice: none cached yet \(run `\/advice` in studio to generate guidance\)\./);
-  assert.match(output, /Next move: run `srgical studio` to queue or refine the next execution-ready step\./);
+  assert.match(
+    output,
+    /Next move: run `srgical studio plan --plan <id>` \(or `srgical ssp --plan <id>`\) to queue or refine the next execution-ready step\./
+  );
 });
 
 function createFakeAdapter(options: {

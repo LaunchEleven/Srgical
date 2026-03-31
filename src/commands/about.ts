@@ -29,7 +29,9 @@ export function renderAboutSummary(): string {
     `Supported agents: ${supportedAgents || "none registered"}`,
     "",
     renderSectionHeading("Next"),
-    paintLine("Next steps: `srgical doctor`, `srgical studio`, or `srgical changelog`", "brand", { bold: true })
+    paintLine("Next steps: `srgical doctor`, `srgical studio plan`, `srgical studio operate`, or `srgical changelog`", "brand", {
+      bold: true
+    })
   ]
     .filter(Boolean)
     .join("\n");

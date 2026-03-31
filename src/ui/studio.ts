@@ -27,6 +27,7 @@ import { refreshPlanningAdvice } from "../core/planning-advice";
 import { readPlanningPackState, type PlanningCurrentPosition, type PlanningPackState } from "../core/planning-pack-state";
 import { markPlanningPackAuthored, savePlanningState, setHumanWriteConfirmation } from "../core/planning-state";
 import type { ChatMessage } from "../core/prompts";
+import { loadStudioOperateConfig, type StudioOperateConfig } from "../core/studio-operate-config";
 import { DEFAULT_STUDIO_MESSAGES, loadStoredActiveAgentId, loadStudioSession, saveStudioSession } from "../core/studio-session";
 import { getInitialTemplates } from "../core/templates";
 import {
@@ -42,9 +43,12 @@ import {
   type PlanningPackPaths
 } from "../core/workspace";
 
+export type StudioMode = "plan" | "operate";
+
 type StudioOptions = {
   workspace?: string;
   planId?: string | null;
+  mode?: StudioMode;
 };
 
 type BusyMode = "planner" | "pack" | "run" | "auto";
@@ -113,25 +117,27 @@ const PASTE_ENTER_GRACE_MS = 45;
 const PASTE_BURST_CHAR_THRESHOLD = 4;
 const ESC_META_GRACE_MS = 140;
 const COMMAND_HISTORY_LIMIT = 200;
+const DEFAULT_OPERATE_GO_MAX_STEPS = 200;
 const OPEN_TARGET_ALIASES = ["all", "plan", "context", "tracker", "handoff", "prompt", "dir"] as const;
 const STUDIO_TERMINAL_FALLBACK = "xterm";
 const SAFE_MAC_STUDIO_TERMINALS = new Set(["xterm", "screen", "screen-256color", "tmux", "tmux-256color"]);
 const escapeBlessedText = (blessed as typeof blessed & { helpers: { escape(text: string): string } }).helpers.escape;
 
 export async function launchStudio(options: StudioOptions = {}): Promise<void> {
+  const studioMode = options.mode === "operate" ? "operate" : "plan";
   let workspace = resolveWorkspace(options.workspace);
   let planId = await resolvePlanId(workspace, options.planId);
   await saveActivePlanId(workspace, planId);
   let historyMessages = await loadStudioSession(workspace, { planId });
   let transcriptStartIndex = 0;
   const transcriptScrollProfile = resolveTranscriptScrollProfile();
-  const readyFooter = buildReadyFooter(transcriptScrollProfile.footerHint);
+  const readyFooter = buildReadyFooter(transcriptScrollProfile.footerHint, studioMode);
   const terminal = resolveStudioTerminal();
   const screen = blessed.screen({
     smartCSR: true,
     fullUnicode: true,
     terminal,
-    title: "srgical studio"
+    title: studioMode === "plan" ? "srgical studio plan" : "srgical studio operate"
   });
 
   const header = blessed.box({
@@ -194,7 +200,7 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
     border: {
       type: "line"
     },
-    label: " Control Room ",
+    label: studioMode === "plan" ? " Control Room (Plan) " : " Control Room (Operate) ",
     style: {
       fg: "#d9fff8",
       bg: "#11161c",
@@ -267,7 +273,7 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
   let trackerSummary = "loading...";
   let executionSummary = "never run";
   let autoSummary = "idle";
-  let adviceSummary = "run /advice for AI guidance";
+  let adviceSummary = studioMode === "plan" ? "run /advice for AI guidance" : "available in studio plan mode";
   let composerValue = "";
   let commandHistoryEntries: string[] = [];
   let commandHistoryIndex: number | null = null;
@@ -291,6 +297,7 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
         `root: ${workspace}`,
         `plan: ${planId}`,
         `plan dir: ${planningPaths.relativeDir}`,
+        `mode: ${studioMode}`,
         "",
         "{bold}Agent{/bold}",
         agentSummary,
@@ -619,6 +626,17 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
       return;
     }
 
+    if (studioMode === "operate") {
+      await appendSystemMessage(
+        "Operate mode is command-first. Use `/go`, `/run`, or `/auto` for execution, or switch to `srgical studio plan` for planning conversation."
+      );
+      input.focus();
+      renderComposer();
+      setFooter();
+      screen.render();
+      return;
+    }
+
     resetCommandHistoryNavigation();
     await submitUserPrompt(text);
   }
@@ -689,7 +707,7 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
     trackerSummary = formatTrackerSummary(packState.currentPosition);
     executionSummary = formatExecutionSummary(packState.lastExecution);
     autoSummary = formatAutoSummary(packState);
-    adviceSummary = formatAdviceSummary(packState.advice);
+    adviceSummary = formatAdviceSummary(packState.advice, studioMode);
     setSidebar();
     setFooter();
     renderTranscript();
@@ -748,6 +766,20 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
       return;
     }
 
+    if (studioMode === "plan" && isOperateOnlyCommand(command)) {
+      await appendSystemMessage(
+        "This is `studio plan`. Execution commands are disabled here. Open `srgical studio operate --plan <id>` (or `sso`) to run delivery automation."
+      );
+      return;
+    }
+
+    if (studioMode === "operate" && isPlanOnlyCommand(command)) {
+      await appendSystemMessage(
+        "This is `studio operate`. Planning commands are disabled here. Open `srgical studio plan --plan <id>` (or `ssp`) to refine the plan."
+      );
+      return;
+    }
+
     if (command === "/workspace") {
       const packState = latestPackState ?? (await readPlanningPackState(workspace, { planId }));
       await appendSystemMessage(renderWorkspaceSelectionMessage(workspace, packState));
@@ -789,7 +821,13 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
         );
 
         if (workspaceCommand.trailingPrompt) {
-          await submitUserPrompt(workspaceCommand.trailingPrompt);
+          if (studioMode === "operate") {
+            await appendSystemMessage(
+              `Ignored trailing text after /workspace switch in operate mode: \`${workspaceCommand.trailingPrompt}\`.`
+            );
+          } else {
+            await submitUserPrompt(workspaceCommand.trailingPrompt);
+          }
         }
       } catch (error) {
         workspace = previousWorkspace;
@@ -1056,36 +1094,41 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
 
     if (command === "/help") {
       await appendSystemMessage(
-        [
-          "Workflow:",
-          "1. Talk normally to sharpen the plan against the real repo.",
-          "2. Use `/plans`, `/plan`, and `/plan new <id>` to manage named planning packs in this workspace.",
-          "3. Use `/read [path]` to inject repo files into the transcript for context gathering (`/read` defaults to current directory, non-recursive).",
-          "4. Use `/readiness` to see what context is still missing before you write the pack.",
-          "5. Run `/write` to generate the first grounded draft from the transcript.",
-          "6. Then run `/review` and `/open [all|plan|context|tracker|prompt|handoff|dir|<path>]` for human review.",
-          "7. Run `/confirm-plan` to approve subsequent refresh writes.",
-          "8. Run `/write` again when you want to refresh an authored plan.",
-          "9. Use `/agents` to inspect support and `/agents <id>` (or `/agent <id>`) to switch the active tool.",
-          "10. Run `/preview` for a safe execution preview, `/run` for one execution step, or `/auto [max]` for continuous execution.",
-          "11. Run `/stop` to stop auto mode after the current iteration.",
-          "12. Run `/clear` to clear the visible transcript while preserving planning history.",
-          "13. Run `/history` to restore the full transcript history after `/clear`.",
-          "",
-          "Controls:",
-          "- `Enter` sends the current message or command.",
-          "- `Up` / `Down` cycles previously submitted slash commands.",
-          "- `Shift+Enter`, `Alt+Enter`, or `Ctrl+J` inserts a new line when the terminal exposes those keys distinctly.",
-          "- `Ctrl+W`, `Alt/Option+Backspace`, or `Ctrl+Backspace` deletes the previous word in the composer.",
-          "- `/read [path] <follow-up>` auto-sends the follow-up text as the next user prompt after file context is loaded.",
-          "- `/workspace <path> <follow-up>` auto-sends the follow-up text after a successful workspace switch.",
-          "- Large paste blocks are accepted directly; no delimiter syntax is required.",
-          "- `Tab` / `Shift+Tab` cycles path completions for `/read`, `/open`, and `/workspace`.",
-          "- Planner, `/write`, and `/run` stream model output live in the transcript while the CLI call is in flight.",
-          transcriptScrollProfile.helpLine,
-          "- `/quit` closes the studio."
-        ].join("\n")
+        studioMode === "plan"
+          ? renderPlanHelpMessage(transcriptScrollProfile.helpLine)
+          : renderOperateHelpMessage(transcriptScrollProfile.helpLine)
       );
+      return;
+    }
+
+    if (command === "/go" || command.startsWith("/go ")) {
+      if (studioMode !== "operate") {
+        await appendSystemMessage("`/go` is available only in `studio operate`.");
+        return;
+      }
+
+      const requestedMaxSteps = parseRequestedMaxSteps(command.slice("/go".length).trim());
+      if (requestedMaxSteps === null) {
+        await appendSystemMessage("Usage: `/go [max]` where `max` is a positive integer.");
+        return;
+      }
+
+      const operateConfig = await loadStudioOperateConfig(workspace, { planId });
+
+      if (operateConfig.pauseForPr) {
+        await handleSlashCommand("/run");
+        const refreshed = await readPlanningPackState(workspace, { planId });
+
+        if (refreshed.lastExecution?.status === "success" && hasQueuedNextStep(refreshed.currentPosition.nextRecommended)) {
+          await appendSystemMessage(renderPauseForPrMessage(operateConfig));
+        } else if (refreshed.lastExecution?.status === "success" && !hasQueuedNextStep(refreshed.currentPosition.nextRecommended)) {
+          await appendSystemMessage("Operate flow complete. No next recommended step remains.");
+        }
+        return;
+      }
+
+      const maxSteps = requestedMaxSteps ?? DEFAULT_OPERATE_GO_MAX_STEPS;
+      await handleSlashCommand(`/auto ${maxSteps}`);
       return;
     }
 
@@ -1260,7 +1303,11 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
     const request = parseComposerPathCompletionRequest(composerValue);
 
     if (!request) {
-      setCompletionHint("Path completion works with /read, /open, and /workspace.");
+      setCompletionHint(
+        studioMode === "plan"
+          ? "Path completion works with /read, /open, and /workspace."
+          : "Path completion works with /open and /workspace."
+      );
       setFooter();
       screen.render();
       return;
@@ -1438,6 +1485,11 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
   await refreshEnvironment();
   await ensureFirstRunOrientation();
 
+  if (!studioClosed && studioMode === "operate") {
+    await appendSystemMessage("Operate mode boot: running `/go` using the current operate config.");
+    await handleSlashCommand("/go");
+  }
+
   if (!studioClosed) {
     await new Promise<void>((resolve) => {
       screen.once("destroy", () => resolve());
@@ -1449,7 +1501,14 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
       return;
     }
 
-    await appendSystemMessage(renderWorkspaceSelectionMessage(workspace, latestPackState));
+    const lines = [renderWorkspaceSelectionMessage(workspace, latestPackState)];
+
+    if (studioMode === "operate") {
+      const operateConfig = await loadStudioOperateConfig(workspace, { planId });
+      lines.push("", renderOperateKickoffMessage(operateConfig));
+    }
+
+    await appendSystemMessage(lines.join("\n"));
   }
 }
 
@@ -1502,7 +1561,11 @@ export function resolveStudioTerminal(
   return SAFE_MAC_STUDIO_TERMINALS.has(normalized) ? normalized : STUDIO_TERMINAL_FALLBACK;
 }
 
-function buildReadyFooter(scrollHint: string): string {
+function buildReadyFooter(scrollHint: string, studioMode: StudioMode): string {
+  if (studioMode === "operate") {
+    return ` ${scrollHint}   /go run configured operate flow   /stop auto stop   /help commands   /quit exit `;
+  }
+
   return ` ${scrollHint}   Enter send   Shift+Enter newline   /agents [id] tool   /help commands   /quit exit `;
 }
 
@@ -1582,9 +1645,9 @@ function formatAutoSummary(packState: PlanningPackState | null): string {
   return lines.join("\n");
 }
 
-function formatAdviceSummary(advice: PlanningAdviceState | null): string {
+function formatAdviceSummary(advice: PlanningAdviceState | null, studioMode: StudioMode): string {
   if (!advice) {
-    return "run /advice for AI guidance";
+    return studioMode === "plan" ? "run /advice for AI guidance" : "available in studio plan mode";
   }
 
   const lines = [
@@ -1880,6 +1943,117 @@ function renderAdviceMessage(advice: PlanningAdviceState): string {
     `Research: ${advice.researchNeeded.length > 0 ? advice.researchNeeded.join(" | ") : "none"}`,
     `Advice: ${advice.advice}`,
     `Next: ${advice.nextAction}`
+  ].join("\n");
+}
+
+function isOperateOnlyCommand(command: string): boolean {
+  return command === "/go" || command.startsWith("/go ") || command === "/preview" || command === "/run" || command === "/stop" || command.startsWith("/auto");
+}
+
+function isPlanOnlyCommand(command: string): boolean {
+  return (
+    command === "/write" ||
+    command === "/readiness" ||
+    command === "/advice" ||
+    command === "/read" ||
+    command.startsWith("/read ")
+  );
+}
+
+function parseRequestedMaxSteps(rawValue: string): number | null | undefined {
+  const trimmed = rawValue.trim();
+
+  if (!trimmed) {
+    return undefined;
+  }
+
+  const parsed = Number(trimmed);
+
+  if (!Number.isFinite(parsed) || parsed < 1) {
+    return null;
+  }
+
+  return Math.floor(parsed);
+}
+
+function renderPlanHelpMessage(transcriptHelpLine: string): string {
+  return [
+    "Mode: planning studio (`srgical studio plan` / `ssp`).",
+    "",
+    "Workflow:",
+    "1. Talk normally to sharpen the plan against the real repo.",
+    "2. Use `/plans`, `/plan`, and `/plan new <id>` to manage named planning packs in this workspace.",
+    "3. Use `/read [path]` to inject repo files into the transcript for context gathering (`/read` defaults to current directory, non-recursive).",
+    "4. Use `/readiness` to see what context is still missing before you write the pack.",
+    "5. Run `/write` to generate the first grounded draft from the transcript.",
+    "6. Then run `/review` and `/open [all|plan|context|tracker|prompt|handoff|dir|<path>]` for human review.",
+    "7. Run `/confirm-plan` to approve subsequent refresh writes.",
+    "8. Run `/write` again when you want to refresh an authored plan.",
+    "9. Use `/agents` to inspect support and `/agents <id>` (or `/agent <id>`) to switch the active tool.",
+    "10. Use `/clear` to clear the visible transcript while preserving planning history, then `/history` to restore it.",
+    "11. Open `srgical studio operate --plan <id>` (or `sso`) when you are ready to automate execution.",
+    "",
+    "Controls:",
+    "- `Enter` sends the current message or command.",
+    "- `Up` / `Down` cycles previously submitted slash commands.",
+    "- `Shift+Enter`, `Alt+Enter`, or `Ctrl+J` inserts a new line when the terminal exposes those keys distinctly.",
+    "- `Ctrl+W`, `Alt/Option+Backspace`, or `Ctrl+Backspace` deletes the previous word in the composer.",
+    "- `/read [path] <follow-up>` auto-sends the follow-up text as the next user prompt after file context is loaded.",
+    "- `/workspace <path> <follow-up>` auto-sends the follow-up text after a successful workspace switch.",
+    "- Large paste blocks are accepted directly; no delimiter syntax is required.",
+    "- `Tab` / `Shift+Tab` cycles path completions for `/read`, `/open`, and `/workspace`.",
+    "- Planner and `/write` stream model output live in the transcript while the CLI call is in flight.",
+    transcriptHelpLine,
+    "- `/quit` closes the studio."
+  ].join("\n");
+}
+
+function renderOperateHelpMessage(transcriptHelpLine: string): string {
+  return [
+    "Mode: operate studio (`srgical studio operate` / `sso`).",
+    "",
+    "Workflow:",
+    "1. Use `/go` to run the configured operate loop.",
+    "2. `/go [max]` runs auto mode until completion (or max cap) when pause-for-PR is disabled.",
+    "3. If pause-for-PR is enabled, `/go` runs one step, pauses, then asks you to open a PR before continuing.",
+    "4. Use `/preview` for dry-run prompt preview, `/run` for one step, `/auto [max]` for direct auto mode.",
+    "5. Use `/stop` to request auto-run stop after the current iteration.",
+    "6. Use `srgical studio config --plan <id>` (or `ssc`) to manage pause-for-PR and reference guidance paths.",
+    "",
+    "Controls:",
+    "- Operate mode is slash-command only. Use `srgical studio plan` for planning conversation.",
+    "- `Up` / `Down` cycles previously submitted slash commands.",
+    "- `Tab` / `Shift+Tab` cycles path completions for `/open` and `/workspace`.",
+    transcriptHelpLine,
+    "- `/quit` closes the studio."
+  ].join("\n");
+}
+
+function renderPauseForPrMessage(config: StudioOperateConfig): string {
+  const references =
+    config.referencePaths.length > 0
+      ? config.referencePaths.map((referencePath) => `- ${referencePath}`).join("\n")
+      : "- none configured (`srgical studio config --add-reference <path>`)";
+
+  return [
+    "Pause-for-PR is enabled.",
+    "Open a PR for the completed iteration before continuing.",
+    "Configured guidance references:",
+    references,
+    "Run `/go` again after the PR checkpoint to continue."
+  ].join("\n");
+}
+
+function renderOperateKickoffMessage(config: StudioOperateConfig): string {
+  const references =
+    config.referencePaths.length > 0 ? config.referencePaths.map((referencePath) => `- ${referencePath}`).join("\n") : "- none";
+
+  return [
+    "Operate mode settings:",
+    `- pause for PR: ${config.pauseForPr ? "enabled" : "disabled"}`,
+    "- guidance references:",
+    references,
+    "Run `/go` to start execution using this config."
   ].join("\n");
 }
 

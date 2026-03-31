@@ -1,6 +1,7 @@
 import path from "node:path";
 import { formatStepLabel } from "./execution-controls";
 import type { PlanningPackState } from "./planning-pack-state";
+import { buildStudioOperateGuidancePromptSection } from "./studio-operate-config";
 import { fileExists, getPlanningPackPaths, readText, type PlanningPathOptions } from "./workspace";
 
 export type ExecutionHandoffSource = "plan-handoff" | "workspace-handoff" | "legacy-next-prompt";
@@ -42,6 +43,7 @@ export async function buildExecutionIterationPrompt(
   handoffDoc: ExecutionHandoffDoc;
 }> {
   const handoffDoc = await resolveExecutionHandoffDoc(workspaceRoot, options);
+  const guidanceSection = await buildStudioOperateGuidancePromptSection(workspaceRoot, options);
   const paths = getPlanningPackPaths(workspaceRoot, options);
   const targetStepId = beforeState.currentPosition.nextRecommended;
   const stepLabel = formatStepLabel(beforeState.nextStepSummary, targetStepId) ?? "`none queued`";
@@ -78,7 +80,8 @@ export async function buildExecutionIterationPrompt(
     "",
     `Canonical handoff instructions from \`${handoffDoc.displayPath}\`:`,
     "",
-    handoffDoc.content
+    handoffDoc.content,
+    guidanceSection ? `\n${guidanceSection}` : ""
   ].join("\n");
 
   return {

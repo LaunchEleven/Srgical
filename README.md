@@ -29,10 +29,12 @@ srgical init --plan release-readiness
 Open studio and build context:
 
 ```bash
-srgical studio --plan release-readiness
+srgical studio plan --plan release-readiness
+# shortcut
+srgical ssp --plan release-readiness
 ```
 
-Inside studio:
+Inside `studio plan`:
 
 1. talk through scope/constraints and use `/readiness` + `/advice`
 2. inject repo files directly with `/read [path]` (press `Tab` to autocomplete file paths; omit `path` to read the current directory non-recursively)
@@ -40,7 +42,24 @@ Inside studio:
 4. run `/review` and `/open all` (or `/open <path>`) for human doc review
 5. run `/confirm-plan` (required before authored-plan refresh writes)
 6. run `/write` again when refreshing an authored plan
-7. execute with `/preview`, `/run`, or `/auto 10` (`/stop` to stop after current iteration)
+
+Configure operate-mode checkpoints and references:
+
+```bash
+srgical studio config --plan release-readiness --pause-pr --set-reference docs/operate-guidelines.md
+# shortcut
+srgical ssc --plan release-readiness --pause-pr --set-reference docs/operate-guidelines.md
+```
+
+Run delivery automation in `studio operate`:
+
+```bash
+srgical studio operate --plan release-readiness
+# shortcut
+srgical sso --plan release-readiness
+```
+
+Inside `studio operate`, use `/go` to run the configured operate flow (`/stop` requests stop after current iteration).
 
 CLI execution path:
 
@@ -77,12 +96,15 @@ This repo currently ships the foundation for:
   Points straight at the installed version's release notes and the local packaged changelog.
 - `srgical init`
   Creates a named local `.srgical/plans/<id>/` planning pack from built-in templates. `--plan <id>` is required.
-- `srgical studio`
-  Opens a full-screen planning studio where you can switch between named plans, inspect readiness with `/readiness`,
-  inspect supported tools with `/agents`, refresh AI guidance with `/advice`, run human review with `/review` and
-  `/open`, inject large file context via `/read [path]` (or `/read` for the current directory, non-recursive), confirm with `/confirm-plan` for authored-plan refresh writes,
-  and then trigger pack writes,
-  single-step execution, or `/auto`.
+- `srgical studio plan`
+  Opens the full-screen planning studio (`ssp` shortcut) where you can switch named plans, gather repo context,
+  iterate toward practical sufficiency, and write/refresh the planning pack with human confirmation guard rails.
+- `srgical studio operate`
+  Opens the full-screen operate studio (`sso` shortcut) with execution-focused commands (`/go`, `/run`, `/auto`,
+  `/stop`) and optional pause-for-PR checkpoints.
+- `srgical studio config`
+  Shows or updates per-plan operate settings (`ssc` shortcut), including pause-for-PR behavior and reference guidance
+  paths used during execution handoffs.
 - `srgical run-next`
   Replays the generated execution handoff through the active agent, with `--plan <id>` for plan targeting,
   `--dry-run` for safe preview, `--agent <id>` for a one-run override, and `--auto` for bounded multi-step execution.
@@ -175,7 +197,7 @@ npm install
 npm run build
 node dist/index.js init --plan release-readiness
 node dist/index.js doctor --plan release-readiness
-node dist/index.js studio --plan release-readiness
+node dist/index.js studio plan --plan release-readiness
 ```
 
 During development:
@@ -192,7 +214,9 @@ node dist/index.js about
 node dist/index.js doctor --plan release-readiness
 node dist/index.js changelog
 node dist/index.js init --plan release-readiness
-node dist/index.js studio --plan release-readiness
+node dist/index.js studio plan --plan release-readiness
+node dist/index.js studio config --plan release-readiness --pause-pr --set-reference docs/operate-guidelines.md
+node dist/index.js studio operate --plan release-readiness
 node dist/index.js run-next --plan release-readiness --dry-run
 node dist/index.js run-next --plan release-readiness
 node dist/index.js run-next --plan release-readiness --auto --max-steps 10
@@ -206,7 +230,7 @@ node dist/index.js run-next --plan release-readiness --agent claude
 node dist/index.js run-next --plan release-readiness --agent augment
 ```
 
-Inside the studio, the footer is intentionally minimal:
+Inside both studio modes, the footer is intentionally minimal:
 
 - `PgUp/PgDn` scrolls the transcript on Windows/Linux; on macOS use `Fn+Up` / `Fn+Down` (or `Ctrl+U` / `Ctrl+D` on all platforms)
 - `/agents` shows support and current selection
@@ -215,6 +239,12 @@ Inside the studio, the footer is intentionally minimal:
 - `/history` restores the hidden transcript history after `/clear`
 - `/help` shows the full command set
 - `/quit` exits the studio
+
+Mode-specific guard rails:
+
+- `studio plan` focuses planning (`/read`, `/readiness`, `/advice`, `/write`, `/review`, `/confirm-plan`) and blocks execution commands
+- `studio operate` focuses execution (`/go`, `/preview`, `/run`, `/auto`, `/stop`) and blocks planning conversation/write commands
+- `studio operate` auto-runs `/go` on boot using the active plan's operate config
 
 The composer is now multiline with an expanded six-line visible input area. `Enter` sends, while `Shift+Enter`,
 `Alt+Enter`, or `Ctrl+J` inserts a newline when the terminal exposes those keys distinctly.
@@ -231,10 +261,15 @@ If the path is omitted, `/read` loads every file in the current directory (non-r
 When using `/workspace`, trailing text after the path is auto-submitted after a successful switch.
 When using `/open`, trailing text after the target is ignored with a hint so path parsing stays predictable.
 
+In `studio operate`, `/go` runs the configured execution loop:
+
+- when pause-for-PR is disabled, `/go` runs auto mode toward completion
+- when pause-for-PR is enabled, `/go` runs one step and pauses so you can open a PR before continuing
+
 Planner replies, `/write`, and `/run` now stream model output into the transcript while the underlying CLI tool is
 still running, so users can see progress live instead of waiting for one final blob.
 
-The studio can also ask the active agent for an AI assessment of the current planning state. Run `/advice` to cache a
+`studio plan` can also ask the active agent for an AI assessment of the current planning state. Run `/advice` to cache a
 plain-English summary of:
 
 - the problem statement the agent believes you are solving,

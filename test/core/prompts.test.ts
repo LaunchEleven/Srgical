@@ -12,6 +12,8 @@ test("build-planner-prompt enforces convergence and scope-freeze contract", () =
   const prompt = buildPlannerPrompt(messages, "G:\\code\\demo");
 
   assert.match(prompt, /Operating mode: decision sprint, not endless discovery\./);
+  assert.match(prompt, /Run a lightweight internal sufficiency check before asking a question/);
+  assert.match(prompt, /If 4 out of 5 sufficiency signals are present, move forward with assumptions/);
   assert.match(prompt, /Blocker-question budget across this conversation: 3/);
   assert.match(prompt, /Estimated blocker questions already asked by planner: 1/);
   assert.match(prompt, /User readiness signal detected: yes/);
