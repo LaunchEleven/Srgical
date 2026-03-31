@@ -407,6 +407,55 @@ test("run-next --auto advances through queued execution steps and records comple
   assert.equal(autoRunState?.stepsAttempted, 2);
 });
 
+test("run-next --auto stops immediately when the queued step is blocked", async (t) => {
+  const workspace = await createTempWorkspace("srgical-run-next-auto-blocked-");
+  const paths = await writePlanningPack(workspace);
+  const calls: string[] = [];
+
+  await writeText(
+    paths.tracker,
+    `# Detailed Implementation Plan
+
+## Current Position
+
+- Last Completed: \`PLAN-001\`
+- Next Recommended: \`EXEC-001\`
+- Updated At: \`2026-03-24T00:00:00.000Z\`
+- Updated By: \`Codex\`
+
+## Delivery
+
+| ID | Status | Depends On | Scope | Acceptance | Notes |
+| --- | --- | --- | --- | --- | --- |
+| EXEC-001 | blocked | PLAN-001 | Execute the first slice. | The first slice lands. | Waiting on env access. |
+`
+  );
+
+  setAgentAdaptersForTesting([
+    createFakeAdapter({
+      id: "codex",
+      label: "Codex",
+      status: availableStatus("codex", "Codex"),
+      onRunNextPrompt: async () => {
+        calls.push("codex");
+        return "should-not-run";
+      }
+    })
+  ]);
+  t.after(resetAgentAdaptersForTesting);
+
+  const output = await captureStdout(async () => {
+    await runRunNextCommand(workspace, { auto: true, maxSteps: 5 });
+  });
+  const autoRunState = await loadAutoRunState(workspace);
+
+  assert.deepEqual(calls, []);
+  assert.match(output, /Auto mode stopped because EXEC-001 is blocked\./);
+  assert.match(output, /Resolve the blocker in the tracker, then continue with `\/go`/);
+  assert.equal(autoRunState?.status, "stopped");
+  assert.equal(autoRunState?.stepsAttempted, 0);
+});
+
 function createFakeAdapter(options: {
   id: string;
   label: string;

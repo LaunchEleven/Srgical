@@ -178,8 +178,8 @@ function describeNaturalStop(
 
   if (state.nextStepSummary.status.toLowerCase() === "blocked") {
     return {
-      status: "failed",
-      reason: `Auto mode stopped because ${state.nextStepSummary.id} is blocked.`
+      status: "stopped",
+      reason: `Auto mode stopped because ${state.nextStepSummary.id} is blocked. Resolve the blocker in the tracker, then continue with \`/go\` (studio operate) or rerun auto mode.`
     };
   }
 

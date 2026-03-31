@@ -37,11 +37,12 @@ srgical ssp --plan release-readiness
 Inside `studio plan`:
 
 1. talk through scope/constraints and use `/readiness` + `/advice`
-2. inject repo files directly with `/read [path]` (press `Tab` to autocomplete file paths; omit `path` to read the current directory non-recursively)
-3. run `/write` to generate the first grounded draft from transcript context
-4. run `/review` and `/open all` (or `/open <path>`) for human doc review
-5. run `/confirm-plan` (required before authored-plan refresh writes)
-6. run `/write` again when refreshing an authored plan
+2. interrogate plan quality with `/assess [focus]`, `/gather [focus]`, `/gaps [focus]`, and `/ready [focus]`
+3. inject repo files directly with `/read [path]` (press `Tab` to autocomplete file paths; omit `path` to read the current directory non-recursively)
+4. run `/write` to generate the first grounded draft from transcript context
+5. run `/review` and `/open all` (or `/open <path>`) for human doc review
+6. run `/confirm-plan` (required before authored-plan refresh writes)
+7. run `/write` again when refreshing an authored plan
 
 Configure operate-mode checkpoints and references:
 
@@ -60,6 +61,7 @@ srgical sso --plan release-readiness
 ```
 
 Inside `studio operate`, use `/go` to run the configured operate flow (`/stop` requests stop after current iteration).
+If auto mode halts because the current step is `blocked`, run `/unblock [focus]` for blocker-resolution guidance without leaving operate mode.
 
 CLI execution path:
 
@@ -101,7 +103,7 @@ This repo currently ships the foundation for:
   iterate toward practical sufficiency, and write/refresh the planning pack with human confirmation guard rails.
 - `srgical studio operate`
   Opens the full-screen operate studio (`sso` shortcut) with execution-focused commands (`/go`, `/run`, `/auto`,
-  `/stop`) and optional pause-for-PR checkpoints.
+  `/stop`, `/unblock`) and optional pause-for-PR checkpoints.
 - `srgical studio config`
   Shows or updates per-plan operate settings (`ssc` shortcut), including pause-for-PR behavior and reference guidance
   paths used during execution handoffs.
@@ -243,7 +245,8 @@ Inside both studio modes, the footer is intentionally minimal:
 Mode-specific guard rails:
 
 - `studio plan` focuses planning (`/read`, `/readiness`, `/advice`, `/write`, `/review`, `/confirm-plan`) and blocks execution commands
-- `studio operate` focuses execution (`/go`, `/preview`, `/run`, `/auto`, `/stop`) and blocks planning conversation/write commands
+- `studio plan` also includes plan-interrogation commands (`/assess`, `/gather`, `/gaps`, `/ready`) for iterative clarity checks
+- `studio operate` focuses execution (`/go`, `/preview`, `/run`, `/auto`, `/stop`, `/unblock`) and blocks planning conversation/write commands
 - `studio operate` auto-runs `/go` on boot using the active plan's operate config
 
 The composer is now multiline with an expanded six-line visible input area. `Enter` sends, while `Shift+Enter`,
@@ -265,6 +268,7 @@ In `studio operate`, `/go` runs the configured execution loop:
 
 - when pause-for-PR is disabled, `/go` runs auto mode toward completion
 - when pause-for-PR is enabled, `/go` runs one step and pauses so you can open a PR before continuing
+- when auto mode stops because the next step is blocked, use `/unblock [focus]`, apply the tracker edits, then `/go` again
 
 Planner replies, `/write`, and `/run` now stream model output into the transcript while the underlying CLI tool is
 still running, so users can see progress live instead of waiting for one final blob.

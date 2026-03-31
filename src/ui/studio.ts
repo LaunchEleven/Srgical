@@ -26,6 +26,11 @@ import { buildExecutionIterationPrompt } from "../core/handoff";
 import { refreshPlanningAdvice } from "../core/planning-advice";
 import { readPlanningPackState, type PlanningCurrentPosition, type PlanningPackState } from "../core/planning-pack-state";
 import { markPlanningPackAuthored, savePlanningState, setHumanWriteConfirmation } from "../core/planning-state";
+import {
+  buildBlockedStepResolutionDirective,
+  buildPlanInterrogationDirective,
+  type PlanInterrogationCommand
+} from "../core/plan-interrogation";
 import type { ChatMessage } from "../core/prompts";
 import { loadStudioOperateConfig, type StudioOperateConfig } from "../core/studio-operate-config";
 import { DEFAULT_STUDIO_MESSAGES, loadStoredActiveAgentId, loadStudioSession, saveStudioSession } from "../core/studio-session";
@@ -98,6 +103,12 @@ export type AgentSelectionCommand =
   | { kind: "status" }
   | { kind: "usage" }
   | { kind: "select"; requestedId: string };
+
+type PlanInterrogationRequest = {
+  command: PlanInterrogationCommand;
+  focusText: string;
+  label: string;
+};
 
 type TranscriptScrollProfile = {
   footerHint: string;
@@ -738,6 +749,89 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
     }
   }
 
+  async function runPlanInterrogation(
+    command: PlanInterrogationCommand,
+    focusText: string,
+    label: string
+  ): Promise<void> {
+    startBusy("planner", `running /${command}...`);
+    startLiveStream(`${getPrimaryAgentAdapter().label.toUpperCase()} ${label.toUpperCase()} STREAM`);
+
+    try {
+      const directive = await buildPlanInterrogationDirective(workspace, command, focusText, { planId });
+      const interrogationMessages: ChatMessage[] = [
+        ...historyMessages,
+        {
+          role: "system",
+          content: directive
+        }
+      ];
+      const reply = await requestPlannerReply(workspace, interrogationMessages, {
+        planId,
+        onOutputChunk: appendLiveStreamChunk
+      });
+      stopLiveStream();
+      await appendSystemMessage(`/${command}${focusText ? ` ${focusText}` : ""}\n${reply}`);
+      await refreshAdvice(false);
+    } catch (error) {
+      stopLiveStream();
+      await appendSystemMessage(`/${command} failed: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      stopLiveStream();
+      stopBusy();
+      await refreshEnvironment();
+    }
+  }
+
+  async function runBlockedStepResolution(focusText: string): Promise<void> {
+    const packState = await readPlanningPackState(workspace, { planId });
+    const blockedStep =
+      packState.nextStepSummary && packState.nextStepSummary.status.trim().toLowerCase() === "blocked"
+        ? packState.nextStepSummary
+        : null;
+
+    if (!blockedStep) {
+      await appendSystemMessage(
+        "No blocked next step is active right now. If auto mode halted, inspect `/status` and update the tracker, then run `/go`."
+      );
+      return;
+    }
+
+    startBusy("planner", "running /unblock...");
+    startLiveStream(`${getPrimaryAgentAdapter().label.toUpperCase()} UNBLOCK STREAM`);
+
+    try {
+      const directive = await buildBlockedStepResolutionDirective(
+        workspace,
+        blockedStep.id,
+        blockedStep.notes,
+        focusText,
+        { planId }
+      );
+      const interrogationMessages: ChatMessage[] = [
+        ...historyMessages,
+        {
+          role: "system",
+          content: directive
+        }
+      ];
+      const reply = await requestPlannerReply(workspace, interrogationMessages, {
+        planId,
+        onOutputChunk: appendLiveStreamChunk
+      });
+      stopLiveStream();
+      await appendSystemMessage(`/${focusText ? `unblock ${focusText}` : "unblock"}\n${reply}`);
+      await refreshAdvice(false);
+    } catch (error) {
+      stopLiveStream();
+      await appendSystemMessage(`/unblock failed: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      stopLiveStream();
+      stopBusy();
+      await refreshEnvironment();
+    }
+  }
+
   async function handleSlashCommand(command: string): Promise<void> {
     if (command === "/quit") {
       closeStudio();
@@ -1046,6 +1140,22 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
         await refreshEnvironment();
       }
 
+      return;
+    }
+
+    const interrogationRequest = parsePlanInterrogationCommand(command);
+    if (interrogationRequest) {
+      await runPlanInterrogation(interrogationRequest.command, interrogationRequest.focusText, interrogationRequest.label);
+      return;
+    }
+
+    if (command === "/unblock" || command.startsWith("/unblock ")) {
+      if (studioMode !== "operate") {
+        await appendSystemMessage("`/unblock` is available only in `studio operate`.");
+        return;
+      }
+
+      await runBlockedStepResolution(command.slice("/unblock".length).trim());
       return;
     }
 
@@ -1563,7 +1673,7 @@ export function resolveStudioTerminal(
 
 function buildReadyFooter(scrollHint: string, studioMode: StudioMode): string {
   if (studioMode === "operate") {
-    return ` ${scrollHint}   /go run configured operate flow   /stop auto stop   /help commands   /quit exit `;
+    return ` ${scrollHint}   /go run configured operate flow   /unblock blocker assist   /stop auto stop   /help commands   /quit exit `;
   }
 
   return ` ${scrollHint}   Enter send   Shift+Enter newline   /agents [id] tool   /help commands   /quit exit `;
@@ -1946,8 +2056,35 @@ function renderAdviceMessage(advice: PlanningAdviceState): string {
   ].join("\n");
 }
 
+function parsePlanInterrogationCommand(command: string): PlanInterrogationRequest | null {
+  const match = command.trim().match(/^\/(assess|gather|gaps|ready)(?:\s+(.+))?$/i);
+
+  if (!match) {
+    return null;
+  }
+
+  const normalized = match[1]?.toLowerCase() as PlanInterrogationCommand;
+  const focusText = match[2]?.trim() ?? "";
+  const label = normalized === "ready" ? "readiness" : normalized;
+
+  return {
+    command: normalized,
+    focusText,
+    label
+  };
+}
+
 function isOperateOnlyCommand(command: string): boolean {
-  return command === "/go" || command.startsWith("/go ") || command === "/preview" || command === "/run" || command === "/stop" || command.startsWith("/auto");
+  return (
+    command === "/go" ||
+    command.startsWith("/go ") ||
+    command === "/preview" ||
+    command === "/run" ||
+    command === "/stop" ||
+    command === "/unblock" ||
+    command.startsWith("/unblock ") ||
+    command.startsWith("/auto")
+  );
 }
 
 function isPlanOnlyCommand(command: string): boolean {
@@ -1955,6 +2092,14 @@ function isPlanOnlyCommand(command: string): boolean {
     command === "/write" ||
     command === "/readiness" ||
     command === "/advice" ||
+    command === "/assess" ||
+    command.startsWith("/assess ") ||
+    command === "/gather" ||
+    command.startsWith("/gather ") ||
+    command === "/gaps" ||
+    command.startsWith("/gaps ") ||
+    command === "/ready" ||
+    command.startsWith("/ready ") ||
     command === "/read" ||
     command.startsWith("/read ")
   );
@@ -1984,14 +2129,18 @@ function renderPlanHelpMessage(transcriptHelpLine: string): string {
     "1. Talk normally to sharpen the plan against the real repo.",
     "2. Use `/plans`, `/plan`, and `/plan new <id>` to manage named planning packs in this workspace.",
     "3. Use `/read [path]` to inject repo files into the transcript for context gathering (`/read` defaults to current directory, non-recursive).",
-    "4. Use `/readiness` to see what context is still missing before you write the pack.",
-    "5. Run `/write` to generate the first grounded draft from the transcript.",
-    "6. Then run `/review` and `/open [all|plan|context|tracker|prompt|handoff|dir|<path>]` for human review.",
-    "7. Run `/confirm-plan` to approve subsequent refresh writes.",
-    "8. Run `/write` again when you want to refresh an authored plan.",
-    "9. Use `/agents` to inspect support and `/agents <id>` (or `/agent <id>`) to switch the active tool.",
-    "10. Use `/clear` to clear the visible transcript while preserving planning history, then `/history` to restore it.",
-    "11. Open `srgical studio operate --plan <id>` (or `sso`) when you are ready to automate execution.",
+    "4. Use `/assess [focus]` to assess objective clarity and execution confidence against current planning docs.",
+    "5. Use `/gather [focus]` to gather missing context and refine what should be added next.",
+    "6. Use `/gaps [focus]` to isolate blocking missing details.",
+    "7. Use `/ready [focus]` for a GO/NO-GO execution readiness verdict.",
+    "8. Use `/readiness` for deterministic readiness checks before writing the pack.",
+    "9. Run `/write` to generate the first grounded draft from the transcript.",
+    "10. Then run `/review` and `/open [all|plan|context|tracker|prompt|handoff|dir|<path>]` for human review.",
+    "11. Run `/confirm-plan` to approve subsequent refresh writes.",
+    "12. Run `/write` again when you want to refresh an authored plan.",
+    "13. Use `/agents` to inspect support and `/agents <id>` (or `/agent <id>`) to switch the active tool.",
+    "14. Use `/clear` to clear the visible transcript while preserving planning history, then `/history` to restore it.",
+    "15. Open `srgical studio operate --plan <id>` (or `sso`) when you are ready to automate execution.",
     "",
     "Controls:",
     "- `Enter` sends the current message or command.",
@@ -2002,7 +2151,7 @@ function renderPlanHelpMessage(transcriptHelpLine: string): string {
     "- `/workspace <path> <follow-up>` auto-sends the follow-up text after a successful workspace switch.",
     "- Large paste blocks are accepted directly; no delimiter syntax is required.",
     "- `Tab` / `Shift+Tab` cycles path completions for `/read`, `/open`, and `/workspace`.",
-    "- Planner and `/write` stream model output live in the transcript while the CLI call is in flight.",
+    "- Planner, `/write`, `/assess`, `/gather`, `/gaps`, and `/ready` stream model output live in the transcript while the CLI call is in flight.",
     transcriptHelpLine,
     "- `/quit` closes the studio."
   ].join("\n");
@@ -2016,9 +2165,10 @@ function renderOperateHelpMessage(transcriptHelpLine: string): string {
     "1. Use `/go` to run the configured operate loop.",
     "2. `/go [max]` runs auto mode until completion (or max cap) when pause-for-PR is disabled.",
     "3. If pause-for-PR is enabled, `/go` runs one step, pauses, then asks you to open a PR before continuing.",
-    "4. Use `/preview` for dry-run prompt preview, `/run` for one step, `/auto [max]` for direct auto mode.",
-    "5. Use `/stop` to request auto-run stop after the current iteration.",
-    "6. Use `srgical studio config --plan <id>` (or `ssc`) to manage pause-for-PR and reference guidance paths.",
+    "4. If auto mode stops on a blocked step, run `/unblock [focus]` for blocker-resolution guidance in operate mode.",
+    "5. Use `/preview` for dry-run prompt preview, `/run` for one step, `/auto [max]` for direct auto mode.",
+    "6. Use `/stop` to request auto-run stop after the current iteration.",
+    "7. Use `srgical studio config --plan <id>` (or `ssc`) to manage pause-for-PR and reference guidance paths.",
     "",
     "Controls:",
     "- Operate mode is slash-command only. Use `srgical studio plan` for planning conversation.",
@@ -2617,6 +2767,10 @@ function renderPlanUsageMessage(currentPlanId: string, paths: PlanningPackPaths)
     "- `/plan <id>` switches the active plan",
     "- `/plan new <id>` creates a named plan scaffold",
     "- `/read <path>` injects a file into the transcript as context",
+    "- `/assess [focus]` assesses objective and execution clarity",
+    "- `/gather [focus]` gathers missing context and refinement actions",
+    "- `/gaps [focus]` lists blocking missing details",
+    "- `/ready [focus]` returns a GO/NO-GO readiness verdict",
     "- `/review` shows planning docs for human review",
     "- `/open all` opens planning docs in VS Code",
     "- `/open <path>` opens any repo file or folder in VS Code",
