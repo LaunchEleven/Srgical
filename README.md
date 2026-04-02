@@ -61,7 +61,8 @@ srgical sso --plan release-readiness
 ```
 
 Inside `studio operate`, use `/go` to run the configured operate flow (`/stop` requests stop after current iteration).
-If auto mode halts because the current step is `blocked`, run `/unblock [focus]` for blocker-resolution guidance without leaving operate mode.
+If auto mode halts because the current step is `blocked`, run `/unblock` (or `/unblock <STEP_ID>`) to stage a retry, then run `/go` again.
+Use `/unblock analyze [focus]` when you want root-cause guidance first.
 
 CLI execution path:
 
@@ -268,7 +269,8 @@ In `studio operate`, `/go` runs the configured execution loop:
 
 - when pause-for-PR is disabled, `/go` runs auto mode toward completion
 - when pause-for-PR is enabled, `/go` runs one step and pauses so you can open a PR before continuing
-- when auto mode stops because the next step is blocked, use `/unblock [focus]`, apply the tracker edits, then `/go` again
+- when auto mode stops because the next step is blocked, use `/unblock` (or `/unblock <STEP_ID>`) to move it back to `pending`, then `/go` again
+- use `/unblock analyze [focus]` if you want advisory root-cause analysis before retrying
 
 Planner replies, `/write`, and `/run` now stream model output into the transcript while the underlying CLI tool is
 still running, so users can see progress live instead of waiting for one final blob.

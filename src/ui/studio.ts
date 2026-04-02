@@ -33,6 +33,7 @@ import {
 } from "../core/plan-interrogation";
 import type { ChatMessage } from "../core/prompts";
 import { loadStudioOperateConfig, type StudioOperateConfig } from "../core/studio-operate-config";
+import { unblockTrackerStep } from "../core/tracker-unblock";
 import { DEFAULT_STUDIO_MESSAGES, loadStoredActiveAgentId, loadStudioSession, saveStudioSession } from "../core/studio-session";
 import { getInitialTemplates } from "../core/templates";
 import {
@@ -109,6 +110,20 @@ type PlanInterrogationRequest = {
   focusText: string;
   label: string;
 };
+
+type UnblockCommandRequest =
+  | {
+      mode: "retry";
+      requestedStepId: string | null;
+      reason: string | null;
+    }
+  | {
+      mode: "analyze";
+      focusText: string;
+    }
+  | {
+      mode: "usage";
+    };
 
 type TranscriptScrollProfile = {
   footerHint: string;
@@ -792,12 +807,12 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
 
     if (!blockedStep) {
       await appendSystemMessage(
-        "No blocked next step is active right now. If auto mode halted, inspect `/status` and update the tracker, then run `/go`."
+        "No blocked next step is active right now. Use `/unblock <STEP_ID>` for a specific blocked row, or `/review` to inspect the tracker."
       );
       return;
     }
 
-    startBusy("planner", "running /unblock...");
+    startBusy("planner", "running /unblock analyze...");
     startLiveStream(`${getPrimaryAgentAdapter().label.toUpperCase()} UNBLOCK STREAM`);
 
     try {
@@ -820,13 +835,49 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
         onOutputChunk: appendLiveStreamChunk
       });
       stopLiveStream();
-      await appendSystemMessage(`/${focusText ? `unblock ${focusText}` : "unblock"}\n${reply}`);
+      await appendSystemMessage(`/unblock analyze${focusText ? ` ${focusText}` : ""}\n${reply}`);
       await refreshAdvice(false);
     } catch (error) {
       stopLiveStream();
-      await appendSystemMessage(`/unblock failed: ${error instanceof Error ? error.message : String(error)}`);
+      await appendSystemMessage(`/unblock analyze failed: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
       stopLiveStream();
+      stopBusy();
+      await refreshEnvironment();
+    }
+  }
+
+  async function runUnblockRetry(request: Extract<UnblockCommandRequest, { mode: "retry" }>): Promise<void> {
+    startBusy("run", "applying /unblock retry...");
+
+    try {
+      const result = await unblockTrackerStep(workspace, {
+        planId,
+        requestedStepId: request.requestedStepId,
+        reason: request.reason ?? undefined
+      });
+      const trackerRelative = normalizePathSeparators(path.relative(workspace, result.trackerPath), false) || result.trackerPath;
+      const previousNext = result.nextRecommendedBefore ? `\`${result.nextRecommendedBefore}\`` : "none queued";
+
+      await appendSystemMessage(
+        [
+          `Unblock retry staged for \`${result.stepId}\`.`,
+          `Status: \`${result.previousStatus}\` -> \`pending\`.`,
+          `Next Recommended: ${previousNext} -> \`${result.nextRecommendedAfter}\`.`,
+          `Tracker updated: \`${trackerRelative}\`.`,
+          request.reason ? `Reason logged: ${request.reason}` : "Reason logged: unblock retry requested.",
+          "Run `/go` to continue execution. Use `/unblock analyze [focus]` if you want root-cause guidance first."
+        ].join("\n")
+      );
+    } catch (error) {
+      await appendSystemMessage(
+        [
+          `/unblock retry failed: ${error instanceof Error ? error.message : String(error)}`,
+          "Use `/review` to inspect the tracker, then rerun `/unblock` with a step ID if needed.",
+          "Use `/unblock analyze [focus]` for blocker-resolution guidance."
+        ].join("\n")
+      );
+    } finally {
       stopBusy();
       await refreshEnvironment();
     }
@@ -1155,7 +1206,19 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
         return;
       }
 
-      await runBlockedStepResolution(command.slice("/unblock".length).trim());
+      const unblockCommand = parseUnblockCommand(command);
+
+      if (unblockCommand.mode === "usage") {
+        await appendSystemMessage(renderUnblockUsageMessage());
+        return;
+      }
+
+      if (unblockCommand.mode === "analyze") {
+        await runBlockedStepResolution(unblockCommand.focusText);
+        return;
+      }
+
+      await runUnblockRetry(unblockCommand);
       return;
     }
 
@@ -1673,7 +1736,7 @@ export function resolveStudioTerminal(
 
 function buildReadyFooter(scrollHint: string, studioMode: StudioMode): string {
   if (studioMode === "operate") {
-    return ` ${scrollHint}   /go run configured operate flow   /unblock blocker assist   /stop auto stop   /help commands   /quit exit `;
+    return ` ${scrollHint}   /go run configured operate flow   /unblock retry blocked step   /stop auto stop   /help commands   /quit exit `;
   }
 
   return ` ${scrollHint}   Enter send   Shift+Enter newline   /agents [id] tool   /help commands   /quit exit `;
@@ -2074,6 +2137,60 @@ function parsePlanInterrogationCommand(command: string): PlanInterrogationReques
   };
 }
 
+function parseUnblockCommand(command: string): UnblockCommandRequest {
+  const raw = command.slice("/unblock".length).trim();
+
+  if (!raw) {
+    return {
+      mode: "retry",
+      requestedStepId: null,
+      reason: null
+    };
+  }
+
+  const lower = raw.toLowerCase();
+  if (lower === "help" || lower === "-h" || lower === "--help") {
+    return { mode: "usage" };
+  }
+
+  if (lower === "analyze" || lower.startsWith("analyze ")) {
+    return {
+      mode: "analyze",
+      focusText: raw.slice("analyze".length).trim()
+    };
+  }
+
+  const retryPayload = lower === "retry" || lower.startsWith("retry ") ? raw.slice("retry".length).trim() : raw;
+  const [firstTokenRaw = ""] = retryPayload.split(/\s+/, 1);
+  const firstToken = normalizeStepToken(firstTokenRaw);
+  const stepId = isLikelyStepId(firstToken) ? firstToken.toUpperCase() : null;
+  const reason = stepId ? retryPayload.slice(firstTokenRaw.length).trim() : retryPayload;
+
+  return {
+    mode: "retry",
+    requestedStepId: stepId,
+    reason: reason.length > 0 ? reason : null
+  };
+}
+
+function normalizeStepToken(value: string): string {
+  return value.replace(/^["'`]|["'`]$/g, "");
+}
+
+function isLikelyStepId(value: string): boolean {
+  return /^[A-Za-z][A-Za-z0-9_-]*-\d+$/.test(value);
+}
+
+function renderUnblockUsageMessage(): string {
+  return [
+    "Unblock commands:",
+    "- `/unblock`: mark the current blocked `Next Recommended` step as `pending` and queue a retry.",
+    "- `/unblock <STEP_ID>`: unblock a specific blocked step.",
+    "- `/unblock retry [STEP_ID] [reason]`: explicit retry variant.",
+    "- `/unblock analyze [focus]`: ask for root-cause and unblock guidance without changing tracker state."
+  ].join("\n");
+}
+
 function isOperateOnlyCommand(command: string): boolean {
   return (
     command === "/go" ||
@@ -2165,10 +2282,11 @@ function renderOperateHelpMessage(transcriptHelpLine: string): string {
     "1. Use `/go` to run the configured operate loop.",
     "2. `/go [max]` runs auto mode until completion (or max cap) when pause-for-PR is disabled.",
     "3. If pause-for-PR is enabled, `/go` runs one step, pauses, then asks you to open a PR before continuing.",
-    "4. If auto mode stops on a blocked step, run `/unblock [focus]` for blocker-resolution guidance in operate mode.",
-    "5. Use `/preview` for dry-run prompt preview, `/run` for one step, `/auto [max]` for direct auto mode.",
-    "6. Use `/stop` to request auto-run stop after the current iteration.",
-    "7. Use `srgical studio config --plan <id>` (or `ssc`) to manage pause-for-PR and reference guidance paths.",
+    "4. If auto mode stops on a blocked step, run `/unblock` (or `/unblock <STEP_ID>`) to mark it pending for retry.",
+    "5. Use `/unblock analyze [focus]` when you want root-cause guidance before retrying.",
+    "6. Use `/preview` for dry-run prompt preview, `/run` for one step, `/auto [max]` for direct auto mode.",
+    "7. Use `/stop` to request auto-run stop after the current iteration.",
+    "8. Use `srgical studio config --plan <id>` (or `ssc`) to manage pause-for-PR and reference guidance paths.",
     "",
     "Controls:",
     "- Operate mode is slash-command only. Use `srgical studio plan` for planning conversation.",
