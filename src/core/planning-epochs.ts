@@ -1,9 +1,17 @@
-import { mkdir, readdir, rm } from "node:fs/promises";
+import { mkdir, readdir } from "node:fs/promises";
 import path from "node:path";
 import { readPlanningPackState } from "./planning-pack-state";
 import { savePlanningState } from "./planning-state";
 import { getInitialTemplates } from "./templates";
-import { ensurePlanningDir, fileExists, readText, type PlanningPackPaths, type PlanningPathOptions, writeText } from "./workspace";
+import {
+  clearPlanningPackRuntimeState,
+  ensurePlanningDir,
+  fileExists,
+  readText,
+  type PlanningPackPaths,
+  type PlanningPathOptions,
+  writeText
+} from "./workspace";
 
 export type PlanningEpochPreparation = {
   archived: boolean;
@@ -91,14 +99,8 @@ async function resetActivePlanningPack(paths: PlanningPackPaths): Promise<void> 
     Object.entries(templates).map(([filePath, content]) => writeText(filePath, content))
   );
 
+  await clearPlanningPackRuntimeState(paths.root, { planId: paths.planId });
   await savePlanningState(paths.root, "scaffolded", { planId: paths.planId });
-
-  await Promise.all([
-    rm(paths.autoRunState, { force: true }),
-    rm(paths.adviceState, { force: true }),
-    rm(paths.executionState, { force: true }),
-    rm(paths.executionLog, { force: true })
-  ]);
 }
 
 function listArchivablePaths(paths: PlanningPackPaths): string[] {

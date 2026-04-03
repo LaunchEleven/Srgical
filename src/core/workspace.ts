@@ -1,4 +1,4 @@
-import { access, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { access, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 export const PLAN_DIR = ".srgical";
@@ -195,6 +195,18 @@ export async function readText(filePath: string): Promise<string> {
 
 export async function writeText(filePath: string, content: string): Promise<void> {
   await writeFile(filePath, content, "utf8");
+}
+
+export async function clearPlanningPackRuntimeState(root: string, options: PlanningPathOptions = {}): Promise<void> {
+  const paths = getPlanningPackPaths(root, options);
+
+  await Promise.all([
+    rm(paths.studioSession, { force: true }),
+    rm(paths.adviceState, { force: true }),
+    rm(paths.executionState, { force: true }),
+    rm(paths.executionLog, { force: true }),
+    rm(paths.autoRunState, { force: true })
+  ]);
 }
 
 export async function isGitRepo(root: string): Promise<boolean> {

@@ -1,5 +1,6 @@
 import { loadPlanningAdviceState, type PlanningAdviceState } from "./advice-state";
 import { loadAutoRunState, type AutoRunState } from "./auto-run-state";
+import { readPlanningPackDocumentSummary } from "./planning-doc-state";
 import { loadExecutionState, type ExecutionState } from "./execution-state";
 import {
   hasHumanWriteConfirmation,
@@ -9,7 +10,7 @@ import {
   type PlanningStateFile
 } from "./planning-state";
 import { DEFAULT_STUDIO_MESSAGES, loadStudioSessionState } from "./studio-session";
-import { fileExists, getPlanningPackPaths, planningPackExists, readText, type PlanningPathOptions } from "./workspace";
+import { getPlanningPackPaths, planningPackExists, readText, type PlanningPathOptions } from "./workspace";
 
 export type PlanningCurrentPosition = {
   lastCompleted: string | null;
@@ -92,17 +93,19 @@ export async function readPlanningPackState(
     }
   }
 
-  const [lastExecution, planningState, advice, autoRun, docsPresent, studioSession] = await Promise.all([
+  const [lastExecution, planningState, advice, autoRun, studioSession] = await Promise.all([
     loadExecutionState(workspaceRoot, options),
     loadPlanningState(workspaceRoot, options),
     loadPlanningAdviceState(workspaceRoot, options),
     loadAutoRunState(workspaceRoot, options),
-    countPresentDocs(paths),
     loadStudioSessionState(workspaceRoot, options)
   ]);
+  const fallbackPackMode = planningState?.packMode ?? inferLegacyPackMode(currentPosition);
+  const planningDocs = await readPlanningPackDocumentSummary(paths, fallbackPackMode === "authored" ? "grounded" : "boilerplate");
 
+  const docsPresent = planningDocs.groundedCount;
   const readiness = buildReadiness(studioSession.messages, nextStepSummary);
-  const packMode = planningState?.packMode ?? inferLegacyPackMode(currentPosition);
+  const packMode = fallbackPackMode;
   const humanWriteConfirmed = hasHumanWriteConfirmation(planningState);
   const executionActivated = Boolean(
     lastExecution ||
@@ -258,18 +261,6 @@ function isContextBearingSystemMessage(content: string): boolean {
     content.startsWith("/gaps") ||
     content.startsWith("/ready")
   );
-}
-
-async function countPresentDocs(paths: ReturnType<typeof getPlanningPackPaths>): Promise<number> {
-  const checks = await Promise.all([
-    fileExists(paths.plan),
-    fileExists(paths.context),
-    fileExists(paths.tracker),
-    fileExists(paths.nextPrompt),
-    fileExists(paths.handoff)
-  ]);
-
-  return checks.filter(Boolean).length;
 }
 
 function parseCurrentPosition(tracker: string): PlanningCurrentPosition {

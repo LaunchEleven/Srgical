@@ -72,6 +72,20 @@ test("scaffolded ready plans guide users to first-write before confirmation", ()
   assert.match(renderWorkspaceSelectionMessage(workspace, state), /first grounded draft/);
 });
 
+test("format-planning-pack-summary makes boilerplate scaffolds obvious", () => {
+  const workspace = "G:\\code\\Launch11Projects\\demo";
+  const state = createPackState({
+    packPresent: true,
+    trackerReadable: true,
+    mode: "Gathering Context",
+    packMode: "scaffolded",
+    docsPresent: 0
+  });
+
+  assert.match(formatPlanningPackSummary(workspace, state), /state: boilerplate scaffold \/ gathering context/);
+  assert.match(renderWorkspaceSelectionMessage(workspace, state), /plan status: boilerplate scaffold \/ gathering context/);
+});
+
 test("format-tracker-summary shows none queued instead of unknown", () => {
   assert.equal(
     formatTrackerSummary({
@@ -409,6 +423,7 @@ function createPackState(options: {
   nextRecommended?: string | null;
   mode?: PlanningPackState["mode"];
   packMode?: PlanningPackState["packMode"];
+  docsPresent?: number;
   readinessReadyToWrite?: boolean;
   humanWriteConfirmed?: boolean;
 }): PlanningPackState {
@@ -417,7 +432,7 @@ function createPackState(options: {
     packDir: ".srgical",
     packPresent: options.packPresent,
     trackerReadable: options.trackerReadable,
-    docsPresent: options.packPresent ? 5 : 0,
+    docsPresent: options.docsPresent ?? (options.packPresent ? 5 : 0),
     currentPosition: {
       lastCompleted: options.packPresent ? "DOC002" : null,
       nextRecommended: options.nextRecommended ?? null,

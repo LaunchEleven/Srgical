@@ -1,4 +1,5 @@
 import path from "node:path";
+import { stampPlanningDocumentState } from "./planning-doc-state";
 import type { PlanningPackPaths } from "./workspace";
 
 function projectNameFromRoot(root: string): string {
@@ -8,7 +9,8 @@ function projectNameFromRoot(root: string): string {
 export function buildPlanTemplate(root: string): string {
   const projectName = projectNameFromRoot(root);
 
-  return `# ${projectName} Product Plan
+  return stampPlanningDocumentState(
+    `# ${projectName} Product Plan
 
 Updated: ${new Date().toISOString().slice(0, 10)}
 
@@ -48,13 +50,17 @@ Define and ship a local-first CLI that helps a user:
 - the pack format stays readable by humans and agents
 - agent execution can resume cleanly from repo state
 - the UI feels like a sharp creative control room
-`;
+`,
+    "plan",
+    "boilerplate"
+  );
 }
 
 export function buildContextTemplate(paths: PlanningPackPaths): string {
   const planDir = `\`${paths.relativeDir}/\``;
 
-  return `# Agent Context Kickoff
+  return stampPlanningDocumentState(
+    `# Agent Context Kickoff
 
 Updated: ${new Date().toISOString()}
 Updated By: srgical
@@ -87,11 +93,15 @@ agent prompt before making changes.
 - Validation: confirmed the four planning-pack files were written.
 - Blockers: none.
 - Next recommended work: \`PLAN-001\`.
-`;
+`,
+    "context",
+    "boilerplate"
+  );
 }
 
 export function buildTrackerTemplate(): string {
-  return `# Detailed Implementation Plan
+  return stampPlanningDocumentState(
+    `# Detailed Implementation Plan
 
 Updated: ${new Date().toISOString()}
 Updated By: srgical
@@ -135,30 +145,41 @@ Updated By: srgical
 | ID | Status | Depends On | Scope | Acceptance | Notes |
 | --- | --- | --- | --- | --- | --- |
 | EXEC-001 | pending | PLAN-001 | Execute the next eligible implementation slice from the tracker. | The selected slice is complete, validated, and logged. | Pending tracker detail. |
-  `;
+  `,
+    "tracker",
+    "boilerplate"
+  );
 }
 
 export function buildHandoffTemplate(paths: PlanningPackPaths): string {
   const planDir = paths.relativeDir;
 
-  return `# HandoffDoc
+  return stampPlanningDocumentState(
+    `# HandoffDoc
 
 This is the canonical execution handoff for the current plan.
 
 ${buildExecutionHandoffBody(planDir)}
-`;
+`,
+    "handoff",
+    "boilerplate"
+  );
 }
 
 export function buildNextPromptTemplate(paths: PlanningPackPaths): string {
   const planDir = paths.relativeDir;
 
-  return `# Next Agent Prompt
+  return stampPlanningDocumentState(
+    `# Next Agent Prompt
 
 Compatibility document retained for older workflows.
 The canonical execution handoff now lives in \`${planDir}/HandoffDoc.md\`.
 
 ${buildExecutionHandoffBody(planDir)}
-`;
+`,
+    "nextPrompt",
+    "boilerplate"
+  );
 }
 
 export function getInitialTemplates(paths: PlanningPackPaths): Record<string, string> {

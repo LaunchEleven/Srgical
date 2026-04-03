@@ -1,10 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { runInitCommand } from "../../src/commands/init";
+import { readPlanningPackState } from "../../src/core/planning-pack-state";
 import { loadPlanningState } from "../../src/core/planning-state";
+import { saveStudioSession } from "../../src/core/studio-session";
 import { captureStdout } from "../helpers/capture";
 import { createTempWorkspace } from "../helpers/workspace";
-import { getPlanningPackPaths, readActivePlanId } from "../../src/core/workspace";
+import { getPlanningPackPaths, readActivePlanId, writeText } from "../../src/core/workspace";
 import { mkdtemp } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -60,6 +62,68 @@ test("init still treats an existing directory positional arg as workspace", asyn
   assert.equal(result.exitCode, 1);
   assert.match(result.stderr, /requires an explicit named plan/i);
 });
+
+test("init --force clears stale studio and advice state for a re-scaffolded plan", async () => {
+  const workspace = await createTempWorkspace("srgical-init-force-reset-");
+  const paths = await getOrCreateScaffold(workspace, "proto");
+
+  await saveStudioSession(
+    workspace,
+    [
+      {
+        role: "user",
+        content: "We need to define the repo scope, the main delivery constraints, and the first execution slice."
+      },
+      {
+        role: "assistant",
+        content:
+          "The repo already contains the CLI surface, so the first grounded slice should focus on making planning-pack state deterministic and easy to inspect."
+      },
+      {
+        role: "user",
+        content: "Yes, go with that and write the pack."
+      },
+      {
+        role: "assistant",
+        content:
+          "That gives us enough goal, repo context, constraints, and an initial executable slice to move from scaffold into a grounded first draft."
+      }
+    ],
+    { planId: "proto" }
+  );
+
+  await writeText(
+    paths.adviceState,
+    JSON.stringify(
+      {
+        version: 1,
+        planId: "proto",
+        updatedAt: "2026-04-03T00:00:00.000Z",
+        problemStatement: "stale",
+        clarity: "clear",
+        stateAssessment: "stale",
+        researchNeeded: [],
+        advice: "stale",
+        nextAction: "stale"
+      },
+      null,
+      2
+    )
+  );
+
+  await runInitCommand(workspace, true, "proto");
+
+  const state = await readPlanningPackState(workspace, { planId: "proto" });
+
+  assert.equal(state.docsPresent, 0);
+  assert.equal(state.readiness.score, 0);
+  assert.equal(state.advice, null);
+});
+
+async function getOrCreateScaffold(workspace: string, planId: string) {
+  await runInitCommand(workspace, false, planId);
+  return getPlanningPackPaths(workspace, { planId });
+}
 
 function runCli(args: string[], cwd: string): Promise<{ exitCode: number | null; stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {

@@ -31,6 +31,7 @@ import {
   buildPlanInterrogationDirective,
   type PlanInterrogationCommand
 } from "../core/plan-interrogation";
+import { applyPlanningPackDocumentState } from "../core/planning-doc-state";
 import type { ChatMessage } from "../core/prompts";
 import { loadStudioOperateConfig, type StudioOperateConfig } from "../core/studio-operate-config";
 import { unblockTrackerStep } from "../core/tracker-unblock";
@@ -38,6 +39,7 @@ import { DEFAULT_STUDIO_MESSAGES, loadStoredActiveAgentId, loadStudioSession, sa
 import { getInitialTemplates } from "../core/templates";
 import {
   ensurePlanningDir,
+  clearPlanningPackRuntimeState,
   getPlanningPackPaths,
   listPlanningDirectories,
   normalizePlanId,
@@ -685,6 +687,10 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
     if (text.startsWith("/")) {
       commandHistoryEntries = appendCommandHistoryEntry(commandHistoryEntries, text);
       resetCommandHistoryNavigation();
+      await appendMessage({
+        role: "system",
+        content: `Command: ${text}`
+      });
       await handleSlashCommand(text);
 
       if (studioClosed) {
@@ -1424,6 +1430,7 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
           onOutputChunk: appendLiveStreamChunk
         });
         await stopLiveStream();
+        await applyPlanningPackDocumentState(getPlanningPackPaths(workspace, { planId }), "grounded");
         await markPlanningPackAuthored(workspace, { planId });
         await refreshAdvice(false);
         await appendSystemMessage(`Planning pack updated for \`${planId}\`. Summary:\n${result}`);
@@ -2120,7 +2127,13 @@ function isDefaultStudioSession(messages: ChatMessage[]): boolean {
 }
 
 function describePlanningPackState(packState: PlanningPackState): string {
-  return `${deriveDisplayMode(packState).toLowerCase()}${packState.hasFailureOverlay ? " (last run failed)" : ""}`;
+  const mode = deriveDisplayMode(packState).toLowerCase();
+  const boilerplateLabel =
+    packState.packPresent && packState.packMode === "scaffolded" && packState.docsPresent === 0
+      ? "boilerplate scaffold"
+      : null;
+
+  return [boilerplateLabel, `${mode}${packState.hasFailureOverlay ? " (last run failed)" : ""}`].filter(Boolean).join(" / ");
 }
 
 function formatPlanningPackPill(packState: PlanningPackState): string {
@@ -2167,6 +2180,13 @@ function renderStatusMessage(workspace: string, packState: PlanningPackState): s
     `Plan: ${packState.planId}`,
     `Planning dir: ${getPlanningPackPaths(workspace, { planId: packState.planId }).relativeDir}`,
     `Mode: ${packState.mode}${packState.hasFailureOverlay ? " [last run failed]" : ""}`,
+    `Document state: ${
+      packState.packPresent && packState.packMode === "scaffolded" && packState.docsPresent === 0
+        ? "boilerplate scaffold"
+        : packState.packMode === "authored"
+          ? "grounded pack"
+          : "mixed or partial"
+    }`,
     `Docs: ${packState.docsPresent}/5`,
     `Readiness: ${packState.readiness.score}/${packState.readiness.total}${packState.readiness.readyToWrite ? " (ready to write)" : ""}`,
     `Human write gate: ${
@@ -3150,6 +3170,7 @@ async function createPlanScaffold(workspace: string, requestedPlanId: string): P
   const templates = getInitialTemplates(paths);
 
   await Promise.all(Object.entries(templates).map(([filePath, content]) => writeText(filePath, content)));
+  await clearPlanningPackRuntimeState(workspace, { planId });
   await savePlanningState(workspace, "scaffolded", { planId });
   await saveActivePlanId(workspace, planId);
   return paths;

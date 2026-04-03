@@ -1,7 +1,14 @@
 import process from "node:process";
 import { savePlanningState } from "../core/planning-state";
 import { getInitialTemplates } from "../core/templates";
-import { ensurePlanningDir, planningPackExists, resolveWorkspace, saveActivePlanId, writeText } from "../core/workspace";
+import {
+  clearPlanningPackRuntimeState,
+  ensurePlanningDir,
+  planningPackExists,
+  resolveWorkspace,
+  saveActivePlanId,
+  writeText
+} from "../core/workspace";
 import { paintLine, renderCommandBanner, renderSectionHeading } from "../ui/terminal-theme";
 
 export async function runInitCommand(workspaceArg?: string, force = false, planId?: string | null): Promise<void> {
@@ -22,6 +29,7 @@ export async function runInitCommand(workspaceArg?: string, force = false, planI
   await Promise.all(
     Object.entries(templates).map(([filePath, content]) => writeText(filePath, content))
   );
+  await clearPlanningPackRuntimeState(workspace, { planId: paths.planId });
   await savePlanningState(workspace, "scaffolded", { planId: paths.planId });
   await saveActivePlanId(workspace, paths.planId);
 

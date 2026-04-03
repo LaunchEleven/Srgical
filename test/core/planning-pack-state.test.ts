@@ -71,6 +71,7 @@ test("readPlanningPackState does not award readiness points for the default stud
   const state = await readPlanningPackState(workspace);
 
   assert.equal(state.mode, "Gathering Context");
+  assert.equal(state.docsPresent, 0);
   assert.equal(state.readiness.score, 0);
   assert.equal(state.readiness.readyToWrite, false);
   assert.match(state.readiness.missingLabels.join(", "), /Goal captured/);
@@ -115,6 +116,23 @@ test("readPlanningPackState keeps scaffolded packs in gathering-context mode wit
   assert.equal(state.mode, "Gathering Context");
   assert.equal(state.readiness.readyToWrite, false);
   assert.match(state.readiness.missingLabels.join(", "), /Explicit go-ahead captured/);
+});
+
+test("readPlanningPackState ignores echoed slash commands for readiness", async () => {
+  const workspace = await createTempWorkspace("srgical-pack-state-command-echo-");
+  await writePlanningPack(workspace);
+
+  await saveStudioSession(workspace, [
+    {
+      role: "system",
+      content: "Command: /status"
+    }
+  ]);
+
+  const state = await readPlanningPackState(workspace);
+
+  assert.equal(state.readiness.score, 0);
+  assert.equal(state.readiness.readyToWrite, false);
 });
 
 test("readPlanningPackState marks scaffolded packs ready only after a clear go-ahead", async () => {
