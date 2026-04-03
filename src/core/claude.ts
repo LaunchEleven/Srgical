@@ -3,13 +3,14 @@ import { access, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import type { AgentInvocationOptions } from "./agent";
+import type { PlanDiceOptions } from "./plan-dicing";
 import { writePlanningPackFallback } from "./local-pack";
 import {
   formatPlanningEpochSummary,
   preparePlanningPackForWrite,
   type PlanningEpochPreparation
 } from "./planning-epochs";
-import { buildAdvicePrompt, buildPackWriterPrompt, buildPlannerPrompt, type ChatMessage } from "./prompts";
+import { buildAdvicePrompt, buildPackWriterPrompt, buildPlanDicePrompt, buildPlannerPrompt, type ChatMessage } from "./prompts";
 import { readPlanningPackState, type PlanningPackState } from "./planning-pack-state";
 
 export type ClaudeStatus = {
@@ -140,6 +141,59 @@ export async function writePlanningPack(
     const result = await runClaudeExec({
       cwd: workspaceRoot,
       prompt: await buildPackWriterPrompt(messages, workspaceRoot, options),
+      permissionMode: "acceptEdits",
+      allowedTools: CLAUDE_WRITE_ALLOW_TOOLS,
+      maxTurns: 24,
+      onOutputChunk: options.onOutputChunk
+    });
+
+    return appendPlanningEpochSummary(planningEpoch, result.lastMessage.trim());
+  } catch (error) {
+    if (isClaudeUnavailableError(error)) {
+      const message = error instanceof Error ? error.message : "Claude Code CLI is unavailable";
+      return appendPlanningEpochSummary(
+        planningEpoch,
+        await writePlanningPackFallback(workspaceRoot, messages, message, "Claude Code", options)
+      );
+    }
+
+    const message = error instanceof Error ? error.message : String(error);
+    const epochSummary = formatPlanningEpochSummary(planningEpoch);
+
+    if (epochSummary) {
+      throw new Error(`${epochSummary}\n${message}`);
+    }
+
+    throw error;
+  }
+}
+
+export async function dicePlanningPack(
+  workspaceRoot: string,
+  messages: ChatMessage[],
+  diceOptions: PlanDiceOptions,
+  options: AgentInvocationOptions = {}
+): Promise<string> {
+  const planningEpoch = await preparePlanningPackForWrite(workspaceRoot, options);
+  const claudeStatus = await detectClaude();
+
+  if (!claudeStatus.available) {
+    return appendPlanningEpochSummary(
+      planningEpoch,
+      await writePlanningPackFallback(
+        workspaceRoot,
+        messages,
+        claudeStatus.error ?? "Claude Code CLI is unavailable",
+        "Claude Code",
+        options
+      )
+    );
+  }
+
+  try {
+    const result = await runClaudeExec({
+      cwd: workspaceRoot,
+      prompt: await buildPlanDicePrompt(messages, workspaceRoot, diceOptions, options),
       permissionMode: "acceptEdits",
       allowedTools: CLAUDE_WRITE_ALLOW_TOOLS,
       maxTurns: 24,

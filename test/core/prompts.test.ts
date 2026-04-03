@@ -1,7 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildPlannerPrompt, type ChatMessage } from "../../src/core/prompts";
+import { buildPlanDicePrompt, buildPlannerPrompt, type ChatMessage } from "../../src/core/prompts";
 import type { PlanningPackState } from "../../src/core/planning-pack-state";
+import { createTempWorkspace, writePlanningPack } from "../helpers/workspace";
 
 test("build-planner-prompt enforces convergence and working-plan contract", () => {
   const messages: ChatMessage[] = [
@@ -39,6 +40,27 @@ test("build-planner-prompt blocks further questioning when budget is exhausted",
   assert.match(prompt, /Estimated blocker questions already asked by planner: 3/);
   assert.match(prompt, /Remaining blocker questions: 0/);
   assert.match(prompt, /you must not ask another question; produce closure/i);
+});
+
+test("build-plan-dice-prompt includes requested resolution and optional spike mode", async () => {
+  const workspace = await createTempWorkspace("srgical-dice-prompt-");
+  await writePlanningPack(workspace, { planId: "proto" });
+
+  const prompt = await buildPlanDicePrompt(
+    [{ role: "user", content: "Dice this into tiny safe steps and consider a throwaway validation spike first." }],
+    workspace,
+    {
+      resolution: "high",
+      allowLiveFireSpike: true
+    },
+    { planId: "proto" }
+  );
+
+  assert.match(prompt, /requested resolution: high/);
+  assert.match(prompt, /live-fire spike mode: enabled/);
+  assert.match(prompt, /very fine-grained evolutionary slices/i);
+  assert.match(prompt, /throwaway branch/i);
+  assert.match(prompt, /telemetry, logging, and feature-flag considerations/i);
 });
 
 function createPackState(): PlanningPackState {

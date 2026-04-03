@@ -6,6 +6,7 @@ import blessed from "blessed";
 import type { PlanningAdviceState } from "../core/advice-state";
 import { executeAutoRun, requestAutoRunStop } from "../core/auto-run";
 import {
+  dicePlanningPack,
   getPrimaryAgentAdapter,
   getSupportedAgentAdapters,
   requestPlannerReply,
@@ -15,6 +16,7 @@ import {
   writePlanningPack,
   type AgentStatus
 } from "../core/agent";
+import { parsePlanDiceCommand, renderPlanDiceLabel, type PlanDiceOptions } from "../core/plan-dicing";
 import {
   formatExecutionFailureMessage,
   formatNoQueuedNextStepMessage,
@@ -850,6 +852,42 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
     }
   }
 
+  async function runPlanDice(diceOptions: PlanDiceOptions): Promise<void> {
+    const packState = latestPackState ?? (await readPlanningPackState(workspace, { planId }));
+
+    if (!canWritePlanningPack(packState)) {
+      await appendSystemMessage(
+        [
+          "Plan dicing is blocked: the planning pack is not ready for slicing yet.",
+          "Run `/readiness` to inspect missing signals, then continue the planning conversation."
+        ].join("\n")
+      );
+      return;
+    }
+
+    startBusy("pack", `running /dice ${renderPlanDiceLabel(diceOptions)}...`);
+    startLiveStream(`${getPrimaryAgentAdapter().label.toUpperCase()} DICE STREAM`);
+
+    try {
+      const result = await dicePlanningPack(workspace, historyMessages, diceOptions, {
+        planId,
+        onOutputChunk: appendLiveStreamChunk
+      });
+      await stopLiveStream();
+      await applyPlanningPackDocumentState(getPlanningPackPaths(workspace, { planId }), "grounded");
+      await markPlanningPackAuthored(workspace, { planId });
+      await refreshAdvice(false);
+      await appendSystemMessage(`Planning pack diced for \`${planId}\` (${renderPlanDiceLabel(diceOptions)}). Summary:\n${result}`);
+    } catch (error) {
+      await stopLiveStream();
+      await appendSystemMessage(`/dice failed: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      await stopLiveStream();
+      stopBusy();
+      await refreshEnvironment();
+    }
+  }
+
   async function runBlockedStepResolution(focusText: string): Promise<void> {
     const packState = await readPlanningPackState(workspace, { planId });
     const blockedStep =
@@ -1101,6 +1139,18 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
     if (command === "/readiness") {
       const packState = latestPackState ?? (await readPlanningPackState(workspace, { planId }));
       await appendSystemMessage(renderReadinessMessage(packState));
+      return;
+    }
+
+    if (command === "/dice" || command.startsWith("/dice ")) {
+      const diceOptions = parsePlanDiceCommand(command);
+
+      if (!diceOptions) {
+        await appendSystemMessage("Usage: `/dice [low|medium|high] [spike]`");
+        return;
+      }
+
+      await runPlanDice(diceOptions);
       return;
     }
 
@@ -2323,6 +2373,8 @@ function isOperateOnlyCommand(command: string): boolean {
 function isPlanOnlyCommand(command: string): boolean {
   return (
     command === "/write" ||
+    command === "/dice" ||
+    command.startsWith("/dice ") ||
     command === "/readiness" ||
     command === "/advice" ||
     command === "/assess" ||
@@ -2367,13 +2419,14 @@ export function renderPlanHelpMessage(transcriptHelpLine: string): string {
     "6. Use `/gaps [focus]` to isolate blocking missing details.",
     "7. Use `/ready [focus]` for a GO/NO-GO execution readiness verdict.",
     "8. Use `/readiness` for deterministic readiness checks before writing the pack.",
-    "9. Run `/write` to generate the first grounded draft from the transcript.",
-    "10. Then run `/review` and `/open [all|plan|context|tracker|prompt|handoff|dir|<path>]` for human review.",
-    "11. Run `/confirm-plan` to approve subsequent refresh writes.",
-    "12. Run `/write` again when you want to refresh an authored plan.",
-    "13. Use `/agents` to inspect support and `/agents <id>` (or `/agent <id>`) to switch the active tool.",
-    "14. Use `/clear` to clear the visible transcript while preserving planning history, then `/history` to restore it.",
-    "15. Open `srgical studio operate --plan <id>` (or `sso`) when you are ready to automate execution.",
+    "9. Run `/write` when you want to lock the first grounded draft from the transcript.",
+    "10. Run `/dice [low|medium|high] [spike]` to break the plan into evolutionary execution slices.",
+    "11. Then run `/review` and `/open [all|plan|context|tracker|prompt|handoff|dir|<path>]` for human review.",
+    "12. Run `/confirm-plan` to approve subsequent refresh writes.",
+    "13. Run `/write` again when you want to refresh an authored plan.",
+    "14. Use `/agents` to inspect support and `/agents <id>` (or `/agent <id>`) to switch the active tool.",
+    "15. Use `/clear` to clear the visible transcript while preserving planning history, then `/history` to restore it.",
+    "16. Open `srgical studio operate --plan <id>` (or `sso`) when you are ready to automate execution.",
     "",
     "Controls:",
     "- `Enter` sends the current message or command.",
@@ -2386,7 +2439,7 @@ export function renderPlanHelpMessage(transcriptHelpLine: string): string {
     "- `Tab` / `Shift+Tab` cycles path completions for `/read`, `/open`, `/workspace`, and existing `/plan` ids.",
     "- Mouse clicks are not captured so native terminal drag-selection stays available; use `/copy ...` if your terminal still behaves awkwardly.",
     "- `/copy`, `/copy visible`, `/copy all`, or `/copy last` copies transcript text through the OS clipboard.",
-    "- Planner, `/write`, `/assess`, `/gather`, `/gaps`, and `/ready` stream model output live in the transcript while the CLI call is in flight.",
+    "- Planner, `/write`, `/dice`, `/assess`, `/gather`, `/gaps`, and `/ready` stream model output live in the transcript while the CLI call is in flight.",
     transcriptHelpLine,
     "- `/quit` closes the studio."
   ].join("\n");
@@ -3125,6 +3178,7 @@ function renderPlanUsageMessage(currentPlanId: string, paths: PlanningPackPaths)
     "- `/gather [focus]` gathers missing context and refinement actions",
     "- `/gaps [focus]` lists blocking missing details",
     "- `/ready [focus]` returns a GO/NO-GO readiness verdict",
+    "- `/dice [low|medium|high] [spike]` rewrites the planning pack into evolutionary execution slices",
     "- `/review` shows planning docs for human review",
     "- `/open all` opens planning docs in VS Code",
     "- `/open <path>` opens any repo file or folder in VS Code",

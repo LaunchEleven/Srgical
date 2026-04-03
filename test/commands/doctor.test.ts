@@ -232,6 +232,9 @@ function createFakeAdapter(options: {
     async writePlanningPack(): Promise<string> {
       return `${options.id}-pack`;
     },
+    async dicePlanningPack(): Promise<string> {
+      return `${options.id}-dice`;
+    },
     async runNextPrompt(): Promise<string> {
       return `${options.id}-run`;
     }

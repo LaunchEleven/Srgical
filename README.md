@@ -45,10 +45,11 @@ Inside `studio plan`:
 1. talk through scope/constraints and use `/readiness` + `/advice`
 2. interrogate plan quality with `/assess [focus]`, `/gather [focus]`, `/gaps [focus]`, and `/ready [focus]`
 3. inject repo files directly with `/read [path]` (press `Tab` to autocomplete file paths; omit `path` to read the current directory non-recursively)
-4. run `/write` to generate the first grounded draft from transcript context
-5. run `/review` and `/open all` (or `/open <path>`) for human doc review
-6. run `/confirm-plan` (required before authored-plan refresh writes)
-7. run `/write` again when refreshing an authored plan
+4. run `/write` to lock the first grounded draft from transcript context
+5. run `/dice [low|medium|high] [spike]` to rewrite the pack into evolutionary execution slices
+6. run `/review` and `/open all` (or `/open <path>`) for human doc review
+7. run `/confirm-plan` (required before authored-plan refresh writes)
+8. run `/write` again when refreshing an authored plan
 
 Configure operate-mode checkpoints and references:
 
@@ -109,7 +110,8 @@ This repo currently ships the foundation for:
   Creates a named local `.srgical/plans/<id>/` planning pack from built-in templates. Pass either `srgical init <id>` or `srgical init --plan <id>`.
 - `srgical studio plan`
   Opens the full-screen planning studio (`ssp` shortcut) where you can switch named plans, gather repo context,
-  iterate toward practical sufficiency, and write/refresh the planning pack with human confirmation guard rails.
+  iterate toward practical sufficiency, write/refresh the planning pack, and use `/dice [low|medium|high] [spike]`
+  to break a grounded plan into smaller evolutionary slices.
 - `srgical studio operate`
   Opens the full-screen operate studio (`sso` shortcut) with execution-focused commands (`/go`, `/run`, `/auto`,
   `/stop`, `/unblock`) and optional pause-for-PR checkpoints.

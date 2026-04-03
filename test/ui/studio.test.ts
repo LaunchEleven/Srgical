@@ -120,6 +120,10 @@ test("studio help text makes native drag-selection expectations explicit", () =>
   assert.match(renderOperateHelpMessage("scroll help"), /Mouse clicks are not captured so native terminal drag-selection stays available/);
 });
 
+test("plan help text advertises dice slicing controls", () => {
+  assert.match(renderPlanHelpMessage("scroll help"), /\/dice \[low\|medium\|high\] \[spike\]/);
+});
+
 test("resolve-studio-workspace-input resolves relative paths from the current workspace", () => {
   assert.equal(
     resolveStudioWorkspaceInput("G:\\code\\Launch11Projects\\srgical", "..\\another-repo"),

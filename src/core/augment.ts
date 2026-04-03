@@ -3,13 +3,14 @@ import { access, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import type { AgentInvocationOptions } from "./agent";
+import type { PlanDiceOptions } from "./plan-dicing";
 import { writePlanningPackFallback } from "./local-pack";
 import {
   formatPlanningEpochSummary,
   preparePlanningPackForWrite,
   type PlanningEpochPreparation
 } from "./planning-epochs";
-import { buildAdvicePrompt, buildPackWriterPrompt, buildPlannerPrompt, type ChatMessage } from "./prompts";
+import { buildAdvicePrompt, buildPackWriterPrompt, buildPlanDicePrompt, buildPlannerPrompt, type ChatMessage } from "./prompts";
 import { readPlanningPackState, type PlanningPackState } from "./planning-pack-state";
 
 export type AugmentStatus = {
@@ -142,6 +143,57 @@ export async function writePlanningPack(
     const result = await runAugmentExec({
       cwd: workspaceRoot,
       prompt: await buildPackWriterPrompt(messages, workspaceRoot, options),
+      maxTurns: 24,
+      onOutputChunk: options.onOutputChunk
+    });
+
+    return appendPlanningEpochSummary(planningEpoch, result.lastMessage.trim());
+  } catch (error) {
+    if (isAugmentUnavailableError(error)) {
+      const message = error instanceof Error ? error.message : "Augment CLI is unavailable";
+      return appendPlanningEpochSummary(
+        planningEpoch,
+        await writePlanningPackFallback(workspaceRoot, messages, message, "Augment CLI", options)
+      );
+    }
+
+    const message = error instanceof Error ? error.message : String(error);
+    const epochSummary = formatPlanningEpochSummary(planningEpoch);
+
+    if (epochSummary) {
+      throw new Error(`${epochSummary}\n${message}`);
+    }
+
+    throw error;
+  }
+}
+
+export async function dicePlanningPack(
+  workspaceRoot: string,
+  messages: ChatMessage[],
+  diceOptions: PlanDiceOptions,
+  options: AgentInvocationOptions = {}
+): Promise<string> {
+  const planningEpoch = await preparePlanningPackForWrite(workspaceRoot, options);
+  const augmentStatus = await detectAugment();
+
+  if (!augmentStatus.available) {
+    return appendPlanningEpochSummary(
+      planningEpoch,
+      await writePlanningPackFallback(
+        workspaceRoot,
+        messages,
+        augmentStatus.error ?? "Augment CLI is unavailable",
+        "Augment CLI",
+        options
+      )
+    );
+  }
+
+  try {
+    const result = await runAugmentExec({
+      cwd: workspaceRoot,
+      prompt: await buildPlanDicePrompt(messages, workspaceRoot, diceOptions, options),
       maxTurns: 24,
       onOutputChunk: options.onOutputChunk
     });

@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  dicePlanningPack,
   detectPrimaryAgent,
   detectSupportedAgents,
   getPrimaryAgentAdapter,
@@ -13,6 +14,7 @@ import {
   type AgentInvocationOptions,
   type AgentStatus
 } from "../../src/core/agent";
+import type { PlanDiceOptions } from "../../src/core/plan-dicing";
 import type { ChatMessage } from "../../src/core/prompts";
 import { loadStoredActiveAgentId, saveStoredActiveAgentId } from "../../src/core/studio-session";
 import { createTempWorkspace } from "../helpers/workspace";
@@ -124,6 +126,32 @@ test("planner requests pass through optional streaming callbacks", async (t) => 
 
   assert.equal(reply, "done");
   assert.deepEqual(chunks, ["stream chunk 1", "stream chunk 2"]);
+});
+
+test("dice-planning-pack delegates through the resolved primary adapter", async (t) => {
+  const calls: string[] = [];
+
+  setAgentAdaptersForTesting([
+    createFakeAdapter({
+      id: "codex",
+      label: "Codex",
+      status: availableStatus("codex", "Codex"),
+      onDicePlanningPack: async () => {
+        calls.push("codex");
+        return "codex-dice";
+      }
+    })
+  ]);
+  t.after(resetAgentAdaptersForTesting);
+
+  const result = await dicePlanningPack(
+    "workspace",
+    [{ role: "user", content: "dice it" }],
+    { resolution: "high", allowLiveFireSpike: true }
+  );
+
+  assert.equal(result, "codex-dice");
+  assert.deepEqual(calls, ["codex"]);
 });
 
 test("detect-primary-agent honors the stored workspace session selection", async (t) => {
@@ -286,6 +314,12 @@ function createFakeAdapter(adapterOptions: {
   label: string;
   status: AgentStatus;
   onPlannerReply?: (workspaceRoot: string, messages: ChatMessage[], options?: AgentInvocationOptions) => Promise<string>;
+  onDicePlanningPack?: (
+    workspaceRoot: string,
+    messages: ChatMessage[],
+    diceOptions: PlanDiceOptions,
+    options?: AgentInvocationOptions
+  ) => Promise<string>;
 }): AgentAdapter {
   return {
     id: adapterOptions.id,
@@ -313,6 +347,13 @@ function createFakeAdapter(adapterOptions: {
     },
     async writePlanningPack(): Promise<string> {
       return `${adapterOptions.id}-pack`;
+    },
+    async dicePlanningPack(workspaceRoot: string, messages: ChatMessage[], diceOptions: PlanDiceOptions, invocationOptions?: AgentInvocationOptions): Promise<string> {
+      if (adapterOptions.onDicePlanningPack) {
+        return adapterOptions.onDicePlanningPack(workspaceRoot, messages, diceOptions, invocationOptions);
+      }
+
+      return `${adapterOptions.id}-dice`;
     },
     async runNextPrompt(): Promise<string> {
       return `${adapterOptions.id}-run`;

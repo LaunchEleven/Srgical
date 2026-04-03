@@ -485,6 +485,9 @@ function createFakeAdapter(options: {
     async writePlanningPack(): Promise<string> {
       return `${options.id}-pack`;
     },
+    async dicePlanningPack(): Promise<string> {
+      return `${options.id}-dice`;
+    },
     async runNextPrompt(workspaceRoot: string, prompt: string): Promise<string> {
       if (options.onRunNextPrompt) {
         return options.onRunNextPrompt(workspaceRoot, prompt);

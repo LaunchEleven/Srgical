@@ -1,5 +1,6 @@
 import { readdir } from "node:fs/promises";
 import path from "node:path";
+import type { PlanDiceOptions } from "./plan-dicing";
 import type { PlanningPackState } from "./planning-pack-state";
 import { fileExists, getPlanningPackPaths, readText, type PlanningPathOptions } from "./workspace";
 
@@ -174,6 +175,67 @@ ${renderTranscript(messages)}
 `;
 }
 
+export async function buildPlanDicePrompt(
+  messages: ChatMessage[],
+  workspaceRoot: string,
+  diceOptions: PlanDiceOptions,
+  options: PlanningPathOptions = {}
+): Promise<string> {
+  const repoTruth = await buildRepoTruthSnapshot(workspaceRoot, options);
+  const resolutionInstruction =
+    diceOptions.resolution === "low"
+      ? "Use coarse but still execution-oriented slices. Favor a smaller number of bigger step blocks."
+      : diceOptions.resolution === "high"
+        ? "Use very fine-grained evolutionary slices. Prefer tiny PR-sized steps, include concrete file/function hints when the repo truth supports them, and include short code-shape examples only when they materially reduce ambiguity."
+        : "Use medium-resolution slices. Favor practical PR-sized steps with concrete acceptance criteria and validation notes.";
+  const spikeInstruction = diceOptions.allowLiveFireSpike
+    ? "Spike mode is enabled. If a risky seam would benefit from a temporary validation spike, add an explicit spike phase or step block that happens on a throwaway branch and feeds confirmed learning back into the real plan. Do not claim the spike already happened unless the transcript or repo truth proves it."
+    : "Spike mode is disabled. Do not add throwaway spike work unless the transcript already requires it.";
+
+  return `You are refining the current planning pack by dicing it into evolutionarily small execution steps.
+
+Read the conversation transcript below and update the following files under .srgical/:
+
+- 01-product-plan.md
+- 02-agent-context-kickoff.md
+- 03-detailed-implementation-plan.md
+- 04-next-agent-prompt.md
+- HandoffDoc.md (canonical execution handoff)
+
+Dice settings:
+- requested resolution: ${diceOptions.resolution}
+- live-fire spike mode: ${diceOptions.allowLiveFireSpike ? "enabled" : "disabled"}
+- ${resolutionInstruction}
+- ${spikeInstruction}
+
+Operating rules:
+- Start from the repo truth snapshot below, not from generic assumptions.
+- Preserve the scaffold metadata sections and update the draft sections beneath them rather than deleting document identity.
+- Treat existing .srgical docs as the current source of planning truth to refine in place.
+- Keep the long-term architecture coherent, but break the path forward into the smallest practical slices that still have a meaningful acceptance check.
+- Prefer sequential step IDs and explicit dependencies over vague paragraphs.
+- Each execution slice should be small enough to land incrementally, ideally as a tiny PR, unless the requested resolution clearly calls for a coarser block.
+- Use pragmatic SOLID and loose DDD thinking where it improves boundaries, naming, or step decomposition.
+- Surface telemetry, logging, and feature-flag considerations when the work would realistically need them.
+- Do not invent repo facts, frameworks, or implementation details unsupported by the repo truth or transcript.
+
+Quality bar:
+- 01-product-plan.md should clearly describe the target outcome, deferred work, and the architectural seams the slices are protecting.
+- 02-agent-context-kickoff.md should explain what is true now, why the chosen slicing approach is appropriate, and what the immediate next work is.
+- 03-detailed-implementation-plan.md should become the main slicing artifact: concise phases, tiny step IDs, explicit dependencies, concrete acceptance criteria, and validation notes.
+- If spike mode is enabled and useful, the tracker should show exactly where the spike fits and how its findings feed the real rollout.
+- HandoffDoc.md and 04-next-agent-prompt.md should tell the execution agent to honor the chosen slice size and update docs after each step block.
+
+Repo truth snapshot:
+
+${repoTruth}
+
+Conversation transcript:
+
+${renderTranscript(messages)}
+`;
+}
+
 export async function buildAdvicePrompt(
   messages: ChatMessage[],
   workspaceRoot: string,
@@ -297,6 +359,7 @@ function renderPlanningStateSummary(packState: PlanningPackState): string {
     `- mode: ${packState.mode}`,
     `- docsPresent: ${packState.docsPresent}/5`,
     `- readiness: ${packState.readiness.score}/${packState.readiness.total}`,
+    `- readinessReadyForFirstDraft: ${packState.readiness.readyForFirstDraft}`,
     `- readinessReadyToWrite: ${packState.readiness.readyToWrite}`,
     `- missingReadinessSignals: ${packState.readiness.missingLabels.join(", ") || "none"}`,
     `- nextRecommended: ${packState.currentPosition.nextRecommended ?? "none queued"}`,
