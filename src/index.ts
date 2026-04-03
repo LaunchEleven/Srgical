@@ -48,7 +48,8 @@ program
   .argument("[workspace]", "Workspace path")
   .option("--plan <id>", "Planning pack id to inspect")
   .action(async (workspace, options: { plan?: string }) => {
-    await runDoctorCommand(workspace, { planId: options.plan });
+    const resolved = resolveWorkspacePlanArgs(workspace, options.plan);
+    await runDoctorCommand(resolved.workspace, { planId: resolved.planId });
   });
 
 program

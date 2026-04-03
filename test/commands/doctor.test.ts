@@ -1,5 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
+import { mkdtemp } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { runDoctorCommand } from "../../src/commands/doctor";
 import {
   resetAgentAdaptersForTesting,
@@ -9,7 +14,7 @@ import {
 } from "../../src/core/agent";
 import type { ChatMessage } from "../../src/core/prompts";
 import { saveStoredActiveAgentId } from "../../src/core/studio-session";
-import { getPlanningPackPaths, writeText } from "../../src/core/workspace";
+import { getPlanningPackPaths, readActivePlanId, writeText } from "../../src/core/workspace";
 import { captureStdout } from "../helpers/capture";
 import { createTempWorkspace, writePlanningPack } from "../helpers/workspace";
 
@@ -187,6 +192,17 @@ test("doctor stays helpful before any plan has been created", async (t) => {
   );
 });
 
+test("doctor accepts a positional plan id", async () => {
+  const workspace = await mkdtemp(path.join(os.tmpdir(), "srgical-doctor-cli-"));
+  await writePlanningPack(workspace, { planId: "proto" });
+
+  const result = await runCli(["src/index.ts", "doctor", "proto"], workspace);
+
+  assert.equal(result.exitCode, 0, result.stderr);
+  assert.match(result.stdout, /Active plan: proto/);
+  assert.equal(await readActivePlanId(workspace), "proto");
+});
+
 function createFakeAdapter(options: {
   id: string;
   label: string;
@@ -239,4 +255,35 @@ function unavailableStatus(id: string, label: string, error: string): AgentStatu
     command: `${id}.cmd`,
     error
   };
+}
+
+function runCli(args: string[], cwd: string): Promise<{ exitCode: number | null; stdout: string; stderr: string }> {
+  return new Promise((resolve, reject) => {
+    const resolvedArgs = args.map((arg, index) => (index === 0 ? path.resolve(process.cwd(), arg) : arg));
+    const tsxLoaderUrl = pathToFileURL(path.resolve(process.cwd(), "node_modules", "tsx", "dist", "loader.mjs")).href;
+    const child = spawn(process.execPath, ["--import", tsxLoaderUrl, ...resolvedArgs], {
+      cwd,
+      stdio: ["ignore", "pipe", "pipe"],
+      env: {
+        ...process.env,
+        SRGICAL_DISABLE_UPDATE_CHECK: "true"
+      }
+    });
+
+    let stdout = "";
+    let stderr = "";
+
+    child.stdout.on("data", (chunk) => {
+      stdout += String(chunk);
+    });
+
+    child.stderr.on("data", (chunk) => {
+      stderr += String(chunk);
+    });
+
+    child.on("error", reject);
+    child.on("close", (exitCode) => {
+      resolve({ exitCode, stdout, stderr });
+    });
+  });
 }
