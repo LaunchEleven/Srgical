@@ -1,7 +1,7 @@
 import process from "node:process";
 import { resolvePrimaryAgent, type AgentStatus } from "../core/agent";
 import { readPlanningPackState, type PlanningStepSummary } from "../core/planning-pack-state";
-import { isGitRepo, listPlanningDirectories, resolvePlanId, resolveWorkspace } from "../core/workspace";
+import { isGitRepo, listPlanningDirectories, readActivePlanId, resolvePlanId, resolveWorkspace } from "../core/workspace";
 import { paintLine, renderCommandBanner, renderSectionHeading, toneForAvailabilityLine } from "../ui/terminal-theme";
 
 type DoctorCommandOptions = {
@@ -10,16 +10,20 @@ type DoctorCommandOptions = {
 
 export async function runDoctorCommand(workspaceArg?: string, options: DoctorCommandOptions = {}): Promise<void> {
   const workspace = resolveWorkspace(workspaceArg);
-  const selectedPlanId = await resolvePlanId(workspace, options.planId);
+  const selectedPlanId = options.planId ? await resolvePlanId(workspace, options.planId) : await readActivePlanId(workspace);
   const [resolvedAgent, gitRepo, planRefs, selectedPlanState] = await Promise.all([
-    resolvePrimaryAgent(workspace, { planId: selectedPlanId }),
+    selectedPlanId ? resolvePrimaryAgent(workspace, { planId: selectedPlanId }) : resolvePrimaryAgent(),
     isGitRepo(workspace),
     listPlanningDirectories(workspace),
-    readPlanningPackState(workspace, { planId: selectedPlanId })
+    selectedPlanId ? readPlanningPackState(workspace, { planId: selectedPlanId }) : Promise.resolve(null)
   ]);
 
   const { status: activeAgent, statuses } = resolvedAgent;
-  const nextMove = selectedPlanState.packPresent
+  const nextMove = !selectedPlanState
+    ? planRefs.length === 0
+      ? "Next move: run `srgical init <id>` for a scaffold or `srgical studio <id>` to start planning."
+      : "Next move: pass `--plan <id>` to inspect a named pack, or open `srgical studio <id>` to activate one."
+    : selectedPlanState.packPresent
     ? selectedPlanState.mode === "Ready to Write" || selectedPlanState.mode === "Gathering Context"
       ? "Next move: run `srgical studio <id>` (or `srgical studio plan --plan <id>` / `srgical ssp <id>`) to refine the plan, then `/review` and `/confirm-plan` before `/write`."
       : selectedPlanState.mode === "Ready to Execute" || selectedPlanState.mode === "Execution Active" || selectedPlanState.mode === "Auto Running"
@@ -28,12 +32,12 @@ export async function runDoctorCommand(workspaceArg?: string, options: DoctorCom
     : "Next move: run `srgical init <id>` for a scaffold or `srgical studio <id>` to start planning.";
 
   const lines = [
-    ...renderCommandBanner("srgical", `doctor ${selectedPlanId}`),
+    ...renderCommandBanner("srgical", selectedPlanId ? `doctor ${selectedPlanId}` : "doctor"),
     "",
     renderSectionHeading("Workspace"),
     `Workspace: ${workspace}`,
     `Git repo: ${gitRepo ? "yes" : "no"}`,
-    `Active plan: ${selectedPlanId}`,
+    `Active plan: ${selectedPlanId ?? "none"}`,
     `Active agent: ${activeAgent.label} (${activeAgent.id}) - ${formatAgentAvailability(activeAgent)}`,
     "",
     renderSectionHeading("Agents"),
@@ -53,7 +57,7 @@ export async function runDoctorCommand(workspaceArg?: string, options: DoctorCom
     }
   }
 
-  lines.push("", renderSectionHeading("Selected Plan"), `Selected plan details (${selectedPlanId}):`, ...renderPlanDetailLines(selectedPlanState));
+  lines.push("", renderSectionHeading("Selected Plan"), ...renderSelectedPlanLines(selectedPlanId, selectedPlanState, planRefs.length));
   lines.push("", renderSectionHeading("Next"), nextMove);
 
   process.stdout.write(`${lines.map((line) => styleDoctorLine(line)).join("\n")}\n`);
@@ -161,6 +165,23 @@ function renderPlanDetailLines(state: Awaited<ReturnType<typeof readPlanningPack
   }
 
   return lines;
+}
+
+function renderSelectedPlanLines(
+  selectedPlanId: string | null,
+  selectedPlanState: Awaited<ReturnType<typeof readPlanningPackState>> | null,
+  planCount: number
+): string[] {
+  if (!selectedPlanId || !selectedPlanState) {
+    return [
+      "Selected plan details: none selected yet.",
+      planCount > 0
+        ? "Use `--plan <id>` to inspect a named pack, or open `srgical studio <id>` to activate one."
+        : "Use `srgical init <id>` or `srgical studio <id>` to create the first named planning pack."
+    ];
+  }
+
+  return [`Selected plan details (${selectedPlanId}):`, ...renderPlanDetailLines(selectedPlanState)];
 }
 
 function renderNextStepLines(

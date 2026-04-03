@@ -156,6 +156,37 @@ test("doctor reports missing supported agents safely when no next step is queued
   );
 });
 
+test("doctor stays helpful before any plan has been created", async (t) => {
+  const workspace = await createTempWorkspace("srgical-doctor-empty-");
+
+  setAgentAdaptersForTesting([
+    createFakeAdapter({
+      id: "codex",
+      label: "Codex",
+      status: availableStatus("codex", "Codex", "0.113.0")
+    }),
+    createFakeAdapter({
+      id: "claude",
+      label: "Claude Code",
+      status: unavailableStatus("claude", "Claude Code", "missing claude")
+    })
+  ]);
+  t.after(resetAgentAdaptersForTesting);
+
+  const output = await captureStdout(async () => {
+    await runDoctorCommand(workspace);
+  });
+
+  assert.match(output, /Active plan: none/);
+  assert.match(output, /Supported agents:/);
+  assert.match(output, /- none: no planning packs detected yet/);
+  assert.match(output, /Selected plan details: none selected yet\./);
+  assert.match(
+    output,
+    /Next move: run `srgical init <id>` for a scaffold or `srgical studio <id>` to start planning\./
+  );
+});
+
 function createFakeAdapter(options: {
   id: string;
   label: string;

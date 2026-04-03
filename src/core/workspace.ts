@@ -198,5 +198,19 @@ export async function writeText(filePath: string, content: string): Promise<void
 }
 
 export async function isGitRepo(root: string): Promise<boolean> {
-  return fileExists(path.join(root, ".git"));
+  let current = path.resolve(root);
+
+  while (true) {
+    if (await fileExists(path.join(current, ".git"))) {
+      return true;
+    }
+
+    const parent = path.dirname(current);
+
+    if (parent === current) {
+      return false;
+    }
+
+    current = parent;
+  }
 }
