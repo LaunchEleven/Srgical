@@ -13,43 +13,37 @@ export function buildPlanTemplate(root: string): string {
     `# ${projectName} Product Plan
 
 Updated: ${new Date().toISOString().slice(0, 10)}
+Updated By: srgical
 
-## Purpose
+## SRGICAL META
 
-This file is the stable high-level plan for the current project. It should capture the architecture direction, the
-workflow shape, and the non-negotiable product rules that each execution slice must preserve.
+- doc role: stable product direction and execution framing
+- scaffold status: boilerplate only until the first grounded draft is written
+- source inputs: planning transcript, repo truth, explicit user decisions, current constraints
+- writing conventions:
+  - separate locked decisions, working assumptions, and unknowns
+  - prefer concrete repo truth over generic best practice wording
+  - keep SOLID, loose DDD seams, telemetry, logging, and feature flags in view when they matter
 
-## Mission
+## Problem Statement
 
-Define and ship a local-first CLI that helps a user:
+- Pending first authored draft.
 
-1. plan a project with an AI inside a dedicated interface,
-2. write a tracker pack into the repo,
-3. execute the next eligible delivery slice with AI support,
-4. keep progress incremental, validated, and resumable.
+## Desired Outcome
+
+- Pending first authored draft.
 
 ## Locked Decisions
 
-- planning packs live under \`.srgical/\`
-- the workflow remains markdown-first and repo-visible
-- AI actions remain explicit and user-triggered
-- execution should happen in small validated slices
-- the interface should feel intentionally designed, not merely functional
+- Pending first authored draft.
 
-## Primary Workflow To Optimize
+## Working Assumptions
 
-1. open a studio
-2. talk to the planner
-3. trigger plan-pack generation
-4. run the next eligible step block
-5. review validation and continue
+- Pending first authored draft.
 
-## Target End State
+## Risks And Watchouts
 
-- the tool owns the planning ritual instead of relying on repeated prompt pastes
-- the pack format stays readable by humans and agents
-- agent execution can resume cleanly from repo state
-- the UI feels like a sharp creative control room
+- Pending first authored draft.
 `,
     "plan",
     "boilerplate"
@@ -65,17 +59,24 @@ export function buildContextTemplate(paths: PlanningPackPaths): string {
 Updated: ${new Date().toISOString()}
 Updated By: srgical
 
-## Mission
+## SRGICAL META
 
-Continue the current project from the planning pack in ${planDir}. Read the stable plan, the tracker, and the next
-agent prompt before making changes.
+- doc role: current repo truth, working agreements, and handoff trail for the active plan
+- scaffold status: boilerplate only until the first grounded draft is written
+- planning pack directory: ${planDir}
+- writing conventions:
+  - summarize what is true in the repo today, not what we hope becomes true later
+  - record blockers, validation, and why the next step is next
+
+## Current Repo Truth
+
+- Pending first authored draft.
 
 ## Working Agreements
 
-- execute only the next eligible step or contiguous low-risk step block
-- keep changes incremental and validated
-- update the tracker and this handoff log after each completed block
-- stop when a blocker changes scope materially
+- Execute only the next eligible step or a tiny contiguous step block.
+- Keep validation, logging, and rollout considerations visible.
+- Stop when scope meaningfully changes or new architecture work is required.
 
 ## Current Position
 
@@ -88,10 +89,8 @@ agent prompt before making changes.
 
 ### ${new Date().toISOString().slice(0, 10)} - BOOT-001 - srgical
 
-- Created the initial \`.srgical/\` planning pack.
-- Active planning directory: \`${paths.relativeDir}\`.
-- Validation: confirmed the four planning-pack files were written.
-- Blockers: none.
+- Created the initial planning scaffold in \`${paths.relativeDir}\`.
+- Validation: scaffold files were written successfully.
 - Next recommended work: \`PLAN-001\`.
 `,
     "context",
@@ -105,6 +104,16 @@ export function buildTrackerTemplate(): string {
 
 Updated: ${new Date().toISOString()}
 Updated By: srgical
+
+## SRGICAL META
+
+- doc role: execution tracker and slicing plan
+- scaffold status: boilerplate only until the first grounded draft is written
+- intended evolution: start with planning and slicing, then become the execution source of truth
+- writing conventions:
+  - prefer evolutionarily small steps
+  - acceptance should be validation-aware and concrete
+  - note telemetry, feature-flag, and rollout considerations when relevant
 
 ## Status Legend
 
@@ -127,6 +136,7 @@ Updated By: srgical
 - Do not mark a step \`done\` without recording validation notes.
 - Update the current position and handoff log after each completed block.
 - Stop immediately when a blocker changes scope materially.
+- Prefer slices that could plausibly land as tiny PRs.
 
 ## Bootstrap
 
@@ -138,13 +148,13 @@ Updated By: srgical
 
 | ID | Status | Depends On | Scope | Acceptance | Notes |
 | --- | --- | --- | --- | --- | --- |
-| PLAN-001 | pending | BOOT-001 | Convert the planning conversation into a stable product plan, kickoff log, tracker, and next-agent prompt. | The pack reflects the real project direction and is ready for execution. | Pending planner write. |
+| PLAN-001 | pending | BOOT-001 | Turn the planning conversation into the first grounded draft of this pack. | The pack reflects real repo truth, constraints, and a first executable slice. | Pending first authored draft. |
 
 ## Delivery
 
 | ID | Status | Depends On | Scope | Acceptance | Notes |
 | --- | --- | --- | --- | --- | --- |
-| EXEC-001 | pending | PLAN-001 | Execute the next eligible implementation slice from the tracker. | The selected slice is complete, validated, and logged. | Pending tracker detail. |
+| EXEC-001 | pending | PLAN-001 | Placeholder for the first execution slice. Replace during the first grounded draft. | The first real execution slice is defined with validation and rollout notes. | Pending tracker detail. |
   `,
     "tracker",
     "boilerplate"
@@ -158,6 +168,15 @@ export function buildHandoffTemplate(paths: PlanningPackPaths): string {
     `# HandoffDoc
 
 This is the canonical execution handoff for the current plan.
+
+## SRGICAL META
+
+- doc role: execution handoff used by operate mode and direct run-next flows
+- scaffold status: boilerplate only until the first grounded draft is written
+- writing conventions:
+  - keep scope incremental
+  - call out validation, telemetry, and rollout expectations when relevant
+  - stop before broadening into a larger subsystem without an explicit tracked reason
 
 ${buildExecutionHandoffBody(planDir)}
 `,
@@ -174,6 +193,12 @@ export function buildNextPromptTemplate(paths: PlanningPackPaths): string {
 
 Compatibility document retained for older workflows.
 The canonical execution handoff now lives in \`${planDir}/HandoffDoc.md\`.
+
+## SRGICAL META
+
+- doc role: compatibility mirror of HandoffDoc.md
+- scaffold status: boilerplate only until the first grounded draft is written
+- writing conventions: keep this aligned with the canonical handoff
 
 ${buildExecutionHandoffBody(planDir)}
 `,
@@ -193,7 +218,9 @@ export function getInitialTemplates(paths: PlanningPackPaths): Record<string, st
 }
 
 function buildExecutionHandoffBody(planDir: string): string {
-  return `You are continuing the current project from the existing repo state. Do not restart product design or casually rewrite
+  return `This scaffold is intentionally lightweight until the first grounded draft is written.
+
+You are continuing the current project from the existing repo state. Do not restart product design or casually rewrite
 the whole codebase.
 
 ## Read Order

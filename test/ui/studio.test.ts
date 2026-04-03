@@ -74,6 +74,22 @@ test("scaffolded ready plans guide users to first-write before confirmation", ()
   assert.match(renderWorkspaceSelectionMessage(workspace, state), /first grounded draft/);
 });
 
+test("scaffolded packs with core readiness but pending approval point users at write explicitly", () => {
+  const workspace = "G:\\code\\Launch11Projects\\demo";
+  const state = createPackState({
+    packPresent: true,
+    trackerReadable: true,
+    mode: "Gathering Context",
+    packMode: "scaffolded",
+    docsPresent: 0,
+    readinessScore: 4,
+    readinessReadyForFirstDraft: true,
+    readinessReadyToWrite: false
+  });
+
+  assert.match(formatPlanningPackSummary(workspace, state), /next: \/write when you want to lock the first grounded draft/);
+});
+
 test("format-planning-pack-summary makes boilerplate scaffolds obvious", () => {
   const workspace = "G:\\code\\Launch11Projects\\demo";
   const state = createPackState({
@@ -431,6 +447,8 @@ function createPackState(options: {
   mode?: PlanningPackState["mode"];
   packMode?: PlanningPackState["packMode"];
   docsPresent?: number;
+  readinessScore?: number;
+  readinessReadyForFirstDraft?: boolean;
   readinessReadyToWrite?: boolean;
   humanWriteConfirmed?: boolean;
 }): PlanningPackState {
@@ -461,8 +479,10 @@ function createPackState(options: {
     packMode: options.packMode ?? (options.packPresent ? "authored" : "scaffolded"),
     readiness: {
       checks: [],
-      score: options.packPresent ? 3 : 0,
-      total: 4,
+      score: options.readinessScore ?? (options.packPresent ? 3 : 0),
+      total: 5,
+      approvalCaptured: options.readinessReadyToWrite ?? false,
+      readyForFirstDraft: options.readinessReadyForFirstDraft ?? options.readinessReadyToWrite ?? false,
       readyToWrite: options.readinessReadyToWrite ?? false,
       missingLabels: []
     },

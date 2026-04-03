@@ -29,7 +29,7 @@ export type PlanningStepSummary = {
 };
 
 export type PlanningReadinessCheck = {
-  id: "goal" | "repo" | "constraints" | "execution";
+  id: "goal" | "repo" | "constraints" | "execution" | "approval";
   label: string;
   passed: boolean;
 };
@@ -38,6 +38,8 @@ export type PlanningReadiness = {
   checks: PlanningReadinessCheck[];
   score: number;
   total: number;
+  approvalCaptured: boolean;
+  readyForFirstDraft: boolean;
   readyToWrite: boolean;
   missingLabels: string[];
 };
@@ -173,7 +175,7 @@ function derivePlanningMode(input: {
   }
 
   if (input.packMode === "scaffolded") {
-    return input.readiness.readyToWrite ? "Ready to Write" : "Gathering Context";
+    return input.readiness.readyForFirstDraft ? "Ready to Write" : "Gathering Context";
   }
 
   if (!isExecutionStepSummary(input.nextStepSummary)) {
@@ -202,6 +204,10 @@ function buildReadiness(messages: { role: "user" | "assistant" | "system"; conte
   const substantiveAssistantMessages = assistantMessages.filter((message) => message.content.trim().length >= 80);
   const userTranscript = userMessages.map((message) => message.content.toLowerCase()).join("\n");
   const transcript = effectiveMessages.map((message) => message.content.toLowerCase()).join("\n");
+  const commitmentCaptured =
+    /(^|\b)(yes|agreed|approved|go with that|use that|let'?s do that|write (it|that|the pack|the draft)|capture that|lock it in|sounds right|that seam works)\b/.test(
+      userTranscript
+    );
   const checks: PlanningReadinessCheck[] = [
     {
       id: "goal",
@@ -223,29 +229,28 @@ function buildReadiness(messages: { role: "user" | "assistant" | "system"; conte
       label: "First executable slice captured",
       passed:
         isExecutionStepSummary(nextStepSummary) || /step|slice|execute|execution|implement|delivery|tracker/.test(transcript)
+    },
+    {
+      id: "approval",
+      label: "Explicit go-ahead captured",
+      passed: commitmentCaptured
     }
   ];
 
   const score = checks.filter((check) => check.passed).length;
-  const commitmentCaptured =
-    /(^|\b)(yes|agreed|approved|go with that|use that|let'?s do that|write (it|that|the pack)|capture that|lock it in|sounds right|that seam works)\b/.test(
-      userTranscript
-    );
-  const readyToWrite =
-    score === checks.length &&
+  const readyForFirstDraft =
+    checks.filter((check) => check.id !== "approval").every((check) => check.passed) &&
     substantiveUserMessages.length >= 2 &&
-    substantiveAssistantMessages.length >= 2 &&
-    commitmentCaptured;
+    substantiveAssistantMessages.length >= 2;
+  const readyToWrite = readyForFirstDraft && commitmentCaptured;
   const missingLabels = checks.filter((check) => !check.passed).map((check) => check.label);
-
-  if (!commitmentCaptured) {
-    missingLabels.push("Explicit go-ahead captured");
-  }
 
   return {
     checks,
     score,
     total: checks.length,
+    approvalCaptured: commitmentCaptured,
+    readyForFirstDraft,
     readyToWrite,
     missingLabels
   };

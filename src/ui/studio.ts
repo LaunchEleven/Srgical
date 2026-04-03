@@ -1073,7 +1073,7 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
         [
           `Created and selected plan \`${createdPaths.planId}\`.`,
           `Planning directory: ${createdPaths.relativeDir}`,
-          "Use `/readiness` while gathering context, then `/write` to generate the first grounded draft."
+          "Use `/readiness` while gathering context, then `/write` when you want to lock the first grounded draft."
         ].join("\n")
       );
       return;
@@ -1121,7 +1121,7 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
             : "Human write confirmation: pending",
           "Run `/open all` to open every planning doc in VS Code.",
           packState.packMode === "scaffolded"
-            ? "This plan is still scaffolded; run `/write` to generate the first grounded draft from the transcript."
+            ? "This plan is still scaffolded; run `/write` when you want to lock the first grounded draft from the transcript."
             : "Run `/confirm-plan` after human review is complete, then `/write` to refresh the authored plan."
         ].join("\n")
       );
@@ -1401,7 +1401,7 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
     if (command === "/write") {
       const packState = latestPackState ?? (await readPlanningPackState(workspace, { planId }));
 
-      if (!packState.readiness.readyToWrite) {
+      if (!canWritePlanningPack(packState)) {
         await appendSystemMessage(
           [
             "Planning pack write blocked: readiness requirements are not fully satisfied yet.",
@@ -1916,7 +1916,7 @@ export function buildStudioHeaderContent(workspace: string, packState: PlanningP
 export function formatPlanningPackSummary(workspace: string, packState: PlanningPackState): string {
   const planId = packState.planId ?? "default";
   const readinessScore = packState.readiness?.score ?? 0;
-  const readinessTotal = packState.readiness?.total ?? 4;
+  const readinessTotal = packState.readiness?.total ?? 5;
   const docsPresent = packState.docsPresent ?? (packState.packPresent ? 5 : 0);
   const lines = [
     `state: ${describePlanningPackState(packState)}`,
@@ -1934,18 +1934,9 @@ export function formatPlanningPackSummary(workspace: string, packState: Planning
   ];
 
   const mode = deriveDisplayMode(packState);
-  const readyToWrite = packState.readiness?.readyToWrite ?? false;
 
   if (mode === "Gathering Context" || mode === "Ready to Write") {
-    lines.push(
-      readyToWrite
-        ? packState.packMode === "scaffolded"
-          ? "next: /write will generate the first grounded draft from this transcript"
-          : packState.humanWriteConfirmed
-            ? "next: /write will refresh the authored planning doc set"
-            : "next: /review, /open all, and /confirm-plan before /write"
-        : "next: keep gathering context or run /readiness"
-    );
+    lines.push(`next: ${describePlanningWriteNextMove(packState)}`);
   } else if (mode === "Ready to Execute" || mode === "Execution Active" || mode === "Auto Running") {
     lines.push("next: /preview, /run, or /auto when ready");
   } else if (!packState.packPresent) {
@@ -1967,14 +1958,22 @@ export function renderWorkspaceSelectionMessage(workspace: string, packState: Pl
     `- planning dir: ${getPlanningPackPaths(workspace, { planId }).relativeDir}`,
     `- plan status: ${describePlanningPackState(packState)}`,
     `- readiness: ${packState.readiness.score}/${packState.readiness.total}`,
-    `- human write gate: ${packState.humanWriteConfirmed ? "confirmed" : "pending"}`,
+    `- human write gate: ${
+      requiresHumanWriteConfirmation(packState)
+        ? packState.humanWriteConfirmed
+          ? "confirmed"
+          : "pending"
+        : "not required for first scaffolded draft"
+    }`,
     "",
     "Use `/workspace <path>` to switch repos.",
     "Use `/plans` to inspect plan directories and `/plan <id>` to switch plans.",
     "Use `/read <path>` to inject large file context directly into the transcript.",
     !packState.packPresent || packState.mode === "Gathering Context" || packState.mode === "Ready to Write"
       ? packState.packMode === "scaffolded"
-        ? "Use `/write` to generate the first grounded draft once readiness is satisfied."
+        ? packState.readiness.readyForFirstDraft
+          ? "Use `/write` when you want to lock the first grounded draft from this conversation."
+          : "Use `/readiness` to see which planning signals are still missing before the first grounded draft."
         : "Use `/review`, `/open all`, `/confirm-plan`, then `/write` to refresh the authored plan."
       : "Use `/write` when you want to refresh the selected plan from this transcript."
   ].join("\n");
@@ -2006,7 +2005,7 @@ function renderFirstRunOrientationMessage(workspace: string, packState: Planning
     "1. Tell the planner what you are building, what is already true in the repo, and the main constraint or risk.",
     "2. Use `/read [path]` to inject real repo files instead of describing them from memory.",
     "3. If you want to interrogate what just happened, use `/assess [focus]`, `/gather [focus]`, `/gaps [focus]`, `/ready [focus]`, `/status`, or `/readiness`.",
-    "4. Once the direction is solid, run `/write` for the first grounded draft.",
+    "4. Once the direction is solid, run `/readiness`, then `/write` when you want to lock the first grounded draft.",
     "5. Review with `/review`, open files with `/open all`, then run `/confirm-plan` before refreshing an authored plan.",
     "6. When the tracker is execution-ready, open `srgical studio operate <plan>` or run `srgical studio operate --plan <id>`.",
     "",
@@ -2221,7 +2220,7 @@ function renderReadinessMessage(packState: PlanningPackState): string {
         : packState.humanWriteConfirmed
           ? "Next: run `/write` to refresh the authored planning doc set."
           : "Next: run `/review`, then `/confirm-plan` before `/write`."
-      : "Next: keep gathering repo truth, constraints, and the first execution slice."
+      : `Next: ${describePlanningWriteNextMove(packState)}`
   ].join("\n");
 }
 
@@ -3135,6 +3134,36 @@ function renderPlanUsageMessage(currentPlanId: string, paths: PlanningPackPaths)
 
 function requiresHumanWriteConfirmation(packState: PlanningPackState): boolean {
   return packState.packMode === "authored";
+}
+
+function canWritePlanningPack(packState: PlanningPackState): boolean {
+  if (packState.packMode === "scaffolded") {
+    return packState.readiness.readyForFirstDraft;
+  }
+
+  return packState.readiness.readyToWrite;
+}
+
+function describePlanningWriteNextMove(packState: PlanningPackState): string {
+  if (packState.packMode === "authored") {
+    if (packState.readiness.readyToWrite) {
+      return packState.humanWriteConfirmed
+        ? "/write will refresh the authored planning doc set"
+        : "/review, /open all, and /confirm-plan before /write";
+    }
+
+    return "keep gathering context or run /readiness";
+  }
+
+  if (packState.readiness.readyToWrite) {
+    return "/write will generate the first grounded draft from this transcript";
+  }
+
+  if (packState.readiness.readyForFirstDraft) {
+    return "/write when you want to lock the first grounded draft";
+  }
+
+  return "keep gathering context or run /readiness";
 }
 
 async function renderPlansMessage(workspace: string, currentPlanId: string): Promise<string> {

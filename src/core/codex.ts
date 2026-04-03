@@ -10,7 +10,7 @@ import {
   type PlanningEpochPreparation
 } from "./planning-epochs";
 import { buildAdvicePrompt, buildPackWriterPrompt, buildPlannerPrompt, type ChatMessage } from "./prompts";
-import type { PlanningPackState } from "./planning-pack-state";
+import { readPlanningPackState, type PlanningPackState } from "./planning-pack-state";
 
 export type CodexStatus = {
   available: boolean;
@@ -73,9 +73,10 @@ export async function requestPlannerReply(
   messages: ChatMessage[],
   options: AgentInvocationOptions = {}
 ): Promise<string> {
+  const packState = await readPlanningPackState(workspaceRoot, options);
   const result = await runCodexExec({
     cwd: workspaceRoot,
-    prompt: buildPlannerPrompt(messages, workspaceRoot),
+    prompt: buildPlannerPrompt(messages, workspaceRoot, packState),
     allowWrite: false,
     skipGitRepoCheck: true,
     ephemeral: true,

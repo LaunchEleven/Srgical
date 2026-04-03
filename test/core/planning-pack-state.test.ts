@@ -73,6 +73,8 @@ test("readPlanningPackState does not award readiness points for the default stud
   assert.equal(state.mode, "Gathering Context");
   assert.equal(state.docsPresent, 0);
   assert.equal(state.readiness.score, 0);
+  assert.equal(state.readiness.total, 5);
+  assert.equal(state.readiness.readyForFirstDraft, false);
   assert.equal(state.readiness.readyToWrite, false);
   assert.match(state.readiness.missingLabels.join(", "), /Goal captured/);
 });
@@ -113,7 +115,9 @@ test("readPlanningPackState keeps scaffolded packs in gathering-context mode wit
 
   const state = await readPlanningPackState(workspace);
 
-  assert.equal(state.mode, "Gathering Context");
+  assert.equal(state.mode, "Ready to Write");
+  assert.equal(state.readiness.score, 4);
+  assert.equal(state.readiness.readyForFirstDraft, true);
   assert.equal(state.readiness.readyToWrite, false);
   assert.match(state.readiness.missingLabels.join(", "), /Explicit go-ahead captured/);
 });
@@ -132,6 +136,7 @@ test("readPlanningPackState ignores echoed slash commands for readiness", async 
   const state = await readPlanningPackState(workspace);
 
   assert.equal(state.readiness.score, 0);
+  assert.equal(state.readiness.readyForFirstDraft, false);
   assert.equal(state.readiness.readyToWrite, false);
 });
 
@@ -177,5 +182,7 @@ test("readPlanningPackState marks scaffolded packs ready only after a clear go-a
   const state = await readPlanningPackState(workspace);
 
   assert.equal(state.mode, "Ready to Write");
+  assert.equal(state.readiness.score, 5);
+  assert.equal(state.readiness.readyForFirstDraft, true);
   assert.equal(state.readiness.readyToWrite, true);
 });

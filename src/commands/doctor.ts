@@ -25,7 +25,9 @@ export async function runDoctorCommand(workspaceArg?: string, options: DoctorCom
       : "Next move: pass `--plan <id>` to inspect a named pack, or open `srgical studio <id>` to activate one."
     : selectedPlanState.packPresent
     ? selectedPlanState.mode === "Ready to Write" || selectedPlanState.mode === "Gathering Context"
-      ? "Next move: run `srgical studio <id>` (or `srgical studio plan --plan <id>` / `srgical ssp <id>`) to refine the plan, then `/review` and `/confirm-plan` before `/write`."
+      ? selectedPlanState.packMode === "scaffolded" && selectedPlanState.readiness.readyForFirstDraft
+        ? "Next move: run `srgical studio <id>` (or `srgical studio plan --plan <id>` / `srgical ssp <id>`) and use `/write` when you want to lock the first grounded draft."
+        : "Next move: run `srgical studio <id>` (or `srgical studio plan --plan <id>` / `srgical ssp <id>`) to refine the plan and inspect `/readiness`."
       : selectedPlanState.mode === "Ready to Execute" || selectedPlanState.mode === "Execution Active" || selectedPlanState.mode === "Auto Running"
         ? "Next move: run `srgical studio operate --plan <id>` (or `srgical sso --plan <id>`) for guided automation, or `srgical run-next --plan <id>` for direct execution."
         : "Next move: run `srgical studio <id>` (or `srgical studio plan --plan <id>` / `srgical ssp <id>`) to queue or refine the next execution-ready step."

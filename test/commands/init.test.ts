@@ -6,7 +6,7 @@ import { loadPlanningState } from "../../src/core/planning-state";
 import { saveStudioSession } from "../../src/core/studio-session";
 import { captureStdout } from "../helpers/capture";
 import { createTempWorkspace } from "../helpers/workspace";
-import { getPlanningPackPaths, readActivePlanId, writeText } from "../../src/core/workspace";
+import { getPlanningPackPaths, readActivePlanId, readText, writeText } from "../../src/core/workspace";
 import { mkdtemp } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -27,6 +27,8 @@ test("init --plan creates a named planning pack and activates it", async () => {
   assert.equal(await readActivePlanId(workspace), "release-readiness");
   assert.equal(planningState?.packMode, "scaffolded");
   assert.match(paths.relativeDir, /\.srgical\/plans\/release-readiness/);
+  assert.match(await readText(paths.plan), /## SRGICAL META/);
+  assert.match(await readText(paths.plan), /Pending first authored draft\./);
 });
 
 test("init without --plan fails because an explicit named plan is required", async () => {

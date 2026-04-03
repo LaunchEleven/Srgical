@@ -94,7 +94,7 @@ test("doctor reports all supported agents and the queued next step", async (t) =
   assert.match(output, /Plans:/);
   assert.match(
     output,
-    /default \[active\]: \| path \.srgical\/plans\/default \| mode Execution Active \| docs 1\/5 \| human write gate pending \| readiness 1\/4 \| execution started \| auto idle/
+    /default \[active\]: \| path \.srgical\/plans\/default \| mode Execution Active \| docs 1\/5 \| human write gate pending \| readiness 1\/5 \| execution started \| auto idle/
   );
   assert.match(output, /Next Step: EXEC001 \(Execution\)/);
   assert.match(output, /Docs present: 1\/5/);

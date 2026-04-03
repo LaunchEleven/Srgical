@@ -17,7 +17,10 @@ export const PLANNING_FRAMEWORK_WRAPPER = [
   "- Separate locked decisions, working assumptions, and unknowns explicitly.",
   "- Prefer one concrete recommendation over broad option-dumps.",
   "- Keep the next move executable: name the smallest practical next step.",
-  "- If something is unknown, say it is unknown instead of smoothing it over."
+  "- If something is unknown, say it is unknown instead of smoothing it over.",
+  "- Apply SOLID pragmatically when it clarifies boundaries; avoid ceremony for its own sake.",
+  "- Think loosely in DDD terms about domains, seams, invariants, and where behavior belongs.",
+  "- Consider telemetry, logging, and feature-flag implications when the proposed work would benefit from them."
 ].join("\n");
 
 function renderTranscript(messages: ChatMessage[]): string {
@@ -29,7 +32,7 @@ function renderTranscript(messages: ChatMessage[]): string {
     .join("\n\n");
 }
 
-export function buildPlannerPrompt(messages: ChatMessage[], workspaceRoot: string): string {
+export function buildPlannerPrompt(messages: ChatMessage[], workspaceRoot: string, packState?: PlanningPackState): string {
   const usedBlockerQuestions = countPlannerQuestionTurns(messages);
   const remainingBlockerQuestions = Math.max(0, PLANNER_BLOCKER_QUESTION_BUDGET - usedBlockerQuestions);
   const userWantsConvergence = detectUserConvergenceSignal(messages);
@@ -69,6 +72,12 @@ Convergence signal:
 - If yes, converge now unless one true blocker prevents writing.
 - If no, still avoid open-ended loops; close once practical sufficiency is reached.
 
+Deterministic planning state:
+${packState ? renderPlanningStateSummary(packState) : "- unavailable during this request"}
+- Treat this state as the source of truth for whether the CLI will actually allow \`/write\`.
+- If readiness says the first draft is not yet writable, do not tell the user to run \`/write\` now.
+- If the only missing signal is explicit approval, ask for approval or tell the user they can run \`/write\` when they want to lock the first draft.
+
 Response contract (choose exactly one mode):
 Mode A - Single blocker (only when truly required)
 LOCKED NOW
@@ -86,7 +95,7 @@ WORKING ASSUMPTIONS
 WATCHOUTS
 - concise bullets of the main execution risks or ambiguity still worth noting
 NEXT
-- the best next move, usually continue planning or run /write when the user clearly wants the draft
+- the best next move, usually continue planning, gather repo truth, or ask for explicit approval to write the first draft
 
 Mode C - Locked plan summary (only after the user clearly signals convergence or approval)
 LOCKED PLAN
@@ -137,16 +146,20 @@ Read the conversation transcript below and update or create the following files 
 Operating rules:
 - Start from the repo truth snapshot below, not from generic assumptions.
 - Treat any existing .srgical files as current project state to refine in place, not blank templates to overwrite casually.
+- Preserve the scaffold metadata sections and update the draft sections beneath them rather than deleting document identity.
 - Preserve valid locked decisions, completed steps, and step IDs unless the repo truth or conversation clearly requires a change.
 - Prefer repo truth for what already exists in the codebase and the conversation for what the user now wants next.
 - Make the pack specific to the actual commands, docs, stack, and current capabilities in this workspace.
 - Do not invent frameworks, release channels, adapters, tests, or subsystems that are not supported by the repo truth or transcript.
 - Keep the workflow local-first, explicit, incremental, and validation-aware.
+- Apply SOLID and loose DDD thinking pragmatically where it improves boundaries, naming, or step structure.
+- Capture telemetry, logging, and feature-flag considerations when the work would realistically need them.
 
 Quality bar:
 - 01-product-plan.md should capture the real product direction, locked decisions, and current repo findings.
 - 02-agent-context-kickoff.md should capture current repo truth, working agreements, current position, and a concise handoff log.
 - 03-detailed-implementation-plan.md should keep a readable status legend, current position, phase-based next steps, and concrete notes.
+- The first grounded draft should replace scaffold-only placeholders with authored content or explicit open questions.
 - HandoffDoc.md should enforce incremental execution, validation, tracker updates, and stop conditions.
 - 04-next-agent-prompt.md should remain aligned with HandoffDoc.md for compatibility with older execution flows.
 - The tracker should stay execution-ready: use concrete step IDs, realistic acceptance criteria, and concise validation notes instead of filler.
