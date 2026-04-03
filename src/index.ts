@@ -9,16 +9,12 @@ import { runRunNextCommand } from "./commands/run-next";
 import { runStudioConfigCommand } from "./commands/studio-config";
 import { runStudioOperateCommand, runStudioPlanCommand } from "./commands/studio";
 import { resolveWorkspacePlanArgs } from "./core/cli-args";
+import { resolveUpgradeNotice } from "./core/update-notice";
 import { runVersionCommand } from "./commands/version";
 import { readInstalledPackageInfo } from "./core/package-info";
 
 const program = new Command();
 const packageInfo = readInstalledPackageInfo();
-
-if (isStandaloneVersionRequest(process.argv.slice(2))) {
-  runVersionCommand();
-  process.exit(0);
-}
 
 program
   .name("srgical")
@@ -203,11 +199,7 @@ program
     });
   });
 
-program.parseAsync(process.argv).catch((error: unknown) => {
-  const message = error instanceof Error ? error.message : String(error);
-  process.stderr.write(`${message}\n`);
-  process.exitCode = 1;
-});
+void runCli();
 
 function isStandaloneVersionRequest(args: string[]): boolean {
   return args.length === 1 && (args[0] === "--version" || args[0] === "-V");
@@ -220,4 +212,25 @@ function collectPathOption(value: string, previous: string[]): string[] {
     .filter((segment) => segment.length > 0);
 
   return [...previous, ...segments];
+}
+
+async function runCli(): Promise<void> {
+  try {
+    const upgradeNotice = await resolveUpgradeNotice(packageInfo.version);
+
+    if (upgradeNotice) {
+      process.stdout.write(`${upgradeNotice}\n\n`);
+    }
+
+    if (isStandaloneVersionRequest(process.argv.slice(2))) {
+      runVersionCommand();
+      process.exit(0);
+    }
+
+    await program.parseAsync(process.argv);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    process.stderr.write(`${message}\n`);
+    process.exitCode = 1;
+  }
 }

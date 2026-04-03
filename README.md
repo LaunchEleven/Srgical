@@ -96,6 +96,8 @@ This repo currently ships the foundation for:
 
 - `srgical --version`
   Prints the installed version with release-note links instead of only echoing the semver.
+- interactive startup
+  Shows a cached upgrade notice when a newer public npm release is available via `npm i -g @launch11/srgical`.
 - `srgical doctor`
   Reports the active plan, plan readiness, execution state, auto-run state, and which supported agents are available
   locally, along with any cached AI advice for the selected plan.
