@@ -9,6 +9,7 @@ import { runRunNextCommand } from "./commands/run-next";
 import { runStudioConfigCommand } from "./commands/studio-config";
 import { runStudioOperateCommand, runStudioPlanCommand } from "./commands/studio";
 import { resolveWorkspacePlanArgs } from "./core/cli-args";
+import { completeCliValues, renderCompletionScript } from "./core/completion";
 import { resolveUpgradeNotice } from "./core/update-notice";
 import { runVersionCommand } from "./commands/version";
 import { readInstalledPackageInfo } from "./core/package-info";
@@ -40,6 +41,14 @@ program
   .description("Show where to find upgrade notes for the installed version.")
   .action(() => {
     runChangelogCommand();
+  });
+
+program
+  .command("completion")
+  .description("Print a shell completion script for bash or PowerShell.")
+  .argument("<shell>", "Shell name: bash or powershell")
+  .action((shell: string) => {
+    process.stdout.write(renderCompletionScript(shell));
   });
 
 program
@@ -217,13 +226,20 @@ function collectPathOption(value: string, previous: string[]): string[] {
 
 async function runCli(): Promise<void> {
   try {
-    const upgradeNotice = await resolveUpgradeNotice(packageInfo.version);
+    const rawArgs = process.argv.slice(2);
+
+    if (rawArgs[0] === "__complete") {
+      await runHiddenCompletion(rawArgs.slice(1));
+      return;
+    }
+
+    const upgradeNotice = shouldSkipUpgradeNotice(rawArgs) ? null : await resolveUpgradeNotice(packageInfo.version);
 
     if (upgradeNotice) {
       process.stdout.write(`${upgradeNotice}\n\n`);
     }
 
-    if (isStandaloneVersionRequest(process.argv.slice(2))) {
+    if (isStandaloneVersionRequest(rawArgs)) {
       runVersionCommand();
       process.exit(0);
     }
@@ -233,5 +249,37 @@ async function runCli(): Promise<void> {
     const message = error instanceof Error ? error.message : String(error);
     process.stderr.write(`${message}\n`);
     process.exitCode = 1;
+  }
+}
+
+function shouldSkipUpgradeNotice(args: string[]): boolean {
+  const command = args[0] ?? "";
+  return command === "completion";
+}
+
+async function runHiddenCompletion(args: string[]): Promise<void> {
+  const separatorIndex = args.indexOf("--");
+  const optionArgs = separatorIndex >= 0 ? args.slice(0, separatorIndex) : args;
+  const words = separatorIndex >= 0 ? args.slice(separatorIndex + 1) : [];
+  const indexFlag = optionArgs.indexOf("--index");
+
+  if (indexFlag < 0 || indexFlag + 1 >= optionArgs.length) {
+    throw new Error("Missing required completion option `--index <n>`.");
+  }
+
+  const wordIndex = Number(optionArgs[indexFlag + 1]);
+
+  if (!Number.isInteger(wordIndex) || wordIndex < 0) {
+    throw new Error("Completion index must be a non-negative integer.");
+  }
+
+  const suggestions = await completeCliValues({
+    words,
+    wordIndex,
+    cwd: process.cwd()
+  });
+
+  if (suggestions.length > 0) {
+    process.stdout.write(`${suggestions.join("\n")}\n`);
   }
 }

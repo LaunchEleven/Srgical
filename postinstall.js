@@ -9,6 +9,8 @@ if (fs.existsSync(compiledEntry)) {
   const postinstall = require(compiledEntry);
 
   if (postinstall && typeof postinstall.runPostinstall === "function") {
-    postinstall.runPostinstall();
+    Promise.resolve(postinstall.runPostinstall()).catch(() => {
+      // Keep npm install resilient even if best-effort postinstall setup fails.
+    });
   }
 }

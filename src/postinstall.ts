@@ -1,18 +1,45 @@
 import process from "node:process";
+import {
+  installShellCompletionProfiles,
+  renderCompletionInstallSummary,
+  type CompletionInstallResult
+} from "./core/completion-install";
 import { readInstalledPackageInfo } from "./core/package-info";
 import { paintLine, renderCommandBanner, renderSectionHeading } from "./ui/terminal-theme";
 
 if (require.main === module) {
-  runPostinstall();
+  void runPostinstall();
 }
 
-export function runPostinstall(): void {
-  if (shouldRenderPostinstallMessage(process.env, process.stdout.isTTY === true)) {
-    process.stdout.write(`${renderPostinstallMessage()}\n`);
+type PostinstallRuntime = {
+  env?: NodeJS.ProcessEnv;
+  isTTY?: boolean;
+  write?: (output: string) => void;
+  installProfiles?: () => Promise<CompletionInstallResult>;
+};
+
+export async function runPostinstall(runtime: PostinstallRuntime = {}): Promise<void> {
+  const env = runtime.env ?? process.env;
+  const isTTY = runtime.isTTY ?? (process.stdout.isTTY === true);
+
+  if (!shouldRenderPostinstallMessage(env, isTTY)) {
+    return;
   }
+
+  let completionSummary: string | null = null;
+  if (env.SRGICAL_DISABLE_PROFILE_INSTALL !== "true") {
+    try {
+      const result = await (runtime.installProfiles ?? installShellCompletionProfiles)();
+      completionSummary = renderCompletionInstallSummary(result);
+    } catch {
+      completionSummary = "Shell completion: automatic profile setup failed";
+    }
+  }
+
+  (runtime.write ?? process.stdout.write.bind(process.stdout))(`${renderPostinstallMessage(completionSummary)}\n`);
 }
 
-export function renderPostinstallMessage(): string {
+export function renderPostinstallMessage(completionSummary?: string | null): string {
   const info = readInstalledPackageInfo();
 
   return [
@@ -21,6 +48,7 @@ export function renderPostinstallMessage(): string {
     renderSectionHeading("Ready"),
     paintLine(`srgical ${info.version} is ready.`, "success", { bold: true }),
     info.releaseNotesUrl ? `Release notes: ${info.releaseNotesUrl}` : null,
+    completionSummary ? paintLine(completionSummary, "info") : null,
     "",
     renderSectionHeading("Next"),
     paintLine("Start here: srgical doctor", "brand", { bold: true }),

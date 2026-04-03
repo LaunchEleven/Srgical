@@ -201,6 +201,39 @@ For npm installs, consumers can use:
 npm install -g @launch11/srgical
 ```
 
+## Shell Completion
+
+`bash` and PowerShell can now autocomplete existing plan ids from `.srgical/plans/` for commands such as
+`srgical doctor`, `srgical studio`, `srgical ssp`, `srgical sso`, `srgical ssc`, and `--plan`.
+
+During an interactive global install, `srgical` now attempts to add its managed completion block to the user's
+`~/.bashrc` and PowerShell profile automatically. The commands below are still useful as a manual fallback or when
+profile installation is disabled.
+
+Load bash completion for the current session:
+
+```bash
+eval "$(srgical completion bash)"
+```
+
+Persist it in bash:
+
+```bash
+echo 'eval "$(srgical completion bash)"' >> ~/.bashrc
+```
+
+Load PowerShell completion for the current session:
+
+```powershell
+Invoke-Expression (& srgical completion powershell)
+```
+
+Persist it in PowerShell:
+
+```powershell
+Add-Content $PROFILE 'Invoke-Expression (& srgical completion powershell)'
+```
+
 ## Getting Started
 
 ```bash

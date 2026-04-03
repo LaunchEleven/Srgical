@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { renderPostinstallMessage, shouldRenderPostinstallMessage } from "../../src/postinstall";
+import { renderPostinstallMessage, runPostinstall, shouldRenderPostinstallMessage } from "../../src/postinstall";
 
 test("postinstall message is enabled for global interactive installs", () => {
   assert.equal(
@@ -38,4 +38,52 @@ test("render-postinstall-message points to the next useful commands", () => {
   assert.match(message, /Release notes: https:\/\/github\.com\/LaunchEleven\/Srgical\/releases\/tag\/v0\.0\.0/);
   assert.match(message, /Start here: srgical doctor/);
   assert.match(message, /More: srgical about/);
+});
+
+test("run-postinstall reports automatic shell completion setup", async () => {
+  let output = "";
+
+  await runPostinstall({
+    env: {
+      npm_config_global: "true"
+    },
+    isTTY: true,
+    write: (value) => {
+      output += value;
+    },
+    installProfiles: async () => ({
+      installed: ["a", "b"],
+      alreadyPresent: ["c"],
+      failed: []
+    })
+  });
+
+  assert.match(output, /Shell completion: 2 installed, 1 already present/);
+});
+
+test("run-postinstall can skip automatic profile edits via env flag", async () => {
+  let output = "";
+  let installCalls = 0;
+
+  await runPostinstall({
+    env: {
+      npm_config_global: "true",
+      SRGICAL_DISABLE_PROFILE_INSTALL: "true"
+    },
+    isTTY: true,
+    write: (value) => {
+      output += value;
+    },
+    installProfiles: async () => {
+      installCalls += 1;
+      return {
+        installed: [],
+        alreadyPresent: [],
+        failed: []
+      };
+    }
+  });
+
+  assert.equal(installCalls, 0);
+  assert.doesNotMatch(output, /Shell completion:/);
 });
