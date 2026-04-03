@@ -15,6 +15,7 @@ test("build-plan-interrogation-directive includes strict assess language and foc
   assert.match(prompt, /Command: \/assess API integration boundaries/);
   assert.match(prompt, /can-execute-with-100%-accuracy-now: yes\/no/);
   assert.match(prompt, /Focus: API integration boundaries/);
+  assert.match(prompt, /Planning framework wrapper:/);
   assert.match(prompt, /01-product-plan\.md:/);
 });
 

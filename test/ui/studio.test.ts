@@ -330,6 +330,10 @@ test("parse-composer-path-completion-request extracts token and replacement rang
   assert.equal(workspaceRequest?.command, "/workspace");
   assert.equal(workspaceRequest?.token, "../dem");
 
+  const planRequest = parseComposerPathCompletionRequest("/plan prot");
+  assert.equal(planRequest?.command, "/plan");
+  assert.equal(planRequest?.token, "prot");
+
   assert.equal(parseComposerPathCompletionRequest("regular chat message"), null);
 });
 

@@ -89,7 +89,7 @@ test("doctor reports all supported agents and the queued next step", async (t) =
   assert.match(output, /Plans:/);
   assert.match(
     output,
-    /default \[active\]: \| path \.srgical\/plans\/default \| mode Execution Active \| docs 5\/5 \| human write gate pending \| readiness 3\/4 \| execution started \| auto idle/
+    /default \[active\]: \| path \.srgical\/plans\/default \| mode Execution Active \| docs 5\/5 \| human write gate pending \| readiness 1\/4 \| execution started \| auto idle/
   );
   assert.match(output, /Next Step: EXEC001 \(Execution\)/);
   assert.match(output, /AI advice: Summarize the queued execution work before running it\./);
@@ -152,7 +152,7 @@ test("doctor reports missing supported agents safely when no next step is queued
   assert.match(output, /AI advice: none cached yet \(run `\/advice` in studio to generate guidance\)\./);
   assert.match(
     output,
-    /Next move: run `srgical studio plan --plan <id>` \(or `srgical ssp --plan <id>`\) to queue or refine the next execution-ready step\./
+    /Next move: run `srgical studio <id>` \(or `srgical studio plan --plan <id>` \/ `srgical ssp <id>`\) to queue or refine the next execution-ready step\./
   );
 });
 

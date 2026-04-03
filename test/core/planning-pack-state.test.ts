@@ -64,6 +64,18 @@ test("readPlanningPackState treats an explicit 'none queued' tracker position as
   assert.equal(state.nextStepSummary, null);
 });
 
+test("readPlanningPackState does not award readiness points for the default studio seed alone", async () => {
+  const workspace = await createTempWorkspace("srgical-pack-state-default-seed-");
+  await writePlanningPack(workspace);
+
+  const state = await readPlanningPackState(workspace);
+
+  assert.equal(state.mode, "Gathering Context");
+  assert.equal(state.readiness.score, 0);
+  assert.equal(state.readiness.readyToWrite, false);
+  assert.match(state.readiness.missingLabels.join(", "), /Goal captured/);
+});
+
 test("readPlanningPackState keeps scaffolded packs in gathering-context mode without an explicit go-ahead", async () => {
   const workspace = await createTempWorkspace("srgical-pack-state-readiness-");
   await writePlanningPack(workspace);

@@ -8,6 +8,7 @@ import { runInitCommand } from "./commands/init";
 import { runRunNextCommand } from "./commands/run-next";
 import { runStudioConfigCommand } from "./commands/studio-config";
 import { runStudioOperateCommand, runStudioPlanCommand } from "./commands/studio";
+import { resolveWorkspacePlanArgs } from "./core/cli-args";
 import { runVersionCommand } from "./commands/version";
 import { readInstalledPackageInfo } from "./core/package-info";
 
@@ -61,7 +62,8 @@ program
   .option("-f, --force", "Overwrite an existing planning pack")
   .option("--plan <id>", "Named planning pack id to create or overwrite")
   .action(async (workspace, options: { force?: boolean; plan?: string }) => {
-    await runInitCommand(workspace, Boolean(options.force), options.plan);
+    const resolved = resolveWorkspacePlanArgs(workspace, options.plan);
+    await runInitCommand(resolved.workspace, Boolean(options.force), resolved.planId);
   });
 
 const studioCommand = program
@@ -70,7 +72,8 @@ const studioCommand = program
   .argument("[workspace]", "Workspace path")
   .option("--plan <id>", "Planning pack id to use")
   .action(async (workspace, options: { plan?: string }) => {
-    await runStudioPlanCommand(workspace, { planId: options.plan });
+    const resolved = resolveWorkspacePlanArgs(workspace, options.plan);
+    await runStudioPlanCommand(resolved.workspace, { planId: resolved.planId });
   });
 
 studioCommand
@@ -80,7 +83,8 @@ studioCommand
   .option("--plan <id>", "Planning pack id to open")
   .action(async (workspace, options: { plan?: string }, command: Command) => {
     const parentPlan = command.parent?.opts<{ plan?: string }>().plan;
-    await runStudioPlanCommand(workspace, { planId: options.plan ?? parentPlan });
+    const resolved = resolveWorkspacePlanArgs(workspace, options.plan ?? parentPlan);
+    await runStudioPlanCommand(resolved.workspace, { planId: resolved.planId });
   });
 
 studioCommand
@@ -90,7 +94,8 @@ studioCommand
   .option("--plan <id>", "Planning pack id to operate")
   .action(async (workspace, options: { plan?: string }, command: Command) => {
     const parentPlan = command.parent?.opts<{ plan?: string }>().plan;
-    await runStudioOperateCommand(workspace, { planId: options.plan ?? parentPlan });
+    const resolved = resolveWorkspacePlanArgs(workspace, options.plan ?? parentPlan);
+    await runStudioOperateCommand(resolved.workspace, { planId: resolved.planId });
   });
 
 studioCommand
@@ -116,8 +121,9 @@ studioCommand
       command: Command
     ) => {
       const parentPlan = command.parent?.opts<{ plan?: string }>().plan;
-      await runStudioConfigCommand(workspace, {
-        planId: options.plan ?? parentPlan,
+      const resolved = resolveWorkspacePlanArgs(workspace, options.plan ?? parentPlan);
+      await runStudioConfigCommand(resolved.workspace, {
+        planId: resolved.planId,
         pausePr: options.pausePr,
         setReference: options.setReference,
         addReference: options.addReference,
@@ -132,7 +138,8 @@ program
   .argument("[workspace]", "Workspace path")
   .option("--plan <id>", "Planning pack id to open")
   .action(async (workspace, options: { plan?: string }) => {
-    await runStudioPlanCommand(workspace, { planId: options.plan });
+    const resolved = resolveWorkspacePlanArgs(workspace, options.plan);
+    await runStudioPlanCommand(resolved.workspace, { planId: resolved.planId });
   });
 
 program
@@ -141,7 +148,8 @@ program
   .argument("[workspace]", "Workspace path")
   .option("--plan <id>", "Planning pack id to operate")
   .action(async (workspace, options: { plan?: string }) => {
-    await runStudioOperateCommand(workspace, { planId: options.plan });
+    const resolved = resolveWorkspacePlanArgs(workspace, options.plan);
+    await runStudioOperateCommand(resolved.workspace, { planId: resolved.planId });
   });
 
 program
@@ -165,8 +173,9 @@ program
         clearReferences?: boolean;
       }
     ) => {
-      await runStudioConfigCommand(workspace, {
-        planId: options.plan,
+      const resolved = resolveWorkspacePlanArgs(workspace, options.plan);
+      await runStudioConfigCommand(resolved.workspace, {
+        planId: resolved.planId,
         pausePr: options.pausePr,
         setReference: options.setReference,
         addReference: options.addReference,

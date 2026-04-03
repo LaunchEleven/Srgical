@@ -185,7 +185,7 @@ export async function resolvePlanId(root: string, requestedPlanId?: string | nul
   }
 
   throw new Error(
-    "A named plan is required. Pass `--plan <id>` or create one with `srgical init --plan <id>` before continuing."
+    "A named plan is required. Pass `<id>` or `--plan <id>`, or create one with `srgical init <id>` before continuing."
   );
 }
 

@@ -70,7 +70,7 @@ type ComposerCompletionState = {
 };
 
 export type ComposerPathCompletionRequest = {
-  command: "/read" | "/open" | "/workspace";
+  command: "/read" | "/open" | "/workspace" | "/plan";
   token: string;
   replaceStart: number;
   replaceEnd: number;
@@ -132,12 +132,16 @@ type TranscriptScrollProfile = {
   pageDownKeys: string[];
 };
 
+type CopyCommandMode = "visible" | "all" | "last";
+
 const TRANSCRIPT_PAGE_UP_KEYS = ["pageup", "ppage", "C-u"];
 const TRANSCRIPT_PAGE_DOWN_KEYS = ["pagedown", "npage", "C-d"];
 const ACTIVITY_FRAMES = ["[    ]", "[=   ]", "[==  ]", "[=== ]", "[ ===]", "[  ==]", "[   =]"];
 const COMPOSER_CURSOR = "{#ffb14a-fg}\u2588{/}";
 const CONTEXT_FILE_CHAR_LIMIT = 120_000;
 const COMPLETION_HINT_TTL_MS = 2500;
+const LIVE_STREAM_REVEAL_INTERVAL_MS = 16;
+const LIVE_STREAM_REVEAL_CHARS = 40;
 const RAPID_INPUT_INTERVAL_MS = 25;
 const PASTE_ENTER_GRACE_MS = 45;
 const PASTE_BURST_CHAR_THRESHOLD = 4;
@@ -242,9 +246,7 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
     width: "100%",
     height: 6,
     keys: true,
-    mouse: true,
     tags: true,
-    clickable: true,
     scrollable: true,
     alwaysScroll: true,
     padding: {
@@ -311,6 +313,8 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
   let lastStandaloneEscapeAt: number | null = null;
   let liveStreamLabel: string | null = null;
   let liveStreamContent = "";
+  let liveStreamPendingContent = "";
+  let liveStreamStopRequested = false;
   let liveStreamRenderTimer: NodeJS.Timeout | undefined;
   let studioClosed = false;
 
@@ -425,7 +429,7 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
     }
 
     studioClosed = true;
-    stopLiveStream();
+    resetLiveStream();
     stopBusy();
 
     screen.destroy();
@@ -434,6 +438,8 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
   function startLiveStream(label: string): void {
     liveStreamLabel = label;
     liveStreamContent = "";
+    liveStreamPendingContent = "";
+    liveStreamStopRequested = false;
     scheduleLiveStreamRender();
   }
 
@@ -447,13 +453,30 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
       return;
     }
 
-    liveStreamContent += sanitizedChunk;
+    liveStreamPendingContent += sanitizedChunk;
     scheduleLiveStreamRender();
   }
 
-  function stopLiveStream(): void {
+  async function stopLiveStream(): Promise<void> {
+    if (!liveStreamLabel) {
+      resetLiveStream();
+      return;
+    }
+
+    liveStreamStopRequested = true;
+
+    if (liveStreamPendingContent.length > 0) {
+      await drainLiveStream();
+    }
+
+    resetLiveStream();
+  }
+
+  function resetLiveStream(): void {
     liveStreamLabel = null;
     liveStreamContent = "";
+    liveStreamPendingContent = "";
+    liveStreamStopRequested = false;
     if (liveStreamRenderTimer) {
       clearTimeout(liveStreamRenderTimer);
       liveStreamRenderTimer = undefined;
@@ -470,10 +493,33 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
 
     liveStreamRenderTimer = setTimeout(() => {
       liveStreamRenderTimer = undefined;
+      revealLiveStreamChunk();
       renderTranscript();
       setFooter();
       screen.render();
-    }, 60);
+      if (liveStreamPendingContent.length > 0 || (liveStreamStopRequested && liveStreamLabel)) {
+        scheduleLiveStreamRender();
+      }
+    }, LIVE_STREAM_REVEAL_INTERVAL_MS);
+  }
+
+  async function drainLiveStream(): Promise<void> {
+    while (liveStreamPendingContent.length > 0 && !studioClosed) {
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, LIVE_STREAM_REVEAL_INTERVAL_MS);
+      });
+    }
+  }
+
+  function revealLiveStreamChunk(): void {
+    if (!liveStreamLabel || liveStreamPendingContent.length === 0) {
+      return;
+    }
+
+    const codePoints = Array.from(liveStreamPendingContent);
+    const nextChunk = codePoints.slice(0, LIVE_STREAM_REVEAL_CHARS).join("");
+    liveStreamPendingContent = codePoints.slice(LIVE_STREAM_REVEAL_CHARS).join("");
+    liveStreamContent += nextChunk;
   }
 
   function renderTranscript(): void {
@@ -686,20 +732,20 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
         planId,
         onOutputChunk: appendLiveStreamChunk
       });
-      stopLiveStream();
+      await stopLiveStream();
       await appendMessage({
         role: "assistant",
         content: reply
       });
       await refreshAdvice(false);
     } catch (error) {
-      stopLiveStream();
+      await stopLiveStream();
       await appendMessage({
         role: "system",
         content: `Planner call failed: ${error instanceof Error ? error.message : String(error)}`
       });
     } finally {
-      stopLiveStream();
+      await stopLiveStream();
       stopBusy();
       renderTranscript();
       setSidebar();
@@ -785,14 +831,14 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
         planId,
         onOutputChunk: appendLiveStreamChunk
       });
-      stopLiveStream();
+      await stopLiveStream();
       await appendSystemMessage(`/${command}${focusText ? ` ${focusText}` : ""}\n${reply}`);
       await refreshAdvice(false);
     } catch (error) {
-      stopLiveStream();
+      await stopLiveStream();
       await appendSystemMessage(`/${command} failed: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
-      stopLiveStream();
+      await stopLiveStream();
       stopBusy();
       await refreshEnvironment();
     }
@@ -834,14 +880,14 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
         planId,
         onOutputChunk: appendLiveStreamChunk
       });
-      stopLiveStream();
+      await stopLiveStream();
       await appendSystemMessage(`/unblock analyze${focusText ? ` ${focusText}` : ""}\n${reply}`);
       await refreshAdvice(false);
     } catch (error) {
-      stopLiveStream();
+      await stopLiveStream();
       await appendSystemMessage(`/unblock analyze failed: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
-      stopLiveStream();
+      await stopLiveStream();
       stopBusy();
       await refreshEnvironment();
     }
@@ -1265,6 +1311,32 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
       return;
     }
 
+    const copyCommand = parseCopyCommand(command);
+    if (copyCommand) {
+      const transcriptText = buildTranscriptCopyText(historyMessages, transcriptStartIndex, copyCommand);
+
+      try {
+        await copyTextToClipboard(transcriptText);
+        await appendSystemMessage(
+          copyCommand === "last"
+            ? "Copied the last visible transcript message to the clipboard."
+            : copyCommand === "all"
+              ? "Copied the full transcript history to the clipboard."
+              : "Copied the visible transcript to the clipboard."
+        );
+      } catch (error) {
+        await appendSystemMessage(
+          [
+            "Clipboard copy failed from the terminal UI.",
+            "Some terminals make alternate-screen selection unreliable, so `/copy` uses the OS clipboard directly when available.",
+            `Reason: ${error instanceof Error ? error.message : String(error)}`
+          ].join("\n")
+        );
+      }
+
+      return;
+    }
+
     if (command === "/help") {
       await appendSystemMessage(
         studioMode === "plan"
@@ -1351,15 +1423,15 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
           planId,
           onOutputChunk: appendLiveStreamChunk
         });
-        stopLiveStream();
+        await stopLiveStream();
         await markPlanningPackAuthored(workspace, { planId });
         await refreshAdvice(false);
         await appendSystemMessage(`Planning pack updated for \`${planId}\`. Summary:\n${result}`);
       } catch (error) {
-        stopLiveStream();
+        await stopLiveStream();
         await appendSystemMessage(`Pack generation failed: ${error instanceof Error ? error.message : String(error)}`);
       } finally {
-        stopLiveStream();
+        await stopLiveStream();
         stopBusy();
         await refreshEnvironment();
       }
@@ -1384,7 +1456,7 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
           planId,
           onOutputChunk: appendLiveStreamChunk
         });
-        stopLiveStream();
+        await stopLiveStream();
         await saveExecutionState(workspace, "success", "studio", result, { planId });
         await appendExecutionLog(workspace, "success", "studio", result, {
           planId,
@@ -1395,7 +1467,7 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
           `Execution run finished. Handoff source: ${handoffPrompt.handoffDoc.displayPath}.\n${getPrimaryAgentAdapter().label} summary:\n${result}`
         );
       } catch (error) {
-        stopLiveStream();
+        await stopLiveStream();
         const message = error instanceof Error ? error.message : String(error);
         await saveExecutionState(workspace, "failure", "studio", message, { planId });
         await appendExecutionLog(workspace, "failure", "studio", message, {
@@ -1412,7 +1484,7 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
           )
         );
       } finally {
-        stopLiveStream();
+        await stopLiveStream();
         stopBusy();
         await refreshEnvironment();
       }
@@ -1674,7 +1746,7 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
       return;
     }
 
-    const lines = [renderWorkspaceSelectionMessage(workspace, latestPackState)];
+    const lines = [renderFirstRunOrientationMessage(workspace, latestPackState, studioMode)];
 
     if (studioMode === "operate") {
       const operateConfig = await loadStudioOperateConfig(workspace, { planId });
@@ -1907,6 +1979,40 @@ export function renderWorkspaceSelectionMessage(workspace: string, packState: Pl
         ? "Use `/write` to generate the first grounded draft once readiness is satisfied."
         : "Use `/review`, `/open all`, `/confirm-plan`, then `/write` to refresh the authored plan."
       : "Use `/write` when you want to refresh the selected plan from this transcript."
+  ].join("\n");
+}
+
+function renderFirstRunOrientationMessage(workspace: string, packState: PlanningPackState, studioMode: StudioMode): string {
+  if (studioMode === "operate") {
+    return [
+      "Welcome to srgical operate.",
+      "This view is for running the plan, not discovering it.",
+      "",
+      renderWorkspaceSelectionMessage(workspace, packState),
+      "",
+      "Fast path:",
+      "1. Use `/preview` if you want to inspect the current execution handoff.",
+      "2. Use `/go` for the guided operate loop, `/run` for one step, or `/auto [max]` for direct bounded execution.",
+      "3. If something blocks, use `/unblock` or `/unblock analyze [focus]`.",
+      "4. Use `/status` when you want a clean read on what changed."
+    ].join("\n");
+  }
+
+  return [
+    "Welcome to srgical plan.",
+    "You are at the start of a fresh planning conversation, so here is the shortest path from zero to execution.",
+    "",
+    renderWorkspaceSelectionMessage(workspace, packState),
+    "",
+    "Fast path:",
+    "1. Tell the planner what you are building, what is already true in the repo, and the main constraint or risk.",
+    "2. Use `/read [path]` to inject real repo files instead of describing them from memory.",
+    "3. If you want to interrogate what just happened, use `/assess [focus]`, `/gather [focus]`, `/gaps [focus]`, `/ready [focus]`, `/status`, or `/readiness`.",
+    "4. Once the direction is solid, run `/write` for the first grounded draft.",
+    "5. Review with `/review`, open files with `/open all`, then run `/confirm-plan` before refreshing an authored plan.",
+    "6. When the tracker is execution-ready, open `srgical studio operate <plan>` or run `srgical studio operate --plan <id>`.",
+    "",
+    "If you are not sure what to say first, paste the problem statement, a goal, or a file path and we will work forward from there."
   ].join("\n");
 }
 
@@ -2267,7 +2373,9 @@ function renderPlanHelpMessage(transcriptHelpLine: string): string {
     "- `/read [path] <follow-up>` auto-sends the follow-up text as the next user prompt after file context is loaded.",
     "- `/workspace <path> <follow-up>` auto-sends the follow-up text after a successful workspace switch.",
     "- Large paste blocks are accepted directly; no delimiter syntax is required.",
-    "- `Tab` / `Shift+Tab` cycles path completions for `/read`, `/open`, and `/workspace`.",
+    "- `Tab` / `Shift+Tab` cycles path completions for `/read`, `/open`, `/workspace`, and existing `/plan` ids.",
+    "- Native terminal drag-selection is left enabled for transcript copying; use `/copy ...` if your terminal still behaves awkwardly.",
+    "- `/copy`, `/copy visible`, `/copy all`, or `/copy last` copies transcript text through the OS clipboard.",
     "- Planner, `/write`, `/assess`, `/gather`, `/gaps`, and `/ready` stream model output live in the transcript while the CLI call is in flight.",
     transcriptHelpLine,
     "- `/quit` closes the studio."
@@ -2291,10 +2399,103 @@ function renderOperateHelpMessage(transcriptHelpLine: string): string {
     "Controls:",
     "- Operate mode is slash-command only. Use `srgical studio plan` for planning conversation.",
     "- `Up` / `Down` cycles previously submitted slash commands.",
-    "- `Tab` / `Shift+Tab` cycles path completions for `/open` and `/workspace`.",
+    "- `Tab` / `Shift+Tab` cycles path completions for `/open`, `/workspace`, and existing `/plan` ids.",
+    "- Native terminal drag-selection is left enabled for transcript copying; use `/copy ...` if your terminal still behaves awkwardly.",
+    "- `/copy`, `/copy visible`, `/copy all`, or `/copy last` copies transcript text through the OS clipboard.",
     transcriptHelpLine,
     "- `/quit` closes the studio."
   ].join("\n");
+}
+
+function parseCopyCommand(command: string): CopyCommandMode | null {
+  const normalized = command.trim().toLowerCase();
+
+  if (normalized === "/copy" || normalized === "/copy visible") {
+    return "visible";
+  }
+
+  if (normalized === "/copy all") {
+    return "all";
+  }
+
+  if (normalized === "/copy last") {
+    return "last";
+  }
+
+  return null;
+}
+
+function buildTranscriptCopyText(messages: ChatMessage[], transcriptStartIndex: number, mode: CopyCommandMode): string {
+  const visibleMessages = getVisibleTranscriptMessages(messages, transcriptStartIndex);
+  const selectedMessages =
+    mode === "all" ? messages : mode === "last" ? (visibleMessages.length > 0 ? [visibleMessages[visibleMessages.length - 1]] : []) : visibleMessages;
+
+  if (selectedMessages.length === 0) {
+    throw new Error("There is no transcript content to copy yet.");
+  }
+
+  return selectedMessages
+    .map((message) => `${message.role.toUpperCase()}\n${message.content}`)
+    .join("\n\n");
+}
+
+async function copyTextToClipboard(text: string): Promise<void> {
+  if (process.platform === "win32") {
+    await pipeTextToCommand("clip", [], text);
+    return;
+  }
+
+  if (process.platform === "darwin") {
+    await pipeTextToCommand("pbcopy", [], text);
+    return;
+  }
+
+  const candidates: Array<{ command: string; args: string[] }> = [
+    { command: "wl-copy", args: [] },
+    { command: "xclip", args: ["-selection", "clipboard"] },
+    { command: "xsel", args: ["--clipboard", "--input"] }
+  ];
+
+  let lastError: unknown = null;
+
+  for (const candidate of candidates) {
+    try {
+      await pipeTextToCommand(candidate.command, candidate.args, text);
+      return;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  throw new Error(lastError instanceof Error ? lastError.message : "No supported clipboard command was available.");
+}
+
+function pipeTextToCommand(command: string, args: string[], text: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, {
+      stdio: ["pipe", "ignore", "pipe"],
+      shell: process.platform === "win32"
+    });
+
+    let stderr = "";
+
+    child.stderr.on("data", (chunk: Buffer | string) => {
+      stderr += chunk.toString();
+    });
+
+    child.on("error", reject);
+    child.on("close", (code) => {
+      if (code === 0) {
+        resolve();
+        return;
+      }
+
+      reject(new Error(stderr.trim() || `${command} exited with code ${code}`));
+    });
+
+    child.stdin.write(text);
+    child.stdin.end();
+  });
 }
 
 function renderPauseForPrMessage(config: StudioOperateConfig): string {
@@ -2638,7 +2839,7 @@ export async function parseOpenCommandInput(workspace: string, rawInput: string)
 export function parseComposerPathCompletionRequest(composerValue: string): ComposerPathCompletionRequest | null {
   const lineStart = composerValue.lastIndexOf("\n") + 1;
   const line = composerValue.slice(lineStart);
-  const commands = ["/read", "/open", "/workspace"] as const;
+  const commands = ["/read", "/open", "/workspace", "/plan"] as const;
 
   for (const command of commands) {
     if (!line.startsWith(command)) {
@@ -2662,6 +2863,20 @@ export function parseComposerPathCompletionRequest(composerValue: string): Compo
 
     const leadingWhitespaceLength = remainder.length - remainder.trimStart().length;
     const args = remainder.slice(leadingWhitespaceLength);
+
+    if (command === "/plan") {
+      if (args.toLowerCase() === "new" || args.toLowerCase().startsWith("new ") || /\s/.test(args)) {
+        return null;
+      }
+
+      return {
+        command,
+        token: args,
+        replaceStart: lineStart + command.length + leadingWhitespaceLength,
+        replaceEnd: composerValue.length
+      };
+    }
+
     const lastSpaceIndex = args.lastIndexOf(" ");
     const tokenStartInArgs = lastSpaceIndex >= 0 ? lastSpaceIndex + 1 : 0;
     const token = args.slice(tokenStartInArgs);
@@ -2712,6 +2927,16 @@ function parseLeadingQuotedValue(value: string): { value: string; remainder: str
 }
 
 async function collectPathCompletionMatches(workspace: string, request: ComposerPathCompletionRequest): Promise<string[]> {
+  if (request.command === "/plan") {
+    const refs = await listPlanningDirectories(workspace);
+    const seed = request.token.trim().toLowerCase();
+
+    return refs
+      .map((ref) => ref.planId)
+      .filter((planOption) => planOption.toLowerCase().startsWith(seed))
+      .sort((left, right) => left.localeCompare(right));
+  }
+
   const normalizedToken = stripWrappingQuotes(request.token);
   const usesWindowsSemantics = shouldUseWindowsPathSemantics(workspace, normalizedToken);
   const pathModule = usesWindowsSemantics ? path.win32 : path;
@@ -2884,6 +3109,7 @@ function renderPlanUsageMessage(currentPlanId: string, paths: PlanningPackPaths)
     "- `/plans` lists available plans",
     "- `/plan <id>` switches the active plan",
     "- `/plan new <id>` creates a named plan scaffold",
+    "- `Tab` after `/plan ` cycles known plan ids",
     "- `/read <path>` injects a file into the transcript as context",
     "- `/assess [focus]` assesses objective and execution clarity",
     "- `/gather [focus]` gathers missing context and refinement actions",

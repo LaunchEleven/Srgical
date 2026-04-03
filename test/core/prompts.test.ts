@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { buildPlannerPrompt, type ChatMessage } from "../../src/core/prompts";
 
-test("build-planner-prompt enforces convergence and scope-freeze contract", () => {
+test("build-planner-prompt enforces convergence and working-plan contract", () => {
   const messages: ChatMessage[] = [
     { role: "user", content: "We should skip export and keep this browser-only." },
     { role: "assistant", content: "Locked. One scope lock: desktop-only for V1?" },
@@ -17,7 +17,9 @@ test("build-planner-prompt enforces convergence and scope-freeze contract", () =
   assert.match(prompt, /Blocker-question budget across this conversation: 3/);
   assert.match(prompt, /Estimated blocker questions already asked by planner: 1/);
   assert.match(prompt, /User readiness signal detected: yes/);
-  assert.match(prompt, /Mode B - Scope freeze/);
+  assert.match(prompt, /Planning framework wrapper:/);
+  assert.match(prompt, /Mode B - Working plan snapshot/);
+  assert.match(prompt, /Mode C - Locked plan summary/);
   assert.match(prompt, /- run \/write/);
 });
 

@@ -1,4 +1,5 @@
 import { fileExists, getPlanningPackPaths, readText, type PlanningPathOptions } from "./workspace";
+import { PLANNING_FRAMEWORK_WRAPPER } from "./prompts";
 
 const DOC_SNIPPET_LIMIT = 3500;
 
@@ -28,6 +29,8 @@ export async function buildPlanInterrogationDirective(
     "You must reason against the current planning docs and transcript only.",
     "Do not invent repo facts. If a fact is unknown, say it is unknown.",
     "Be practical and execution-oriented, not academic.",
+    "",
+    PLANNING_FRAMEWORK_WRAPPER,
     "",
     renderCommandInstruction(command, focusText),
     "",

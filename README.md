@@ -23,14 +23,20 @@ srgical doctor --plan release-readiness
 Create a named plan pack (required):
 
 ```bash
+srgical init release-readiness
+# or
 srgical init --plan release-readiness
 ```
 
 Open studio and build context:
 
 ```bash
+srgical studio release-readiness
+# or
 srgical studio plan --plan release-readiness
 # shortcut
+srgical ssp release-readiness
+# or
 srgical ssp --plan release-readiness
 ```
 
@@ -98,7 +104,7 @@ This repo currently ships the foundation for:
 - `srgical changelog`
   Points straight at the installed version's release notes and the local packaged changelog.
 - `srgical init`
-  Creates a named local `.srgical/plans/<id>/` planning pack from built-in templates. `--plan <id>` is required.
+  Creates a named local `.srgical/plans/<id>/` planning pack from built-in templates. Pass either `srgical init <id>` or `srgical init --plan <id>`.
 - `srgical studio plan`
   Opens the full-screen planning studio (`ssp` shortcut) where you can switch named plans, gather repo context,
   iterate toward practical sufficiency, and write/refresh the planning pack with human confirmation guard rails.
@@ -199,6 +205,8 @@ npm install -g @launch11/srgical
 npm install
 npm run build
 node dist/index.js init --plan release-readiness
+# or
+node dist/index.js init release-readiness
 node dist/index.js doctor --plan release-readiness
 node dist/index.js studio plan --plan release-readiness
 ```
@@ -259,7 +267,9 @@ previous word in the composer.
 Large context dumps can be pasted directly with no delimiter syntax. Studio automatically keeps rapid paste bursts as
 new lines so big blocks land cleanly in the composer.
 
-`Tab` and `Shift+Tab` now cycle file-path completions for `/read`, `/open`, and `/workspace`.
+`Tab` and `Shift+Tab` now cycle file-path completions for `/read`, `/open`, `/workspace`, and existing `/plan` ids.
+Native terminal drag-selection is left enabled in studio so transcript/output text can be highlighted directly in the terminal.
+`/copy`, `/copy visible`, `/copy all`, and `/copy last` send transcript text to the OS clipboard when terminal selection is awkward.
 When using `/read`, any trailing text after the path is auto-submitted as the next user prompt once file context is loaded.
 If the path is omitted, `/read` loads every file in the current directory (non-recursive).
 When using `/workspace`, trailing text after the path is auto-submitted after a successful switch.
@@ -273,7 +283,7 @@ In `studio operate`, `/go` runs the configured execution loop:
 - use `/unblock analyze [focus]` if you want advisory root-cause analysis before retrying
 
 Planner replies, `/write`, and `/run` now stream model output into the transcript while the underlying CLI tool is
-still running, so users can see progress live instead of waiting for one final blob.
+still running, with the transcript revealing text progressively instead of waiting for one final blob.
 
 `studio plan` can also ask the active agent for an AI assessment of the current planning state. Run `/advice` to cache a
 plain-English summary of:

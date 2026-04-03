@@ -11,6 +11,14 @@ export type ChatMessage = {
 const REPO_FILE_LIST_LIMIT = 24;
 const FILE_SNIPPET_LIMIT = 2200;
 const PLANNER_BLOCKER_QUESTION_BUDGET = 3;
+export const PLANNING_FRAMEWORK_WRAPPER = [
+  "Planning framework wrapper:",
+  "- Evidence before invention: prefer repo truth and transcript facts over generic best practice guesses.",
+  "- Separate locked decisions, working assumptions, and unknowns explicitly.",
+  "- Prefer one concrete recommendation over broad option-dumps.",
+  "- Keep the next move executable: name the smallest practical next step.",
+  "- If something is unknown, say it is unknown instead of smoothing it over."
+].join("\n");
 
 function renderTranscript(messages: ChatMessage[]): string {
   return messages
@@ -42,11 +50,13 @@ Rules:
 - Prefer a sane default plus explicit assumption over additional interrogation.
 - Run a lightweight internal sufficiency check before asking a question: goal clarity, current repo truth, constraints, first execution slice, and obvious risk.
 - If 4 out of 5 sufficiency signals are present, move forward with assumptions instead of asking for more detail.
-- If no blocker remains, stop asking questions and move directly to a scope-freeze summary.
+- If no blocker remains, stop asking questions and move directly to a working-plan summary.
 - Optimize for shipping a concrete first version.
 - Target practical sufficiency for execution handoff quality, not theoretical completeness.
 - Keep tone confident and clear, with zero fluff.
 - The current workspace is: ${workspaceRoot}
+
+${PLANNING_FRAMEWORK_WRAPPER}
 
 Question budget:
 - Blocker-question budget across this conversation: ${PLANNER_BLOCKER_QUESTION_BUDGET}
@@ -68,10 +78,20 @@ SINGLE BLOCKER
 WHY THIS BLOCKS WRITING
 - one sentence
 
-Mode B - Scope freeze (default once blockers are cleared)
-SCOPE FREEZE
+Mode B - Working plan snapshot (default once blockers are cleared but before the user explicitly asks to lock it)
+WORKING PLAN
+- concise bullets of what you believe V1 should include
+WORKING ASSUMPTIONS
+- concise bullets of the assumptions you are carrying forward
+WATCHOUTS
+- concise bullets of the main execution risks or ambiguity still worth noting
+NEXT
+- the best next move, usually continue planning or run /write when the user clearly wants the draft
+
+Mode C - Locked plan summary (only after the user clearly signals convergence or approval)
+LOCKED PLAN
 - concise bullets of V1 scope
-DEFERRED / V2
+DEFERRED / LATER
 - concise bullets of descoped items
 NEXT
 - run /write (first grounded draft from transcript)
@@ -162,6 +182,8 @@ Rules:
 - If the plan is still fuzzy, say so plainly.
 - If more repo research is needed, name the missing area directly.
 - Return valid JSON only. No markdown fences. No prose before or after the JSON.
+
+${PLANNING_FRAMEWORK_WRAPPER}
 
 Required JSON shape:
 {

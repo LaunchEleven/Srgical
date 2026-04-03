@@ -21,11 +21,11 @@ export async function runDoctorCommand(workspaceArg?: string, options: DoctorCom
   const { status: activeAgent, statuses } = resolvedAgent;
   const nextMove = selectedPlanState.packPresent
     ? selectedPlanState.mode === "Ready to Write" || selectedPlanState.mode === "Gathering Context"
-      ? "Next move: run `srgical studio plan --plan <id>` (or `srgical ssp --plan <id>`) to refine the plan, then `/review` and `/confirm-plan` before `/write`."
+      ? "Next move: run `srgical studio <id>` (or `srgical studio plan --plan <id>` / `srgical ssp <id>`) to refine the plan, then `/review` and `/confirm-plan` before `/write`."
       : selectedPlanState.mode === "Ready to Execute" || selectedPlanState.mode === "Execution Active" || selectedPlanState.mode === "Auto Running"
         ? "Next move: run `srgical studio operate --plan <id>` (or `srgical sso --plan <id>`) for guided automation, or `srgical run-next --plan <id>` for direct execution."
-        : "Next move: run `srgical studio plan --plan <id>` (or `srgical ssp --plan <id>`) to queue or refine the next execution-ready step."
-    : "Next move: run `srgical init --plan <id>` for a scaffold or `srgical studio plan --plan <id>` to start planning.";
+        : "Next move: run `srgical studio <id>` (or `srgical studio plan --plan <id>` / `srgical ssp <id>`) to queue or refine the next execution-ready step."
+    : "Next move: run `srgical init <id>` for a scaffold or `srgical studio <id>` to start planning.";
 
   const lines = [
     ...renderCommandBanner("srgical", `doctor ${selectedPlanId}`),

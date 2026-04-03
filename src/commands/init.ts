@@ -6,7 +6,7 @@ import { paintLine, renderCommandBanner, renderSectionHeading } from "../ui/term
 
 export async function runInitCommand(workspaceArg?: string, force = false, planId?: string | null): Promise<void> {
   if (!planId || planId.trim().length === 0) {
-    throw new Error("`srgical init` requires an explicit named plan. Use `srgical init --plan <id>`.");
+    throw new Error("`srgical init` requires an explicit named plan. Use `srgical init <id>` or `srgical init --plan <id>`.");
   }
 
   const workspace = resolveWorkspace(workspaceArg);
@@ -39,7 +39,7 @@ export async function runInitCommand(workspaceArg?: string, force = false, planI
       `- ${paths.handoff}`,
       "",
       renderSectionHeading("Next"),
-      paintLine(`Next: run \`srgical doctor --plan ${paths.planId}\` or open \`srgical studio plan --plan ${paths.planId}\`.`, "brand", {
+      paintLine(`Next: run \`srgical doctor --plan ${paths.planId}\` or open \`srgical studio ${paths.planId}\`.`, "brand", {
         bold: true
       })
     ].join("\n") + "\n"

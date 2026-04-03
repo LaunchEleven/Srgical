@@ -182,21 +182,28 @@ function derivePlanningMode(input: {
 
 function buildReadiness(messages: { role: "user" | "assistant" | "system"; content: string }[], nextStepSummary: PlanningStepSummary | null): PlanningReadiness {
   const meaningfulMessages = messages.filter((message) => message.content.trim().length > 0);
-  const userMessages = meaningfulMessages.filter((message) => message.role === "user");
-  const assistantMessages = meaningfulMessages.filter(
-    (message) =>
-      message.role === "assistant" &&
-      !DEFAULT_STUDIO_MESSAGES.some((defaultMessage) => defaultMessage.content === message.content)
-  );
+  const effectiveMessages = meaningfulMessages.filter((message) => {
+    if (message.role === "assistant") {
+      return !DEFAULT_STUDIO_MESSAGES.some((defaultMessage) => defaultMessage.content === message.content);
+    }
+
+    if (message.role === "system") {
+      return isContextBearingSystemMessage(message.content);
+    }
+
+    return true;
+  });
+  const userMessages = effectiveMessages.filter((message) => message.role === "user");
+  const assistantMessages = effectiveMessages.filter((message) => message.role === "assistant");
   const substantiveUserMessages = userMessages.filter((message) => message.content.trim().length >= 48);
   const substantiveAssistantMessages = assistantMessages.filter((message) => message.content.trim().length >= 80);
   const userTranscript = userMessages.map((message) => message.content.toLowerCase()).join("\n");
-  const transcript = meaningfulMessages.map((message) => message.content.toLowerCase()).join("\n");
+  const transcript = effectiveMessages.map((message) => message.content.toLowerCase()).join("\n");
   const checks: PlanningReadinessCheck[] = [
     {
       id: "goal",
       label: "Goal captured",
-      passed: userMessages.length > 0
+      passed: userMessages.some((message) => message.content.trim().length >= 12)
     },
     {
       id: "repo",
@@ -239,6 +246,18 @@ function buildReadiness(messages: { role: "user" | "assistant" | "system"; conte
     readyToWrite,
     missingLabels
   };
+}
+
+function isContextBearingSystemMessage(content: string): boolean {
+  return (
+    content.startsWith("Reading ") ||
+    content.startsWith("Loaded context file:") ||
+    content.includes("===== BEGIN FILE ") ||
+    content.startsWith("/assess") ||
+    content.startsWith("/gather") ||
+    content.startsWith("/gaps") ||
+    content.startsWith("/ready")
+  );
 }
 
 async function countPresentDocs(paths: ReturnType<typeof getPlanningPackPaths>): Promise<number> {
