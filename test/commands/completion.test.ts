@@ -58,7 +58,8 @@ test("completion powershell prints a PowerShell completion script", async () => 
   const result = await runCli(["src/index.ts", "completion", "powershell"], workspace);
 
   assert.equal(result.exitCode, 0, result.stderr);
-  assert.match(result.stdout, /Register-ArgumentCompleter -CommandName srgical -ScriptBlock/);
+  assert.match(result.stdout, /Register-ArgumentCompleter -Native -CommandName srgical -ScriptBlock/);
+  assert.match(result.stdout, /param\(\$wordToComplete, \$commandAst, \$cursorPosition\)/);
   assert.match(result.stdout, /srgical __complete --index \$index -- @elements/);
 });
 

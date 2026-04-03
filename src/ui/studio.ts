@@ -1593,15 +1593,6 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
     screen.render();
   }
 
-  input.on("click", () => {
-    if (studioClosed) {
-      return;
-    }
-
-    input.focus();
-    screen.render();
-  });
-
   input.on("keypress", async (ch: string, key: blessed.Widgets.Events.IKeyEventArg) => {
     if (studioClosed) {
       return;
@@ -2364,7 +2355,7 @@ function parseRequestedMaxSteps(rawValue: string): number | null | undefined {
   return Math.floor(parsed);
 }
 
-function renderPlanHelpMessage(transcriptHelpLine: string): string {
+export function renderPlanHelpMessage(transcriptHelpLine: string): string {
   return [
     "Mode: planning studio (`srgical studio plan` / `ssp`).",
     "",
@@ -2394,7 +2385,7 @@ function renderPlanHelpMessage(transcriptHelpLine: string): string {
     "- `/workspace <path> <follow-up>` auto-sends the follow-up text after a successful workspace switch.",
     "- Large paste blocks are accepted directly; no delimiter syntax is required.",
     "- `Tab` / `Shift+Tab` cycles path completions for `/read`, `/open`, `/workspace`, and existing `/plan` ids.",
-    "- Native terminal drag-selection is left enabled for transcript copying; use `/copy ...` if your terminal still behaves awkwardly.",
+    "- Mouse clicks are not captured so native terminal drag-selection stays available; use `/copy ...` if your terminal still behaves awkwardly.",
     "- `/copy`, `/copy visible`, `/copy all`, or `/copy last` copies transcript text through the OS clipboard.",
     "- Planner, `/write`, `/assess`, `/gather`, `/gaps`, and `/ready` stream model output live in the transcript while the CLI call is in flight.",
     transcriptHelpLine,
@@ -2402,7 +2393,7 @@ function renderPlanHelpMessage(transcriptHelpLine: string): string {
   ].join("\n");
 }
 
-function renderOperateHelpMessage(transcriptHelpLine: string): string {
+export function renderOperateHelpMessage(transcriptHelpLine: string): string {
   return [
     "Mode: operate studio (`srgical studio operate` / `sso`).",
     "",
@@ -2420,7 +2411,7 @@ function renderOperateHelpMessage(transcriptHelpLine: string): string {
     "- Operate mode is slash-command only. Use `srgical studio plan` for planning conversation.",
     "- `Up` / `Down` cycles previously submitted slash commands.",
     "- `Tab` / `Shift+Tab` cycles path completions for `/open`, `/workspace`, and existing `/plan` ids.",
-    "- Native terminal drag-selection is left enabled for transcript copying; use `/copy ...` if your terminal still behaves awkwardly.",
+    "- Mouse clicks are not captured so native terminal drag-selection stays available; use `/copy ...` if your terminal still behaves awkwardly.",
     "- `/copy`, `/copy visible`, `/copy all`, or `/copy last` copies transcript text through the OS clipboard.",
     transcriptHelpLine,
     "- `/quit` closes the studio."

@@ -64,8 +64,8 @@ complete -F _srgical_completion srgical
 
 export function renderPowerShellCompletionScript(): string {
   return `# srgical PowerShell completion
-Register-ArgumentCompleter -CommandName srgical -ScriptBlock {
-  param($commandName, $wordToComplete, $cursorPosition, $commandAst, $fakeBoundParameters)
+Register-ArgumentCompleter -Native -CommandName srgical -ScriptBlock {
+  param($wordToComplete, $commandAst, $cursorPosition)
 
   $elements = @($commandAst.CommandElements | Select-Object -Skip 1 | ForEach-Object { $_.Extent.Text })
   $index = if ([string]::IsNullOrEmpty($wordToComplete)) { $elements.Count } else { $elements.Count - 1 }

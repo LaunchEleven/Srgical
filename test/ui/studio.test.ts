@@ -21,6 +21,8 @@ import {
   wasEscPrefixForWordDelete,
   parseComposerPathCompletionRequest,
   resolvePathCompletionDirectionFromKeypress,
+  renderOperateHelpMessage,
+  renderPlanHelpMessage,
   resolveStudioTerminal,
   resolveTranscriptScrollProfile,
   renderWorkspaceSelectionMessage,
@@ -95,6 +97,11 @@ test("format-tracker-summary shows none queued instead of unknown", () => {
     }),
     "last: DOC002\nnext: none queued\nupdated: 2026-03-25T00:00:00.000Z"
   );
+});
+
+test("studio help text makes native drag-selection expectations explicit", () => {
+  assert.match(renderPlanHelpMessage("scroll help"), /Mouse clicks are not captured so native terminal drag-selection stays available/);
+  assert.match(renderOperateHelpMessage("scroll help"), /Mouse clicks are not captured so native terminal drag-selection stays available/);
 });
 
 test("resolve-studio-workspace-input resolves relative paths from the current workspace", () => {
