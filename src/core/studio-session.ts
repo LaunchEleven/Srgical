@@ -12,7 +12,7 @@ export const DEFAULT_STUDIO_MESSAGES: ChatMessage[] = [
   {
     role: "assistant",
     content:
-      "Describe what you are building, what is already true in the repo, or the next decision you need to make. I will drive toward practical planning sufficiency (not endless clarifications), then help turn this into a disciplined `.srgical/` execution pack. Run `/readiness`, then `/write` when you want to lock the first grounded draft. Use `/review` + `/confirm-plan` before authored-plan refresh writes."
+      "Describe what you are building, what is already true in the repo, or the next decision you need to make. I will drive toward practical planning sufficiency (not endless clarifications), then help turn this into a disciplined `.srgical/` execution pack. Run `/readiness`, then `/write` whenever you want to sync the current grounded draft. Use `/dice` to slice it smaller, and `/confirm-plan` when the current written or sliced draft should become the approved baseline."
   }
 ];
 

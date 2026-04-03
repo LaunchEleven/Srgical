@@ -9,6 +9,7 @@ import {
 } from "../../src/core/agent";
 import { loadAutoRunState } from "../../src/core/auto-run-state";
 import type { ChatMessage } from "../../src/core/prompts";
+import { savePlanningState, setHumanWriteConfirmation } from "../../src/core/planning-state";
 import { loadStoredActiveAgentId, saveStoredActiveAgentId } from "../../src/core/studio-session";
 import { getPlanningPackPaths, readText, writeText } from "../../src/core/workspace";
 import { captureStdout } from "../helpers/capture";
@@ -166,6 +167,8 @@ test("run-next executes through a temporary agent override for one run", async (
   const workspace = await createTempWorkspace("srgical-run-next-override-exec-");
   const paths = await writePlanningPack(workspace);
   const calls: string[] = [];
+  await savePlanningState(workspace, "authored");
+  await setHumanWriteConfirmation(workspace, true);
 
   setAgentAdaptersForTesting([
     createFakeAdapter({
@@ -223,6 +226,8 @@ test("run-next executes through a temporary agent override for one run", async (
 test("run-next prefers HandoffDoc.md as the canonical execution source when it exists", async (t) => {
   const workspace = await createTempWorkspace("srgical-run-next-handoff-");
   const paths = await writePlanningPack(workspace);
+  await savePlanningState(workspace, "authored");
+  await setHumanWriteConfirmation(workspace, true);
 
   await writeText(
     paths.tracker,
@@ -317,6 +322,8 @@ test("run-next --dry-run fails clearly when the override agent is unavailable an
 test("run-next --auto advances through queued execution steps and records completion", async (t) => {
   const workspace = await createTempWorkspace("srgical-run-next-auto-");
   const paths = await writePlanningPack(workspace);
+  await savePlanningState(workspace, "authored");
+  await setHumanWriteConfirmation(workspace, true);
 
   await writeText(
     paths.tracker,
@@ -411,6 +418,8 @@ test("run-next --auto stops immediately when the queued step is blocked", async 
   const workspace = await createTempWorkspace("srgical-run-next-auto-blocked-");
   const paths = await writePlanningPack(workspace);
   const calls: string[] = [];
+  await savePlanningState(workspace, "authored");
+  await setHumanWriteConfirmation(workspace, true);
 
   await writeText(
     paths.tracker,

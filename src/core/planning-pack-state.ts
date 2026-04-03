@@ -6,6 +6,9 @@ import {
   hasHumanWriteConfirmation,
   inferLegacyPackMode,
   loadPlanningState,
+  type PlanningApprovalInvalidationReason,
+  type PlanningApprovalStatus,
+  type PlanningDraftState,
   type PlanningPackMode,
   type PlanningStateFile
 } from "./planning-state";
@@ -41,14 +44,19 @@ export type PlanningReadiness = {
   approvalCaptured: boolean;
   readyForFirstDraft: boolean;
   readyToWrite: boolean;
+  readyToDice: boolean;
+  readyToApprove: boolean;
   missingLabels: string[];
 };
 
 export type PlanningMode =
   | "No Pack"
   | "Gathering Context"
-  | "Ready to Write"
-  | "Plan Written - Needs Step"
+  | "Ready to Draft"
+  | "Draft Written"
+  | "Sliced Draft"
+  | "Approved"
+  | "Approved - Stale"
   | "Ready to Execute"
   | "Execution Active"
   | "Auto Running";
@@ -64,9 +72,14 @@ export type PlanningPackState = {
   lastExecution: ExecutionState | null;
   planningState: PlanningStateFile | null;
   packMode: PlanningPackMode;
+  draftState: PlanningDraftState;
   readiness: PlanningReadiness;
   humanWriteConfirmed: boolean;
   humanWriteConfirmedAt: string | null;
+  approvalStatus: PlanningApprovalStatus;
+  approvalInvalidatedBy: PlanningApprovalInvalidationReason | null;
+  lastWriteAt: string | null;
+  lastDiceAt: string | null;
   advice: PlanningAdviceState | null;
   autoRun: AutoRunState | null;
   executionActivated: boolean;
@@ -106,9 +119,14 @@ export async function readPlanningPackState(
   const planningDocs = await readPlanningPackDocumentSummary(paths, fallbackPackMode === "authored" ? "grounded" : "boilerplate");
 
   const docsPresent = planningDocs.groundedCount;
-  const readiness = buildReadiness(studioSession.messages, nextStepSummary);
+  const draftState = planningState?.draftState ?? (fallbackPackMode === "authored" ? "written" : "scaffolded");
+  const readiness = buildReadiness(studioSession.messages, nextStepSummary, {
+    packMode: fallbackPackMode,
+    docsPresent
+  });
   const packMode = fallbackPackMode;
   const humanWriteConfirmed = hasHumanWriteConfirmation(planningState);
+  const approvalStatus = planningState?.approvalStatus ?? "pending";
   const executionActivated = Boolean(
     lastExecution ||
       (autoRun && autoRun.status !== "idle") ||
@@ -117,6 +135,8 @@ export async function readPlanningPackState(
   const mode = derivePlanningMode({
     packPresent,
     packMode,
+    draftState,
+    approvalStatus,
     readiness,
     nextStepSummary,
     autoRun,
@@ -134,9 +154,14 @@ export async function readPlanningPackState(
     lastExecution,
     planningState,
     packMode,
+    draftState,
     readiness,
     humanWriteConfirmed,
     humanWriteConfirmedAt: planningState?.humanConfirmedForWriteAt ?? null,
+    approvalStatus,
+    approvalInvalidatedBy: planningState?.approvalInvalidatedBy ?? null,
+    lastWriteAt: planningState?.lastWriteAt ?? null,
+    lastDiceAt: planningState?.lastDiceAt ?? null,
     advice,
     autoRun,
     executionActivated,
@@ -155,12 +180,14 @@ export function isExecutionStepSummary(step: PlanningStepSummary | null): boolea
 }
 
 export function isExecutionReadyState(state: PlanningPackState): boolean {
-  return state.packPresent && state.packMode === "authored" && isExecutionStepSummary(state.nextStepSummary);
+  return state.packPresent && state.approvalStatus === "approved" && isExecutionStepSummary(state.nextStepSummary);
 }
 
 function derivePlanningMode(input: {
   packPresent: boolean;
   packMode: PlanningPackMode;
+  draftState: PlanningDraftState;
+  approvalStatus: PlanningApprovalStatus;
   readiness: PlanningReadiness;
   nextStepSummary: PlanningStepSummary | null;
   autoRun: AutoRunState | null;
@@ -175,17 +202,29 @@ function derivePlanningMode(input: {
   }
 
   if (input.packMode === "scaffolded") {
-    return input.readiness.readyForFirstDraft ? "Ready to Write" : "Gathering Context";
+    return input.readiness.readyToWrite ? "Ready to Draft" : "Gathering Context";
   }
 
-  if (!isExecutionStepSummary(input.nextStepSummary)) {
-    return "Plan Written - Needs Step";
+  if (input.approvalStatus === "stale") {
+    return "Approved - Stale";
   }
 
-  return input.executionActivated ? "Execution Active" : "Ready to Execute";
+  if (input.approvalStatus === "approved") {
+    if (isExecutionStepSummary(input.nextStepSummary)) {
+      return input.executionActivated ? "Execution Active" : "Ready to Execute";
+    }
+
+    return "Approved";
+  }
+
+  return input.draftState === "sliced" ? "Sliced Draft" : "Draft Written";
 }
 
-function buildReadiness(messages: { role: "user" | "assistant" | "system"; content: string }[], nextStepSummary: PlanningStepSummary | null): PlanningReadiness {
+function buildReadiness(
+  messages: { role: "user" | "assistant" | "system"; content: string }[],
+  nextStepSummary: PlanningStepSummary | null,
+  options: { packMode: PlanningPackMode; docsPresent: number }
+): PlanningReadiness {
   const meaningfulMessages = messages.filter((message) => message.content.trim().length > 0);
   const effectiveMessages = meaningfulMessages.filter((message) => {
     if (message.role === "assistant") {
@@ -242,7 +281,9 @@ function buildReadiness(messages: { role: "user" | "assistant" | "system"; conte
     checks.filter((check) => check.id !== "approval").every((check) => check.passed) &&
     substantiveUserMessages.length >= 2 &&
     substantiveAssistantMessages.length >= 2;
-  const readyToWrite = readyForFirstDraft && commitmentCaptured;
+  const readyToWrite = readyForFirstDraft;
+  const readyToDice = readyForFirstDraft && (options.packMode === "authored" || options.docsPresent > 0);
+  const readyToApprove = options.packMode === "authored" && options.docsPresent > 0;
   const missingLabels = checks.filter((check) => !check.passed).map((check) => check.label);
 
   return {
@@ -252,6 +293,8 @@ function buildReadiness(messages: { role: "user" | "assistant" | "system"; conte
     approvalCaptured: commitmentCaptured,
     readyForFirstDraft,
     readyToWrite,
+    readyToDice,
+    readyToApprove,
     missingLabels
   };
 }

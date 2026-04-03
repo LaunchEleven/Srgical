@@ -77,7 +77,7 @@ Deterministic planning state:
 ${packState ? renderPlanningStateSummary(packState) : "- unavailable during this request"}
 - Treat this state as the source of truth for whether the CLI will actually allow \`/write\`.
 - If readiness says the first draft is not yet writable, do not tell the user to run \`/write\` now.
-- If the only missing signal is explicit approval, ask for approval or tell the user they can run \`/write\` when they want to lock the first draft.
+- If the only missing signal is explicit approval, tell the user they can still run \`/write\` now and use \`/confirm-plan\` later when they want to approve the current draft.
 
 Response contract (choose exactly one mode):
 Mode A - Single blocker (only when truly required)
@@ -104,11 +104,11 @@ LOCKED PLAN
 DEFERRED / LATER
 - concise bullets of descoped items
 NEXT
-- run /write (first grounded draft from transcript)
+- run /write (sync the current draft from transcript)
 - run /review
 - run /open all
-- run /confirm-plan (required for authored-plan refresh writes)
-- run /write (only when refreshing an authored plan)
+- run /dice [low|medium|high] [spike] if you want tighter execution slices
+- run /confirm-plan when the current written or sliced draft should become the approved execution baseline
 
 Conversation so far:
 
@@ -356,12 +356,17 @@ function renderPlanningStateSummary(packState: PlanningPackState): string {
     `- packDir: ${packState.packDir}`,
     `- packPresent: ${packState.packPresent}`,
     `- packMode: ${packState.packMode}`,
+    `- draftState: ${packState.draftState}`,
     `- mode: ${packState.mode}`,
     `- docsPresent: ${packState.docsPresent}/5`,
     `- readiness: ${packState.readiness.score}/${packState.readiness.total}`,
     `- readinessReadyForFirstDraft: ${packState.readiness.readyForFirstDraft}`,
     `- readinessReadyToWrite: ${packState.readiness.readyToWrite}`,
+    `- readinessReadyToDice: ${packState.readiness.readyToDice}`,
+    `- readinessReadyToApprove: ${packState.readiness.readyToApprove}`,
     `- missingReadinessSignals: ${packState.readiness.missingLabels.join(", ") || "none"}`,
+    `- approvalStatus: ${packState.approvalStatus}`,
+    `- approvalInvalidatedBy: ${packState.approvalInvalidatedBy ?? "none"}`,
     `- nextRecommended: ${packState.currentPosition.nextRecommended ?? "none queued"}`,
     `- nextStepId: ${packState.nextStepSummary?.id ?? "none"}`,
     `- executionActivated: ${packState.executionActivated}`,

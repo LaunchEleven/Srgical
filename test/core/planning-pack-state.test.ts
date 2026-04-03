@@ -1,6 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readPlanningPackState } from "../../src/core/planning-pack-state";
+import { applyPlanningPackDocumentState } from "../../src/core/planning-doc-state";
+import { recordPlanningPackWrite, savePlanningState, setHumanWriteConfirmation } from "../../src/core/planning-state";
 import { saveStudioSession } from "../../src/core/studio-session";
 import { getPlanningPackPaths, writeText } from "../../src/core/workspace";
 import { createTempWorkspace, writePlanningPack } from "../helpers/workspace";
@@ -115,10 +117,12 @@ test("readPlanningPackState keeps scaffolded packs in gathering-context mode wit
 
   const state = await readPlanningPackState(workspace);
 
-  assert.equal(state.mode, "Ready to Write");
+  assert.equal(state.mode, "Ready to Draft");
   assert.equal(state.readiness.score, 4);
   assert.equal(state.readiness.readyForFirstDraft, true);
-  assert.equal(state.readiness.readyToWrite, false);
+  assert.equal(state.readiness.readyToWrite, true);
+  assert.equal(state.readiness.readyToDice, false);
+  assert.equal(state.readiness.readyToApprove, false);
   assert.match(state.readiness.missingLabels.join(", "), /Explicit go-ahead captured/);
 });
 
@@ -138,6 +142,7 @@ test("readPlanningPackState ignores echoed slash commands for readiness", async 
   assert.equal(state.readiness.score, 0);
   assert.equal(state.readiness.readyForFirstDraft, false);
   assert.equal(state.readiness.readyToWrite, false);
+  assert.equal(state.readiness.readyToDice, false);
 });
 
 test("readPlanningPackState marks scaffolded packs ready only after a clear go-ahead", async () => {
@@ -181,8 +186,29 @@ test("readPlanningPackState marks scaffolded packs ready only after a clear go-a
 
   const state = await readPlanningPackState(workspace);
 
-  assert.equal(state.mode, "Ready to Write");
+  assert.equal(state.mode, "Ready to Draft");
   assert.equal(state.readiness.score, 5);
   assert.equal(state.readiness.readyForFirstDraft, true);
   assert.equal(state.readiness.readyToWrite, true);
+  assert.equal(state.readiness.readyToDice, false);
+});
+
+test("readPlanningPackState marks approved baselines stale after a later draft refresh", async () => {
+  const workspace = await createTempWorkspace("srgical-pack-state-approved-stale-");
+  const paths = await writePlanningPack(workspace);
+  await applyPlanningPackDocumentState(paths, "grounded");
+  await savePlanningState(workspace, "scaffolded");
+  await recordPlanningPackWrite(workspace, "dice");
+  await setHumanWriteConfirmation(workspace, true);
+  await recordPlanningPackWrite(workspace, "write");
+
+  const state = await readPlanningPackState(workspace);
+
+  assert.equal(state.docsPresent, 5);
+  assert.equal(state.draftState, "written");
+  assert.equal(state.approvalStatus, "stale");
+  assert.equal(state.approvalInvalidatedBy, "write");
+  assert.equal(state.mode, "Approved - Stale");
+  assert.equal(state.readiness.readyToDice, false);
+  assert.equal(state.readiness.readyToApprove, true);
 });

@@ -41,6 +41,10 @@ export async function runRunNextCommand(workspaceArg?: string, options: RunNextC
     throw new Error(formatNoQueuedNextStepMessage("run-next"));
   }
 
+  if (!options.dryRun && packState.approvalStatus !== "approved") {
+    throw new Error("Execution requires an approved plan baseline. Review the current draft and run `/confirm-plan` first.");
+  }
+
   await resolveExecutionAgent(workspace, options.agent, { planId });
   await saveActivePlanId(workspace, planId);
 

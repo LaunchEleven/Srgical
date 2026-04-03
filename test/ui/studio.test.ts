@@ -64,14 +64,14 @@ test("scaffolded ready plans guide users to first-write before confirmation", ()
   const state = createPackState({
     packPresent: true,
     trackerReadable: false,
-    mode: "Ready to Write",
+    mode: "Ready to Draft",
     packMode: "scaffolded",
     readinessReadyToWrite: true,
     humanWriteConfirmed: false
   });
 
-  assert.match(formatPlanningPackSummary(workspace, state), /first grounded draft/);
-  assert.match(renderWorkspaceSelectionMessage(workspace, state), /first grounded draft/);
+  assert.match(formatPlanningPackSummary(workspace, state), /create the first grounded draft/);
+  assert.match(renderWorkspaceSelectionMessage(workspace, state), /create the first grounded draft/);
 });
 
 test("scaffolded packs with core readiness but pending approval point users at write explicitly", () => {
@@ -84,10 +84,10 @@ test("scaffolded packs with core readiness but pending approval point users at w
     docsPresent: 0,
     readinessScore: 4,
     readinessReadyForFirstDraft: true,
-    readinessReadyToWrite: false
+    readinessReadyToWrite: true
   });
 
-  assert.match(formatPlanningPackSummary(workspace, state), /next: \/write when you want to lock the first grounded draft/);
+  assert.match(formatPlanningPackSummary(workspace, state), /next: \/write to create the first grounded draft from this transcript/);
 });
 
 test("format-planning-pack-summary makes boilerplate scaffolds obvious", () => {
@@ -122,6 +122,7 @@ test("studio help text makes native drag-selection expectations explicit", () =>
 
 test("plan help text advertises dice slicing controls", () => {
   assert.match(renderPlanHelpMessage("scroll help"), /\/dice \[low\|medium\|high\] \[spike\]/);
+  assert.match(renderPlanHelpMessage("scroll help"), /approval stale until you confirm again/);
 });
 
 test("resolve-studio-workspace-input resolves relative paths from the current workspace", () => {
@@ -455,6 +456,10 @@ function createPackState(options: {
   readinessReadyForFirstDraft?: boolean;
   readinessReadyToWrite?: boolean;
   humanWriteConfirmed?: boolean;
+  readinessReadyToDice?: boolean;
+  readinessReadyToApprove?: boolean;
+  approvalStatus?: PlanningPackState["approvalStatus"];
+  draftState?: PlanningPackState["draftState"];
 }): PlanningPackState {
   return {
     planId: "default",
@@ -481,6 +486,7 @@ function createPackState(options: {
     lastExecution: null,
     planningState: null,
     packMode: options.packMode ?? (options.packPresent ? "authored" : "scaffolded"),
+    draftState: options.draftState ?? (options.packPresent ? "written" : "scaffolded"),
     readiness: {
       checks: [],
       score: options.readinessScore ?? (options.packPresent ? 3 : 0),
@@ -488,13 +494,20 @@ function createPackState(options: {
       approvalCaptured: options.readinessReadyToWrite ?? false,
       readyForFirstDraft: options.readinessReadyForFirstDraft ?? options.readinessReadyToWrite ?? false,
       readyToWrite: options.readinessReadyToWrite ?? false,
+      readyToDice: options.readinessReadyToDice ?? options.packPresent,
+      readyToApprove: options.readinessReadyToApprove ?? options.packPresent,
       missingLabels: []
     },
     humanWriteConfirmed: options.humanWriteConfirmed ?? false,
     humanWriteConfirmedAt: null,
+    approvalStatus: options.approvalStatus ?? (options.humanWriteConfirmed ? "approved" : "pending"),
+    approvalInvalidatedBy: null,
+    lastWriteAt: null,
+    lastDiceAt: null,
+    advice: null,
     autoRun: null,
     executionActivated: Boolean(options.nextRecommended),
-    mode: options.mode ?? (options.packPresent ? "Plan Written - Needs Step" : "No Pack"),
+    mode: options.mode ?? (options.packPresent ? "Draft Written" : "No Pack"),
     hasFailureOverlay: false
   };
 }

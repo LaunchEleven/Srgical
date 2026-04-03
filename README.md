@@ -45,11 +45,11 @@ Inside `studio plan`:
 1. talk through scope/constraints and use `/readiness` + `/advice`
 2. interrogate plan quality with `/assess [focus]`, `/gather [focus]`, `/gaps [focus]`, and `/ready [focus]`
 3. inject repo files directly with `/read [path]` (press `Tab` to autocomplete file paths; omit `path` to read the current directory non-recursively)
-4. run `/write` to lock the first grounded draft from transcript context
-5. run `/dice [low|medium|high] [spike]` to rewrite the pack into evolutionary execution slices
+4. run `/write` whenever you want to sync the current grounded draft from transcript context
+5. run `/dice [low|medium|high] [spike]` whenever you want to rewrite or refine the pack into evolutionary execution slices
 6. run `/review` and `/open all` (or `/open <path>`) for human doc review
-7. run `/confirm-plan` (required before authored-plan refresh writes)
-8. run `/write` again when refreshing an authored plan
+7. run `/confirm-plan` when the current written or sliced draft should become the approved execution baseline
+8. keep iterating with `/write` and `/dice`; any later change makes approval stale until you confirm again
 
 Configure operate-mode checkpoints and references:
 
@@ -290,7 +290,7 @@ Inside both studio modes, the footer is intentionally minimal:
 
 Mode-specific guard rails:
 
-- `studio plan` focuses planning (`/read`, `/readiness`, `/advice`, `/write`, `/review`, `/confirm-plan`) and blocks execution commands
+- `studio plan` focuses planning (`/read`, `/readiness`, `/advice`, `/write`, `/dice`, `/review`, `/confirm-plan`) and blocks execution commands
 - `studio plan` also includes plan-interrogation commands (`/assess`, `/gather`, `/gaps`, `/ready`) for iterative clarity checks
 - `studio operate` focuses execution (`/go`, `/preview`, `/run`, `/auto`, `/stop`, `/unblock`) and blocks planning conversation/write commands
 - `studio operate` auto-runs `/go` on boot using the active plan's operate config
@@ -330,11 +330,11 @@ plain-English summary of:
 - what research or repo truth still needs to be gathered,
 - and the best next move right now.
 
-Before `/write`, a human must review and confirm:
+Before execution, the current draft should be reviewed and confirmed:
 
 - use `/review` to get the checklist and file targets
 - use `/open all` to open the planning docs in VS Code
-- use `/confirm-plan` to approve authored-plan refresh writes
+- use `/confirm-plan` to approve the current written or sliced draft as the execution baseline
 
 ## Current Claude Caveat
 

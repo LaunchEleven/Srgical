@@ -20,12 +20,13 @@ test("build-planner-prompt enforces convergence and working-plan contract", () =
   assert.match(prompt, /Estimated blocker questions already asked by planner: 1/);
   assert.match(prompt, /User readiness signal detected: yes/);
   assert.match(prompt, /Deterministic planning state:/);
-  assert.match(prompt, /If the only missing signal is explicit approval/);
+  assert.match(prompt, /they can still run `\/write` now and use `\/confirm-plan` later/i);
   assert.match(prompt, /Planning framework wrapper:/);
   assert.match(prompt, /Apply SOLID pragmatically/);
   assert.match(prompt, /Mode B - Working plan snapshot/);
   assert.match(prompt, /Mode C - Locked plan summary/);
   assert.match(prompt, /- run \/write/);
+  assert.match(prompt, /- run \/dice \[low\|medium\|high\] \[spike\]/);
 });
 
 test("build-planner-prompt blocks further questioning when budget is exhausted", () => {
@@ -87,17 +88,24 @@ function createPackState(): PlanningPackState {
     lastExecution: null,
     planningState: null,
     packMode: "scaffolded",
+    draftState: "scaffolded",
     readiness: {
       checks: [],
       score: 4,
       total: 5,
       approvalCaptured: false,
       readyForFirstDraft: true,
-      readyToWrite: false,
+      readyToWrite: true,
+      readyToDice: false,
+      readyToApprove: false,
       missingLabels: ["Explicit go-ahead captured"]
     },
     humanWriteConfirmed: false,
     humanWriteConfirmedAt: null,
+    approvalStatus: "pending",
+    approvalInvalidatedBy: null,
+    lastWriteAt: null,
+    lastDiceAt: null,
     advice: null,
     autoRun: null,
     executionActivated: false,

@@ -152,6 +152,10 @@ function assertAutoRunnable(state: PlanningPackState): void {
     throw new Error("Auto mode only runs authored plans. Finish planning and `/write` the pack first.");
   }
 
+  if (state.approvalStatus !== "approved") {
+    throw new Error("Auto mode requires an approved plan baseline. Review the current draft and run `/confirm-plan` first.");
+  }
+
   if (!isExecutionReadyState(state)) {
     throw new Error("Auto mode requires a queued execution step in the selected plan.");
   }
@@ -184,10 +188,15 @@ function describeNaturalStop(
   }
 
   if (!isExecutionReadyState(state)) {
-    return {
-      status: "stopped",
-      reason: `Auto mode stopped because ${state.nextStepSummary.id} is outside execution scope.`
-    };
+    return state.approvalStatus !== "approved"
+      ? {
+          status: "stopped",
+          reason: `Auto mode stopped because ${state.nextStepSummary.id} is no longer on an approved plan baseline. Review the draft and run \`/confirm-plan\` before continuing.`
+        }
+      : {
+          status: "stopped",
+          reason: `Auto mode stopped because ${state.nextStepSummary.id} is outside execution scope.`
+        };
   }
 
   if (iteration >= maxSteps) {

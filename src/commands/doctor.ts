@@ -24,13 +24,15 @@ export async function runDoctorCommand(workspaceArg?: string, options: DoctorCom
       ? "Next move: run `srgical init <id>` for a scaffold or `srgical studio <id>` to start planning."
       : "Next move: pass `--plan <id>` to inspect a named pack, or open `srgical studio <id>` to activate one."
     : selectedPlanState.packPresent
-    ? selectedPlanState.mode === "Ready to Write" || selectedPlanState.mode === "Gathering Context"
-      ? selectedPlanState.packMode === "scaffolded" && selectedPlanState.readiness.readyForFirstDraft
-        ? "Next move: run `srgical studio <id>` (or `srgical studio plan --plan <id>` / `srgical ssp <id>`) and use `/write` when you want to lock the first grounded draft."
+    ? selectedPlanState.mode === "Ready to Draft" || selectedPlanState.mode === "Gathering Context"
+      ? selectedPlanState.packMode === "scaffolded" && selectedPlanState.readiness.readyToWrite
+        ? "Next move: run `srgical studio <id>` (or `srgical studio plan --plan <id>` / `srgical ssp <id>`) and use `/write` when you want to create the first grounded draft."
         : "Next move: run `srgical studio <id>` (or `srgical studio plan --plan <id>` / `srgical ssp <id>`) to refine the plan and inspect `/readiness`."
       : selectedPlanState.mode === "Ready to Execute" || selectedPlanState.mode === "Execution Active" || selectedPlanState.mode === "Auto Running"
         ? "Next move: run `srgical studio operate --plan <id>` (or `srgical sso --plan <id>`) for guided automation, or `srgical run-next --plan <id>` for direct execution."
-        : "Next move: run `srgical studio <id>` (or `srgical studio plan --plan <id>` / `srgical ssp <id>`) to queue or refine the next execution-ready step."
+        : selectedPlanState.approvalStatus === "stale"
+          ? "Next move: run `srgical studio <id>` (or `srgical studio plan --plan <id>` / `srgical ssp <id>`) to review the changed draft and `/confirm-plan` when the new baseline is ready."
+          : "Next move: run `srgical studio <id>` (or `srgical studio plan --plan <id>` / `srgical ssp <id>`) to refine, dice, or approve the current draft."
     : "Next move: run `srgical init <id>` for a scaffold or `srgical studio <id>` to start planning.";
 
   const lines = [
@@ -86,7 +88,8 @@ function renderPlanSummaryLine(
     `path ${state.packDir}`,
     `mode ${state.mode}`,
     `docs ${state.docsPresent}/5`,
-    `human write gate ${state.humanWriteConfirmed ? "confirmed" : "pending"}`,
+    `draft ${state.draftState}`,
+    `approval ${formatApprovalStatus(state)}`,
     `readiness ${state.readiness.score}/${state.readiness.total}`,
     `execution ${state.executionActivated ? "started" : "not-started"}`,
     `auto ${state.autoRun?.status ?? "idle"}`
@@ -128,12 +131,11 @@ function renderPlanDetailLines(state: Awaited<ReturnType<typeof readPlanningPack
     `Plan dir: ${state.packDir}`,
     `Pack present: ${state.packPresent ? "yes" : "no"}`,
     `Pack mode: ${state.packMode}`,
+    `Draft state: ${state.draftState}`,
     `Mode: ${state.mode}${state.hasFailureOverlay ? " [last run failed]" : ""}`,
     `Docs present: ${state.docsPresent}/5`,
-    `Human write confirmation: ${
-      state.humanWriteConfirmed ? `confirmed (${state.humanWriteConfirmedAt ?? "timestamp unavailable"})` : "pending"
-    }`,
-    `Readiness: ${state.readiness.score}/${state.readiness.total}${state.readiness.readyToWrite ? " (ready to write)" : ""}`,
+    `Approval: ${formatApprovalStatus(state)}`,
+    `Readiness: ${state.readiness.score}/${state.readiness.total}${state.readiness.readyToWrite ? " (draft write ready)" : ""}`,
     `Execution activated: ${state.executionActivated ? "yes" : "no"}`,
     `Auto mode: ${state.autoRun?.status ?? "idle"}`
   ];
@@ -167,6 +169,18 @@ function renderPlanDetailLines(state: Awaited<ReturnType<typeof readPlanningPack
   }
 
   return lines;
+}
+
+function formatApprovalStatus(state: Awaited<ReturnType<typeof readPlanningPackState>>): string {
+  if (state.approvalStatus === "approved") {
+    return `approved (${state.humanWriteConfirmedAt ?? "timestamp unavailable"})`;
+  }
+
+  if (state.approvalStatus === "stale") {
+    return `stale after /${state.approvalInvalidatedBy ?? "write"}`;
+  }
+
+  return state.readiness.readyToApprove ? "pending review / confirmation" : "not ready yet";
 }
 
 function renderSelectedPlanLines(

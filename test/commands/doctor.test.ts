@@ -94,7 +94,7 @@ test("doctor reports all supported agents and the queued next step", async (t) =
   assert.match(output, /Plans:/);
   assert.match(
     output,
-    /default \[active\]: \| path \.srgical\/plans\/default \| mode Execution Active \| docs 1\/5 \| human write gate pending \| readiness 1\/5 \| execution started \| auto idle/
+    /default \[active\]: \| path \.srgical\/plans\/default \| mode Draft Written \| docs 1\/5 \| draft written \| approval pending review \/ confirmation \| readiness 1\/5 \| execution started \| auto idle/
   );
   assert.match(output, /Next Step: EXEC001 \(Execution\)/);
   assert.match(output, /Docs present: 1\/5/);
@@ -104,7 +104,7 @@ test("doctor reports all supported agents and the queued next step", async (t) =
   assert.match(output, /Next: Review EXEC001 acceptance and then run the step\./);
   assert.match(
     output,
-    /Next move: run `srgical studio operate --plan <id>` \(or `srgical sso --plan <id>`\) for guided automation, or `srgical run-next --plan <id>` for direct execution\./
+    /Next move: run `srgical studio <id>` \(or `srgical studio plan --plan <id>` \/ `srgical ssp <id>`\) to refine, dice, or approve the current draft\./
   );
 });
 
@@ -154,11 +154,11 @@ test("doctor reports missing supported agents safely when no next step is queued
   assert.match(output, /- Augment CLI \(augment\): missing \(missing augment\) via augment\.cmd/);
   assert.match(output, /Next Step: unavailable/);
   assert.match(output, /Tracker does not currently expose a next recommended step\./);
-  assert.match(output, /Mode: Plan Written - Needs Step/);
+  assert.match(output, /Mode: Draft Written/);
   assert.match(output, /AI advice: none cached yet \(run `\/advice` in studio to generate guidance\)\./);
   assert.match(
     output,
-    /Next move: run `srgical studio <id>` \(or `srgical studio plan --plan <id>` \/ `srgical ssp <id>`\) to queue or refine the next execution-ready step\./
+    /Next move: run `srgical studio <id>` \(or `srgical studio plan --plan <id>` \/ `srgical ssp <id>`\) to refine, dice, or approve the current draft\./
   );
 });
 
