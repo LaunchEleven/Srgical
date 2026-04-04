@@ -473,6 +473,7 @@ function createPackState(options: {
     packPresent: options.packPresent,
     trackerReadable: options.trackerReadable,
     docsPresent: options.docsPresent ?? (options.packPresent ? 5 : 0),
+    remainingExecutionSteps: options.nextRecommended ? 1 : 0,
     currentPosition: {
       lastCompleted: options.packPresent ? "DOC002" : null,
       nextRecommended: options.nextRecommended ?? null,

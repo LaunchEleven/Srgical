@@ -39,6 +39,7 @@ test("readPlanningPackState parses tracker position and next step summary", asyn
   assert.equal(state.nextStepSummary?.id, "EXEC-001");
   assert.equal(state.nextStepSummary?.phase, "Delivery");
   assert.equal(state.nextStepSummary?.scope, "Ship a safe execution slice.");
+  assert.equal(state.remainingExecutionSteps, 1);
 });
 
 test("readPlanningPackState treats an explicit 'none queued' tracker position as no queued step", async () => {
@@ -64,6 +65,40 @@ test("readPlanningPackState treats an explicit 'none queued' tracker position as
   assert.equal(state.currentPosition.lastCompleted, "DIST001");
   assert.equal(state.currentPosition.nextRecommended, null);
   assert.equal(state.nextStepSummary, null);
+  assert.equal(state.remainingExecutionSteps, 0);
+});
+
+test("readPlanningPackState counts remaining execution steps from the queued tracker row onward", async () => {
+  const workspace = await createTempWorkspace("srgical-pack-state-remaining-steps-");
+  const paths = await writePlanningPack(workspace);
+
+  await writeText(
+    paths.tracker,
+    `# Detailed Implementation Plan
+
+## Current Position
+
+- Last Completed: \`EXEC-001\`
+- Next Recommended: \`EXEC-002\`
+- Updated At: \`2026-03-24T00:00:00.000Z\`
+- Updated By: \`Codex\`
+
+## Delivery
+
+| ID | Status | Depends On | Scope | Acceptance | Notes |
+| --- | --- | --- | --- | --- | --- |
+| EXEC-001 | done | PLAN-001 | Execute slice one. | Slice one lands. | Completed. |
+| EXEC-002 | pending | EXEC-001 | Execute slice two. | Slice two lands. | Pending. |
+| EXEC-003 | blocked | EXEC-002 | Execute slice three. | Slice three lands. | Waiting on env. |
+| EXEC-004 | skipped | EXEC-003 | Execute slice four. | Slice four lands. | Deferred. |
+| EXEC-005 | pending | EXEC-004 | Execute slice five. | Slice five lands. | Pending. |
+`
+  );
+
+  const state = await readPlanningPackState(workspace);
+
+  assert.equal(state.currentPosition.nextRecommended, "EXEC-002");
+  assert.equal(state.remainingExecutionSteps, 3);
 });
 
 test("readPlanningPackState does not award readiness points for the default studio seed alone", async () => {

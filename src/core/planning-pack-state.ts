@@ -67,6 +67,7 @@ export type PlanningPackState = {
   packPresent: boolean;
   trackerReadable: boolean;
   docsPresent: number;
+  remainingExecutionSteps: number;
   currentPosition: PlanningCurrentPosition;
   nextStepSummary: PlanningStepSummary | null;
   lastExecution: ExecutionState | null;
@@ -95,13 +96,16 @@ export async function readPlanningPackState(
   const packPresent = await planningPackExists(workspaceRoot, options);
   const currentPosition = emptyCurrentPosition();
   let nextStepSummary: PlanningStepSummary | null = null;
+  let remainingExecutionSteps = 0;
   let trackerReadable = false;
 
   if (packPresent) {
     try {
       const tracker = await readText(paths.tracker);
+      const trackerRows = parseTrackerRows(tracker);
       Object.assign(currentPosition, parseCurrentPosition(tracker));
-      nextStepSummary = parseNextStepSummary(tracker, currentPosition.nextRecommended);
+      nextStepSummary = parseNextStepSummary(trackerRows, currentPosition.nextRecommended);
+      remainingExecutionSteps = countRemainingExecutionSteps(trackerRows, currentPosition.nextRecommended);
       trackerReadable = currentPosition.lastCompleted !== null || currentPosition.nextRecommended !== null;
     } catch {
       trackerReadable = false;
@@ -149,6 +153,7 @@ export async function readPlanningPackState(
     packPresent,
     trackerReadable,
     docsPresent,
+    remainingExecutionSteps,
     currentPosition,
     nextStepSummary,
     lastExecution,
@@ -336,13 +341,29 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-function parseNextStepSummary(tracker: string, stepId: string | null): PlanningStepSummary | null {
+function parseNextStepSummary(rows: PlanningStepSummary[], stepId: string | null): PlanningStepSummary | null {
   if (!stepId) {
     return null;
   }
 
-  const rows = parseTrackerRows(tracker);
   return rows.find((row) => row.id === stepId) ?? null;
+}
+
+function countRemainingExecutionSteps(rows: PlanningStepSummary[], nextRecommended: string | null): number {
+  if (!nextRecommended) {
+    return 0;
+  }
+
+  const executionRows = rows.filter((row) => isExecutionStepSummary(row));
+  const nextIndex = executionRows.findIndex((row) => row.id === nextRecommended);
+  const candidateRows = nextIndex >= 0 ? executionRows.slice(nextIndex) : executionRows;
+
+  return candidateRows.filter((row) => !isTerminalExecutionStatus(row.status)).length;
+}
+
+function isTerminalExecutionStatus(status: string): boolean {
+  const normalized = status.trim().toLowerCase();
+  return normalized === "done" || normalized === "completed" || normalized === "complete" || normalized === "skipped";
 }
 
 function parseTrackerRows(tracker: string): PlanningStepSummary[] {

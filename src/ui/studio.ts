@@ -151,7 +151,6 @@ const PASTE_ENTER_GRACE_MS = 45;
 const PASTE_BURST_CHAR_THRESHOLD = 4;
 const ESC_META_GRACE_MS = 140;
 const COMMAND_HISTORY_LIMIT = 200;
-const DEFAULT_OPERATE_GO_MAX_STEPS = 200;
 const OPEN_TARGET_ALIASES = ["all", "plan", "context", "tracker", "handoff", "prompt", "dir"] as const;
 const STUDIO_TERMINAL_FALLBACK = "xterm";
 const SAFE_MAC_STUDIO_TERMINALS = new Set(["xterm", "screen", "screen-256color", "tmux", "tmux-256color"]);
@@ -1436,7 +1435,8 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
         return;
       }
 
-      const maxSteps = requestedMaxSteps ?? DEFAULT_OPERATE_GO_MAX_STEPS;
+      const packState = latestPackState ?? (await readPlanningPackState(workspace, { planId }));
+      const maxSteps = requestedMaxSteps ?? Math.max(1, packState.remainingExecutionSteps);
       await handleSlashCommand(`/auto ${maxSteps}`);
       return;
     }

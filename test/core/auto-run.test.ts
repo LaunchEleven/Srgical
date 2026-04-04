@@ -85,6 +85,59 @@ test("execute-auto-run forwards live output chunks from execution attempts", asy
   assert.deepEqual(streamedChunks, ["stream chunk 1\n", "stream chunk 2\n"]);
 });
 
+test("execute-auto-run derives max steps from the remaining execution plan when none is provided", async (t) => {
+  const workspace = await createTempWorkspace("srgical-auto-run-derived-max-");
+  const planPaths = await writePlanningPack(workspace);
+  const messages: string[] = [];
+
+  await savePlanningState(workspace, "authored");
+  await setHumanWriteConfirmation(workspace, true);
+  await writeText(
+    planPaths.tracker,
+    `# Detailed Implementation Plan
+
+## Current Position
+
+- Last Completed: \`EXEC-001\`
+- Next Recommended: \`EXEC-002\`
+- Updated At: \`2026-04-04T00:00:00.000Z\`
+- Updated By: \`Codex\`
+
+## Delivery
+
+| ID | Status | Depends On | Scope | Acceptance | Notes |
+| --- | --- | --- | --- | --- | --- |
+| EXEC-001 | done | PLAN-001 | Execute the first slice. | The first slice lands. | Completed. |
+| EXEC-002 | pending | EXEC-001 | Execute the second slice. | The second slice lands. | Pending. |
+| EXEC-003 | pending | EXEC-002 | Execute the third slice. | The third slice lands. | Pending. |
+`
+  );
+
+  setAgentAdaptersForTesting([
+    createFakeAdapter({
+      id: "codex",
+      label: "Codex",
+      status: availableStatus("codex", "Codex"),
+      onRunNextPrompt: async () => "no-op"
+    })
+  ]);
+  t.after(resetAgentAdaptersForTesting);
+
+  const runPromise = executeAutoRun(workspace, {
+    source: "studio",
+    onMessage: async (line) => {
+      messages.push(line);
+      if (line.startsWith("Auto iteration 1/")) {
+        throw new Error("stop after first iteration");
+      }
+    }
+  });
+
+  await assert.rejects(() => runPromise, /stop after first iteration/);
+  assert.match(messages[0] ?? "", /Auto mode started for plan `default` with max 2 steps\./);
+  assert.match(messages.find((line) => line.startsWith("Auto iteration")) ?? "", /Auto iteration 1\/2:/);
+});
+
 function createFakeAdapter(options: {
   id: string;
   label: string;

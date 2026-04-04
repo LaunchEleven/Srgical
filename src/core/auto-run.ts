@@ -6,8 +6,6 @@ import { loadAutoRunState, updateAutoRunState, type AutoRunSource, type AutoRunS
 import type { PlanningPathOptions } from "./workspace";
 import { runNextPrompt } from "./agent";
 
-const DEFAULT_AUTO_MAX_STEPS = 10;
-
 export type AutoRunOptions = {
   source: AutoRunSource;
   planId?: string | null;
@@ -27,7 +25,7 @@ export async function executeAutoRun(workspaceRoot: string, options: AutoRunOpti
   const initialState = await readPlanningPackState(workspaceRoot, planOptions);
   assertAutoRunnable(initialState);
 
-  const maxSteps = sanitizeMaxSteps(options.maxSteps);
+  const maxSteps = sanitizeMaxSteps(options.maxSteps, initialState.remainingExecutionSteps);
   let autoRunState = await updateAutoRunState(
     workspaceRoot,
     {
@@ -136,9 +134,9 @@ export async function requestAutoRunStop(
   );
 }
 
-function sanitizeMaxSteps(value?: number): number {
+function sanitizeMaxSteps(value: number | undefined, derivedRemainingSteps: number): number {
   if (!value || !Number.isFinite(value) || value < 1) {
-    return DEFAULT_AUTO_MAX_STEPS;
+    return Math.max(1, derivedRemainingSteps);
   }
 
   return Math.floor(value);
