@@ -146,6 +146,7 @@ const CONTEXT_FILE_CHAR_LIMIT = 120_000;
 const COMPLETION_HINT_TTL_MS = 2500;
 const LIVE_STREAM_REVEAL_CHARS_PER_SECOND = 240;
 const LIVE_STREAM_REVEAL_INTERVAL_MS = 25;
+const TRANSCRIPT_AUTO_FOLLOW_THRESHOLD_PCT = 99;
 const RAPID_INPUT_INTERVAL_MS = 25;
 const PASTE_ENTER_GRACE_MS = 45;
 const PASTE_BURST_CHAR_THRESHOLD = 4;
@@ -321,6 +322,7 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
   let liveStreamPendingContent = "";
   let liveStreamStopRequested = false;
   let liveStreamRenderTimer: NodeJS.Timeout | undefined;
+  let transcriptAutoFollow = true;
   let studioClosed = false;
 
   function setSidebar(status?: string): void {
@@ -529,6 +531,7 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
   }
 
   function renderTranscript(): void {
+    const previousScroll = transcript.getScroll();
     const renderedMessages = getVisibleTranscriptMessages(historyMessages, transcriptStartIndex)
       .map((message) => {
         const tone =
@@ -552,7 +555,12 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
     const rendered = [renderedMessages, liveStreamBlock].filter((block) => block.length > 0).join("\n\n");
 
     transcript.setContent(rendered);
-    transcript.setScrollPerc(100);
+    if (transcriptAutoFollow) {
+      transcript.setScrollPerc(100);
+      return;
+    }
+
+    transcript.setScroll(previousScroll);
   }
 
   function renderComposer(): void {
@@ -615,6 +623,7 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
 
   function scrollTranscript(lines: number): void {
     transcript.scroll(lines);
+    transcriptAutoFollow = resolveTranscriptAutoFollowFromScrollPerc(transcript.getScrollPerc());
     screen.render();
   }
 
@@ -1855,6 +1864,10 @@ export function resolveLiveStreamRevealChunkSize(
   intervalMs = LIVE_STREAM_REVEAL_INTERVAL_MS
 ): number {
   return Math.max(1, Math.round((charsPerSecond * intervalMs) / 1000));
+}
+
+export function resolveTranscriptAutoFollowFromScrollPerc(scrollPerc: number): boolean {
+  return Number.isFinite(scrollPerc) && scrollPerc >= TRANSCRIPT_AUTO_FOLLOW_THRESHOLD_PCT;
 }
 
 export function resolveStudioTerminal(

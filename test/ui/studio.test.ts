@@ -24,6 +24,7 @@ import {
   renderOperateHelpMessage,
   renderPlanHelpMessage,
   resolveLiveStreamRevealChunkSize,
+  resolveTranscriptAutoFollowFromScrollPerc,
   resolveStudioTerminal,
   resolveTranscriptScrollProfile,
   renderWorkspaceSelectionMessage,
@@ -417,6 +418,13 @@ test("resolve-transcript-scroll-profile uses page-up labels on non-mac platforms
 test("resolve-live-stream-reveal-chunk-size targets about 240 chars per second", () => {
   assert.equal(resolveLiveStreamRevealChunkSize(), 6);
   assert.equal(resolveLiveStreamRevealChunkSize(240, 25) * (1000 / 25), 240);
+});
+
+test("resolve-transcript-auto-follow detaches above the bottom and reattaches at the bottom", () => {
+  assert.equal(resolveTranscriptAutoFollowFromScrollPerc(100), true);
+  assert.equal(resolveTranscriptAutoFollowFromScrollPerc(99), true);
+  assert.equal(resolveTranscriptAutoFollowFromScrollPerc(98.9), false);
+  assert.equal(resolveTranscriptAutoFollowFromScrollPerc(0), false);
 });
 
 test("clamp-transcript-start-index keeps transcript window bounds safe", () => {
