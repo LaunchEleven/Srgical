@@ -23,6 +23,7 @@ import {
   resolvePathCompletionDirectionFromKeypress,
   renderOperateHelpMessage,
   renderPlanHelpMessage,
+  resolveLiveStreamRevealChunkSize,
   resolveStudioTerminal,
   resolveTranscriptScrollProfile,
   renderWorkspaceSelectionMessage,
@@ -409,6 +410,11 @@ test("resolve-transcript-scroll-profile uses page-up labels on non-mac platforms
   assert.ok(profile.pageDownKeys.includes("pagedown"));
   assert.ok(profile.pageUpKeys.includes("C-u"));
   assert.ok(profile.pageDownKeys.includes("C-d"));
+});
+
+test("resolve-live-stream-reveal-chunk-size targets about 240 chars per second", () => {
+  assert.equal(resolveLiveStreamRevealChunkSize(), 6);
+  assert.equal(resolveLiveStreamRevealChunkSize(240, 25) * (1000 / 25), 240);
 });
 
 test("clamp-transcript-start-index keeps transcript window bounds safe", () => {

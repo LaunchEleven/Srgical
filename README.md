@@ -51,6 +51,9 @@ Inside `studio plan`:
 7. run `/confirm-plan` when the current written or sliced draft should become the approved execution baseline
 8. keep iterating with `/write` and `/dice`; any later change makes approval stale until you confirm again
 
+Need a concrete walkthrough for when `/write` is blocked or it is unclear whether the pack changed? See
+`docs/studio-plan-tutorial.md`.
+
 Configure operate-mode checkpoints and references:
 
 ```bash

@@ -14,6 +14,7 @@ export type AutoRunOptions = {
   agentId?: string | null;
   maxSteps?: number;
   onMessage?: (line: string) => void | Promise<void>;
+  onOutputChunk?: (chunk: string) => void;
 };
 
 export type AutoRunResult = {
@@ -230,7 +231,8 @@ async function executeIteration(
   try {
     const result = await runNextPrompt(workspaceRoot, prompt, {
       agentId: options.agentId,
-      planId: beforeState.planId
+      planId: beforeState.planId,
+      onOutputChunk: options.onOutputChunk
     });
     firstAttempt = { ok: true, message: result };
   } catch (error) {
@@ -261,7 +263,8 @@ async function executeIteration(
   try {
     const retryResult = await runNextPrompt(workspaceRoot, prompt, {
       agentId: options.agentId,
-      planId: beforeState.planId
+      planId: beforeState.planId,
+      onOutputChunk: options.onOutputChunk
     });
     const retryAfterState = await readPlanningPackState(workspaceRoot, planOptions);
 

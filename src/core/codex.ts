@@ -265,7 +265,8 @@ async function runCodexExec(options: CodexExecOptions): Promise<CodexExecResult>
 
   try {
     const result = await spawnAndCaptureImpl(command, args, options.cwd, options.prompt, {
-      onStdoutChunk: options.onOutputChunk
+      onStdoutChunk: options.onOutputChunk,
+      onStderrChunk: options.onOutputChunk
     });
     const lastMessage = await readFile(outputFile, "utf8");
 

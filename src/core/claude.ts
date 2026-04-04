@@ -293,7 +293,8 @@ async function runClaudeExec(options: ClaudeExecOptions): Promise<ClaudeExecResu
 
   try {
     const result = await spawnAndCaptureImpl(command, args, options.cwd, undefined, {
-      onStdoutChunk: options.onOutputChunk
+      onStdoutChunk: options.onOutputChunk,
+      onStderrChunk: options.onOutputChunk
     });
     return {
       stdout: result.stdout,

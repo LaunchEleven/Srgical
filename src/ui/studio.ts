@@ -144,8 +144,8 @@ const ACTIVITY_FRAMES = ["[    ]", "[=   ]", "[==  ]", "[=== ]", "[ ===]", "[  =
 const COMPOSER_CURSOR = "{#ffb14a-fg}\u2588{/}";
 const CONTEXT_FILE_CHAR_LIMIT = 120_000;
 const COMPLETION_HINT_TTL_MS = 2500;
-const LIVE_STREAM_REVEAL_INTERVAL_MS = 16;
-const LIVE_STREAM_REVEAL_CHARS = 40;
+const LIVE_STREAM_REVEAL_CHARS_PER_SECOND = 240;
+const LIVE_STREAM_REVEAL_INTERVAL_MS = 25;
 const RAPID_INPUT_INTERVAL_MS = 25;
 const PASTE_ENTER_GRACE_MS = 45;
 const PASTE_BURST_CHAR_THRESHOLD = 4;
@@ -521,8 +521,9 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
     }
 
     const codePoints = Array.from(liveStreamPendingContent);
-    const nextChunk = codePoints.slice(0, LIVE_STREAM_REVEAL_CHARS).join("");
-    liveStreamPendingContent = codePoints.slice(LIVE_STREAM_REVEAL_CHARS).join("");
+    const revealChars = resolveLiveStreamRevealChunkSize();
+    const nextChunk = codePoints.slice(0, revealChars).join("");
+    liveStreamPendingContent = codePoints.slice(revealChars).join("");
     liveStreamContent += nextChunk;
   }
 
@@ -1551,21 +1552,26 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
       const maxSteps = requestedMax ? Number(requestedMax) : undefined;
 
       startBusy("auto");
+      startLiveStream(`${getPrimaryAgentAdapter().label.toUpperCase()} AUTO STREAM`);
 
       try {
         const result = await executeAutoRun(workspace, {
           source: "studio",
           planId,
           maxSteps,
+          onOutputChunk: appendLiveStreamChunk,
           onMessage: async (line) => {
             await appendSystemMessage(line);
           }
         });
+        await stopLiveStream();
         await refreshAdvice(false);
         await appendSystemMessage(`Auto mode finished: ${result.summary}`);
       } catch (error) {
+        await stopLiveStream();
         await appendSystemMessage(`Auto mode failed: ${error instanceof Error ? error.message : String(error)}`);
       } finally {
+        await stopLiveStream();
         stopBusy();
         await refreshEnvironment();
       }
@@ -1832,6 +1838,13 @@ export function resolveTranscriptScrollProfile(platform: NodeJS.Platform = proce
     pageUpKeys: [...TRANSCRIPT_PAGE_UP_KEYS],
     pageDownKeys: [...TRANSCRIPT_PAGE_DOWN_KEYS]
   };
+}
+
+export function resolveLiveStreamRevealChunkSize(
+  charsPerSecond = LIVE_STREAM_REVEAL_CHARS_PER_SECOND,
+  intervalMs = LIVE_STREAM_REVEAL_INTERVAL_MS
+): number {
+  return Math.max(1, Math.round((charsPerSecond * intervalMs) / 1000));
 }
 
 export function resolveStudioTerminal(

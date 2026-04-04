@@ -285,7 +285,8 @@ async function runAugmentExec(options: AugmentExecOptions): Promise<AugmentExecR
 
   try {
     const result = await spawnAndCaptureImpl(command, args, options.cwd, undefined, {
-      onStdoutChunk: options.onOutputChunk
+      onStdoutChunk: options.onOutputChunk,
+      onStderrChunk: options.onOutputChunk
     });
     return {
       stdout: result.stdout,
