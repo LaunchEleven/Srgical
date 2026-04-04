@@ -251,6 +251,7 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
     left: 0,
     width: "100%",
     height: 6,
+    mouse: true,
     keys: true,
     tags: true,
     scrollable: true,
@@ -1875,6 +1876,14 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
   transcript.on("wheeldown", () => {
     scrollTranscript(3);
   });
+
+  for (const eventName of ["click", "mousedown"] as const) {
+    input.on(eventName, () => {
+      input.focus();
+      setFooter();
+      screen.render();
+    });
+  }
 
   renderTranscript();
   renderComposer();
