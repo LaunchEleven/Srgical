@@ -169,6 +169,7 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
   const screen = blessed.screen({
     smartCSR: true,
     fullUnicode: true,
+    mouse: true,
     terminal,
     title: studioMode === "plan" ? "srgical studio plan" : "srgical studio operate"
   });
@@ -191,6 +192,7 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
     left: 0,
     width: "72%",
     height: "100%-10",
+    mouse: true,
     tags: true,
     scrollable: true,
     alwaysScroll: true,
@@ -1771,6 +1773,14 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
     });
   }
 
+  transcript.on("wheelup", () => {
+    scrollTranscript(-3);
+  });
+
+  transcript.on("wheeldown", () => {
+    scrollTranscript(3);
+  });
+
   renderTranscript();
   renderComposer();
   setSidebar("booting...");
@@ -2417,7 +2427,7 @@ export function renderPlanHelpMessage(transcriptHelpLine: string): string {
     "- `/workspace <path> <follow-up>` auto-sends the follow-up text after a successful workspace switch.",
     "- Large paste blocks are accepted directly; no delimiter syntax is required.",
     "- `Tab` / `Shift+Tab` cycles path completions for `/read`, `/open`, `/workspace`, and existing `/plan` ids.",
-    "- Mouse clicks are not captured so native terminal drag-selection stays available; use `/copy ...` if your terminal still behaves awkwardly.",
+    "- Mouse wheel scrolling works over the transcript pane. Mouse clicks are still not bound to actions, but enabling wheel capture may affect native terminal drag-selection in some terminals; use `/copy ...` if selection feels awkward.",
     "- `/copy`, `/copy visible`, `/copy all`, or `/copy last` copies transcript text through the OS clipboard.",
     "- Planner, `/write`, `/dice`, `/assess`, `/gather`, `/gaps`, and `/ready` stream model output live in the transcript while the CLI call is in flight.",
     transcriptHelpLine,
@@ -2443,7 +2453,7 @@ export function renderOperateHelpMessage(transcriptHelpLine: string): string {
     "- Operate mode is slash-command only. Use `srgical studio plan` for planning conversation.",
     "- `Up` / `Down` cycles previously submitted slash commands.",
     "- `Tab` / `Shift+Tab` cycles path completions for `/open`, `/workspace`, and existing `/plan` ids.",
-    "- Mouse clicks are not captured so native terminal drag-selection stays available; use `/copy ...` if your terminal still behaves awkwardly.",
+    "- Mouse wheel scrolling works over the transcript pane. Mouse clicks are still not bound to actions, but enabling wheel capture may affect native terminal drag-selection in some terminals; use `/copy ...` if selection feels awkward.",
     "- `/copy`, `/copy visible`, `/copy all`, or `/copy last` copies transcript text through the OS clipboard.",
     transcriptHelpLine,
     "- `/quit` closes the studio."

@@ -117,8 +117,10 @@ test("format-tracker-summary shows none queued instead of unknown", () => {
 });
 
 test("studio help text makes native drag-selection expectations explicit", () => {
-  assert.match(renderPlanHelpMessage("scroll help"), /Mouse clicks are not captured so native terminal drag-selection stays available/);
-  assert.match(renderOperateHelpMessage("scroll help"), /Mouse clicks are not captured so native terminal drag-selection stays available/);
+  assert.match(renderPlanHelpMessage("scroll help"), /Mouse wheel scrolling works over the transcript pane/);
+  assert.match(renderPlanHelpMessage("scroll help"), /may affect native terminal drag-selection/);
+  assert.match(renderOperateHelpMessage("scroll help"), /Mouse wheel scrolling works over the transcript pane/);
+  assert.match(renderOperateHelpMessage("scroll help"), /may affect native terminal drag-selection/);
 });
 
 test("plan help text advertises dice slicing controls", () => {
