@@ -23,6 +23,7 @@ import {
   resolvePathCompletionDirectionFromKeypress,
   renderOperateHelpMessage,
   renderPlanHelpMessage,
+  getRenderedHistoryMessageContent,
   resolveLiveStreamRevealChunkSize,
   resolveTranscriptAutoFollowFromScrollPerc,
   resolveStudioTerminal,
@@ -416,8 +417,8 @@ test("resolve-transcript-scroll-profile uses page-up labels on non-mac platforms
 });
 
 test("resolve-live-stream-reveal-chunk-size targets about 240 chars per second", () => {
-  assert.equal(resolveLiveStreamRevealChunkSize(), 6);
-  assert.equal(resolveLiveStreamRevealChunkSize(240, 25) * (1000 / 25), 240);
+  assert.equal(resolveLiveStreamRevealChunkSize(), 8);
+  assert.equal(resolveLiveStreamRevealChunkSize(320, 25) * (1000 / 25), 320);
 });
 
 test("resolve-transcript-auto-follow detaches above the bottom and reattaches at the bottom", () => {
@@ -425,6 +426,12 @@ test("resolve-transcript-auto-follow detaches above the bottom and reattaches at
   assert.equal(resolveTranscriptAutoFollowFromScrollPerc(99), true);
   assert.equal(resolveTranscriptAutoFollowFromScrollPerc(98.9), false);
   assert.equal(resolveTranscriptAutoFollowFromScrollPerc(0), false);
+});
+
+test("get-rendered-history-message-content shows existing history immediately and new history incrementally", () => {
+  assert.equal(getRenderedHistoryMessageContent("already here", 0, 1, null, 0), "already here");
+  assert.equal(getRenderedHistoryMessageContent("new message", 1, 1, 1, 3), "new");
+  assert.equal(getRenderedHistoryMessageContent("not yet started", 2, 1, 1, 3), "");
 });
 
 test("clamp-transcript-start-index keeps transcript window bounds safe", () => {

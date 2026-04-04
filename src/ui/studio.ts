@@ -144,7 +144,7 @@ const ACTIVITY_FRAMES = ["[    ]", "[=   ]", "[==  ]", "[=== ]", "[ ===]", "[  =
 const COMPOSER_CURSOR = "{#ffb14a-fg}\u2588{/}";
 const CONTEXT_FILE_CHAR_LIMIT = 120_000;
 const COMPLETION_HINT_TTL_MS = 2500;
-const LIVE_STREAM_REVEAL_CHARS_PER_SECOND = 240;
+const LIVE_STREAM_REVEAL_CHARS_PER_SECOND = 320;
 const LIVE_STREAM_REVEAL_INTERVAL_MS = 25;
 const TRANSCRIPT_AUTO_FOLLOW_THRESHOLD_PCT = 99;
 const RAPID_INPUT_INTERVAL_MS = 25;
@@ -322,6 +322,10 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
   let liveStreamPendingContent = "";
   let liveStreamStopRequested = false;
   let liveStreamRenderTimer: NodeJS.Timeout | undefined;
+  let revealedHistoryMessageCount = historyMessages.length;
+  let activeHistoryRevealIndex: number | null = null;
+  let activeHistoryRevealChars = 0;
+  let historyRevealTimer: NodeJS.Timeout | undefined;
   let transcriptAutoFollow = true;
   let studioClosed = false;
 
@@ -437,6 +441,7 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
 
     studioClosed = true;
     resetLiveStream();
+    resetHistoryRevealState(historyMessages.length);
     stopBusy();
 
     screen.destroy();
@@ -493,6 +498,80 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
     screen.render();
   }
 
+  function resetHistoryRevealState(revealedCount = revealedHistoryMessageCount): void {
+    revealedHistoryMessageCount = Math.max(0, Math.min(revealedCount, historyMessages.length));
+    activeHistoryRevealIndex = null;
+    activeHistoryRevealChars = 0;
+
+    if (historyRevealTimer) {
+      clearTimeout(historyRevealTimer);
+      historyRevealTimer = undefined;
+    }
+  }
+
+  function scheduleHistoryReveal(): void {
+    if (historyRevealTimer || studioClosed) {
+      return;
+    }
+
+    if (!hasPendingHistoryReveal()) {
+      return;
+    }
+
+    revealHistoryChunk();
+    renderTranscript();
+    setFooter();
+    screen.render();
+
+    if (!hasPendingHistoryReveal()) {
+      return;
+    }
+
+    historyRevealTimer = setTimeout(() => {
+      historyRevealTimer = undefined;
+      scheduleHistoryReveal();
+    }, LIVE_STREAM_REVEAL_INTERVAL_MS);
+  }
+
+  function hasPendingHistoryReveal(): boolean {
+    return activeHistoryRevealIndex !== null || revealedHistoryMessageCount < historyMessages.length;
+  }
+
+  function revealHistoryChunk(): void {
+    if (activeHistoryRevealIndex === null) {
+      if (revealedHistoryMessageCount >= historyMessages.length) {
+        return;
+      }
+
+      activeHistoryRevealIndex = revealedHistoryMessageCount;
+      activeHistoryRevealChars = 0;
+    }
+
+    const message = historyMessages[activeHistoryRevealIndex];
+
+    if (!message) {
+      resetHistoryRevealState(revealedHistoryMessageCount);
+      return;
+    }
+
+    const totalChars = Array.from(message.content).length;
+
+    if (totalChars === 0) {
+      revealedHistoryMessageCount = activeHistoryRevealIndex + 1;
+      activeHistoryRevealIndex = null;
+      activeHistoryRevealChars = 0;
+      return;
+    }
+
+    activeHistoryRevealChars = Math.min(totalChars, activeHistoryRevealChars + resolveLiveStreamRevealChunkSize());
+
+    if (activeHistoryRevealChars >= totalChars) {
+      revealedHistoryMessageCount = activeHistoryRevealIndex + 1;
+      activeHistoryRevealIndex = null;
+      activeHistoryRevealChars = 0;
+    }
+  }
+
   function scheduleLiveStreamRender(): void {
     if (liveStreamRenderTimer) {
       return;
@@ -532,8 +611,11 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
 
   function renderTranscript(): void {
     const previousScroll = transcript.getScroll();
-    const renderedMessages = getVisibleTranscriptMessages(historyMessages, transcriptStartIndex)
-      .map((message) => {
+    const clampedTranscriptStartIndex = clampTranscriptStartIndex(transcriptStartIndex, historyMessages.length);
+    const renderedMessages = historyMessages
+      .slice(clampedTranscriptStartIndex)
+      .map((message, offset) => {
+        const messageIndex = clampedTranscriptStartIndex + offset;
         const tone =
           message.role === "user"
             ? "{#ffb14a-fg}YOU{/}"
@@ -541,8 +623,9 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
               ? "{#4de2c5-fg}PLANNER{/}"
               : "{#ff7a59-fg}SYSTEM{/}";
 
-        return `${tone}\n${escapeBlessedText(message.content)}`;
+        return `${tone}\n${escapeBlessedText(getRenderedHistoryMessageContent(message.content, messageIndex, revealedHistoryMessageCount, activeHistoryRevealIndex, activeHistoryRevealChars))}`;
       })
+      .filter((block) => block.trim().length > 0)
       .join("\n\n");
 
     const liveStreamBlock =
@@ -661,6 +744,7 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
   async function appendMessage(message: ChatMessage): Promise<void> {
     historyMessages.push(message);
     await saveStudioSession(workspace, historyMessages, { planId });
+    scheduleHistoryReveal();
   }
 
   async function appendSystemMessage(content: string): Promise<void> {
@@ -810,6 +894,7 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
     planId = normalizePlanId(nextPlanId);
     await saveActivePlanId(workspace, planId);
     historyMessages = await loadStudioSession(workspace, { planId });
+    resetHistoryRevealState(historyMessages.length);
     transcriptStartIndex = 0;
     await refreshEnvironment();
   }
@@ -1061,6 +1146,7 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
         planId = await resolvePlanId(workspace, previousPlanId);
         await saveActivePlanId(workspace, planId);
         historyMessages = await loadStudioSession(workspace, { planId });
+        resetHistoryRevealState(historyMessages.length);
         transcriptStartIndex = 0;
         await refreshEnvironment();
         await appendSystemMessage(
@@ -1868,6 +1954,24 @@ export function resolveLiveStreamRevealChunkSize(
 
 export function resolveTranscriptAutoFollowFromScrollPerc(scrollPerc: number): boolean {
   return Number.isFinite(scrollPerc) && scrollPerc >= TRANSCRIPT_AUTO_FOLLOW_THRESHOLD_PCT;
+}
+
+export function getRenderedHistoryMessageContent(
+  content: string,
+  messageIndex: number,
+  revealedMessageCount: number,
+  activeRevealIndex: number | null,
+  activeRevealChars: number
+): string {
+  if (messageIndex < revealedMessageCount) {
+    return content;
+  }
+
+  if (messageIndex === activeRevealIndex) {
+    return Array.from(content).slice(0, activeRevealChars).join("");
+  }
+
+  return "";
 }
 
 export function resolveStudioTerminal(
