@@ -7,7 +7,8 @@ import {
   renderCommandSyntaxHelpText,
   renderOperateHelpText,
   renderPrepareHelpText,
-  selectAutoGatherFiles
+  selectAutoGatherFiles,
+  shouldStickScrollableToBottom
 } from "../../src/ui/studio";
 import { createTempWorkspace } from "../helpers/workspace";
 
@@ -42,6 +43,38 @@ test("limitStudioSnippet leaves short content alone and truncates long content c
 
   assert.ok(clipped.length < long.length);
   assert.match(clipped, /\.\.\. \[truncated after 1600 chars\]$/);
+});
+
+test("shouldStickScrollableToBottom keeps the transcript pinned when it already fits or is near the end", () => {
+  assert.equal(shouldStickScrollableToBottom({
+    height: 24,
+    iheight: 4,
+    getScrollHeight: () => 18,
+    getScrollPerc: () => 0
+  }), true);
+
+  assert.equal(shouldStickScrollableToBottom({
+    height: 24,
+    iheight: 4,
+    getScrollHeight: () => 80,
+    getScrollPerc: () => 99
+  }), true);
+
+  assert.equal(shouldStickScrollableToBottom({
+    height: 24,
+    iheight: 4,
+    getScrollHeight: () => 80,
+    getScrollPerc: () => 98.5
+  }), false);
+});
+
+test("shouldStickScrollableToBottom defaults to sticky when blessed has not resolved numeric layout yet", () => {
+  assert.equal(shouldStickScrollableToBottom({
+    height: "100%-10",
+    iheight: 4,
+    getScrollHeight: () => 80,
+    getScrollPerc: () => 0
+  }), true);
 });
 
 test("prepare help explains slice options and compatibility aliases", () => {

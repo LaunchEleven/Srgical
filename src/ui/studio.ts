@@ -27,6 +27,7 @@ import { fileExists, getPlanningPackPaths, readText, resolvePlanId, resolveWorks
 export type StudioMode = "prepare" | "operate";
 type StudioOptions = { workspace?: string; planId?: string | null; mode?: StudioMode };
 type ChatMessage = { role: "user" | "assistant" | "system"; content: string };
+type ScrollableElement = Pick<blessed.Widgets.ScrollableBoxElement, "height" | "iheight" | "getScrollHeight" | "getScrollPerc" | "setScrollPerc">;
 
 const FILE_LIMIT = 6;
 const SNIPPET_LIMIT = 1600;
@@ -92,6 +93,7 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
   screen.append(header); screen.append(transcript); screen.append(sidebar); screen.append(input); screen.append(footer);
 
   const render = (status = "ready") => {
+    const shouldStickTranscript = shouldStickScrollableToBottom(transcript);
     header.setContent(
       ` {bold}SRGICAL ${mode.toUpperCase()}{/bold}   ${path.basename(workspace) || workspace}   {${mode === "prepare" ? `${STUDIO_THEME.prepareAccent}-fg` : `${STUDIO_THEME.operateAccent}-fg`}}PLAN ${state.planId.toUpperCase()} | ${state.mode.toUpperCase()}{/}`
     );
@@ -131,7 +133,12 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
       : mode === "prepare"
         ? " Text chats with planner | commands start with : | :help | F2 Gather F3 Build F4 Slice F5 Review F6 Approve F7 Operate "
         : " Commands start with : | :help | F2 Run F3 Auto F4 Checkpoint F5 Prepare F6 Review F7 Unblock ");
+    const pinnedBeforeRender = shouldStickTranscript && tryStickScrollableToBottom(transcript);
     screen.render();
+    if (shouldStickTranscript && !pinnedBeforeRender) {
+      transcript.setScrollPerc(100);
+      screen.render();
+    }
   };
 
   const refresh = async () => { state = await readPlanningPackState(workspace, { planId }); agent = await resolvePrimaryAgent(workspace, { planId }); render(); };
@@ -447,6 +454,27 @@ async function collect(dir: string, root: string, limit: number): Promise<string
 
 export function limitStudioSnippet(value: string): string {
   return value.length <= SNIPPET_LIMIT ? value : `${value.slice(0, SNIPPET_LIMIT).trimEnd()}\n... [truncated after ${SNIPPET_LIMIT} chars]`;
+}
+
+export function shouldStickScrollableToBottom(element: Pick<ScrollableElement, "height" | "iheight" | "getScrollHeight" | "getScrollPerc">): boolean {
+  const viewportHeight = getScrollableViewportHeight(element);
+  if (viewportHeight <= 0) return true;
+  if (element.getScrollHeight() <= viewportHeight) return true;
+  return element.getScrollPerc() >= 99;
+}
+
+function tryStickScrollableToBottom(element: ScrollableElement): boolean {
+  const viewportHeight = getScrollableViewportHeight(element);
+  if (viewportHeight <= 0) return false;
+  element.setScrollPerc(100);
+  return true;
+}
+
+function getScrollableViewportHeight(element: Pick<ScrollableElement, "height" | "iheight">): number {
+  const height = typeof element.height === "number" ? element.height : Number(element.height);
+  const innerHeight = typeof element.iheight === "number" ? element.iheight : Number(element.iheight);
+  if (!Number.isFinite(height) || !Number.isFinite(innerHeight)) return 0;
+  return Math.max(height - innerHeight, 0);
 }
 
 export function renderPrepareHelpText(): string {
