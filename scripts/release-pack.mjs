@@ -23,7 +23,7 @@ await rm(releaseDir, { recursive: true, force: true });
 await mkdir(releaseDir, { recursive: true });
 
 runChecked(npmCommand, ["run", "build"], { cwd: root });
-runChecked(process.execPath, ["dist/index.js", "doctor", "--plan", releaseValidationPlanId], { cwd: root });
+runChecked(process.execPath, ["dist/index.js", "status", "--plan", releaseValidationPlanId], { cwd: root });
 
 await prepareStagedPackage({
   stagingDir: githubStagingDir,
@@ -64,7 +64,7 @@ const manifest = {
   },
   validation: [
     "npm run build",
-    `node dist/index.js doctor --plan ${releaseValidationPlanId}`,
+    `node dist/index.js status --plan ${releaseValidationPlanId}`,
     "npm pack --pack-destination .artifacts/release (staged package copies)"
   ],
   artifacts: [githubArtifact, npmArtifact],
