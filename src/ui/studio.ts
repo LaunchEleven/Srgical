@@ -1,6 +1,7 @@
 import path from "node:path";
 import { readdir } from "node:fs/promises";
 import blessed from "blessed";
+import type { PlanningAdviceState } from "../core/advice-state";
 import { dicePlanningPack, getPrimaryAgentAdapter, requestPlannerReply, resolvePrimaryAgent, runNextPrompt, writePlanningPack } from "../core/agent";
 import { executeAutoRun, requestAutoRunStop } from "../core/auto-run";
 import { readPackSnapshot } from "../core/change-summary";
@@ -30,6 +31,7 @@ type ChatMessage = { role: "user" | "assistant" | "system"; content: string };
 type ScrollableElement = Pick<blessed.Widgets.ScrollableBoxElement, "height" | "iheight" | "getScrollHeight" | "getScrollPerc" | "setScrollPerc" | "scroll">;
 type PositionedElement = { lpos?: { xi: number; xl: number; yi: number; yl: number } };
 type StudioMouseOptions = { vt200Mouse: boolean; allMotion: boolean; sgrMouse: boolean; sendFocus: boolean };
+type LiveStudioMessage = { append(chunk: string): void; finalize(content: string): Promise<void>; discard(): Promise<void> };
 
 const FILE_LIMIT = 6;
 const SNIPPET_LIMIT = 1600;
@@ -148,14 +150,49 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
     }
   };
 
+  const persistMessages = async () => { await saveStudioSession(workspace, messages, { planId }); };
   const refresh = async () => { state = await readPlanningPackState(workspace, { planId }); agent = await resolvePrimaryAgent(workspace, { planId }); render(); };
-  const push = async (message: ChatMessage) => { messages.push(message); await saveStudioSession(workspace, messages, { planId }); render(); };
+  const push = async (message: ChatMessage) => { messages.push(message); await persistMessages(); render(); };
   const system = async (content: string) => { await push({ role: "system", content }); };
   const scrollTranscriptBy = (offset: number) => { transcript.scroll(offset); screen.render(); };
   const scrollTranscriptByPage = (direction: -1 | 1) => { scrollTranscriptBy(direction * getScrollablePageStep(transcript)); };
   const scrollTranscriptTo = (target: "top" | "bottom") => {
     transcript.setScrollPerc(target === "top" ? 0 : 100);
     screen.render();
+  };
+  const startLiveMessage = (role: ChatMessage["role"], initialContent = ""): LiveStudioMessage => {
+    const message: ChatMessage = { role, content: initialContent };
+    messages.push(message);
+    render();
+
+    const remove = () => {
+      const index = messages.indexOf(message);
+      if (index >= 0) {
+        messages.splice(index, 1);
+      }
+    };
+
+    return {
+      append(chunk: string) {
+        const normalized = normalizeStudioStreamChunk(chunk);
+        if (!normalized) return;
+        message.content += normalized;
+        render();
+      },
+      async finalize(content: string) {
+        message.content = content.trim();
+        if (!message.content) {
+          remove();
+        }
+        await persistMessages();
+        render();
+      },
+      async discard() {
+        remove();
+        await persistMessages();
+        render();
+      }
+    };
   };
 
   const autoGather = async (origin: "boot" | "manual") => {
@@ -170,7 +207,18 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
         const body = await readText(path.join(workspace, relativePath)).catch(() => "");
         await system(`Loaded context file: ${relativePath}\n\n===== BEGIN FILE ${relativePath} =====\n${limitStudioSnippet(body.trim())}\n===== END FILE ${relativePath} =====`);
       }
-      const advice = await refreshPlanningAdvice(workspace, messages, { planId }).catch(() => null);
+      const adviceContext = [...messages];
+      const liveAdvice = startLiveMessage("assistant");
+      let advice: PlanningAdviceState | null = null;
+      try {
+        advice = await refreshPlanningAdvice(workspace, adviceContext, {
+          planId,
+          onOutputChunk: (chunk) => { liveAdvice.append(chunk); }
+        });
+        await liveAdvice.finalize(renderPlanningAdviceTranscript(advice));
+      } catch {
+        await liveAdvice.discard();
+      }
       await updatePlanManifest(workspace, {
         stage: "discover",
         nextAction: advice?.nextAction ?? "Review the gathered evidence, then build the draft when you have enough context.",
@@ -191,10 +239,16 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
     if (busy) return;
     if (!state.readiness.readyToWrite) { await system(`Build Draft is blocked.\nMissing: ${state.readiness.missingLabels.join(", ") || "none"}`); return; }
     busy = true; render("building draft...");
+    let liveResult: LiveStudioMessage | null = null;
     try {
       const before = await readPackSnapshot(workspace, { planId });
       const snapshot = await snapshotRevisionIfNeeded(workspace, { planId });
-      const result = await writePlanningPack(workspace, messages, { planId });
+      const buildContext = [...messages];
+      const activeLiveResult = liveResult = startLiveMessage("system", "Build Draft is running...\n\n");
+      const result = await writePlanningPack(workspace, buildContext, {
+        planId,
+        onOutputChunk: (chunk) => { activeLiveResult.append(chunk); }
+      });
       await recordPlanningPackWrite(workspace, "write", { planId });
       await refreshPlanningAdvice(workspace, messages, { planId }).catch(() => null);
       const headline = await recordVisibleChange(workspace, before, "Built or refreshed the prepare draft.", {
@@ -202,8 +256,9 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
         nextAction: "Review the draft, slice the plan if needed, then approve when it is clear enough to operate."
       });
       await refresh();
-      await system(`Build Draft completed.\nRevision snapshot: ${snapshot ?? "none"}\nVisible change: ${headline}\n${getPrimaryAgentAdapter().label} summary:\n${result}`);
+      await activeLiveResult.finalize(`Build Draft completed.\nRevision snapshot: ${snapshot ?? "none"}\nVisible change: ${headline}\n${getPrimaryAgentAdapter().label} summary:\n${result}`);
     } catch (error) {
+      await liveResult?.discard();
       await system(`Build Draft failed: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
       busy = false; render();
@@ -214,17 +269,24 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
     if (busy) return;
     if (!state.readiness.readyToDice) { await system("Slice Plan is blocked until a draft exists."); return; }
     busy = true; render("slicing plan...");
+    let liveResult: LiveStudioMessage | null = null;
     try {
       const before = await readPackSnapshot(workspace, { planId });
       const snapshot = await snapshotRevisionIfNeeded(workspace, { planId });
-      const result = await dicePlanningPack(workspace, messages, options, { planId });
+      const sliceContext = [...messages];
+      const activeLiveResult = liveResult = startLiveMessage("system", `${label} is running...\n\n`);
+      const result = await dicePlanningPack(workspace, sliceContext, options, {
+        planId,
+        onOutputChunk: (chunk) => { activeLiveResult.append(chunk); }
+      });
       await recordPlanningPackWrite(workspace, "dice", { planId });
       const headline = await recordVisibleChange(workspace, before, "Sliced the draft into execution-ready steps.", {
         planId, action: "refine", stage: "Prepare", nextAction: "Review the sliced tracker, then approve when the next step is clear enough to operate."
       });
       await refresh();
-      await system(`${label} completed.\nSettings: ${renderPlanDiceLabel(options)}\nRevision snapshot: ${snapshot ?? "none"}\nVisible change: ${headline}\n${getPrimaryAgentAdapter().label} summary:\n${result}`);
+      await activeLiveResult.finalize(`${label} completed.\nSettings: ${renderPlanDiceLabel(options)}\nRevision snapshot: ${snapshot ?? "none"}\nVisible change: ${headline}\n${getPrimaryAgentAdapter().label} summary:\n${result}`);
     } catch (error) {
+      await liveResult?.discard();
       await system(`${label} failed: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
       busy = false; render();
@@ -262,10 +324,15 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
     if (!hasQueuedNextStep(state.currentPosition.nextRecommended)) { await system(formatNoQueuedNextStepMessage("studio")); return; }
     if (state.approvalStatus !== "approved") { await system("Operate requires an approved draft. Switch to prepare and approve it first."); return; }
     busy = true; render("running next step...");
+    let liveResult: LiveStudioMessage | null = null;
     try {
       const before = await readPackSnapshot(workspace, { planId });
       const prompt = await buildExecutionIterationPrompt(workspace, state, { planId });
-      const result = await runNextPrompt(workspace, prompt.prompt, { planId });
+      const activeLiveResult = liveResult = startLiveMessage("system", "Run next step is executing...\n\n");
+      const result = await runNextPrompt(workspace, prompt.prompt, {
+        planId,
+        onOutputChunk: (chunk) => { activeLiveResult.append(chunk); }
+      });
       await saveExecutionState(workspace, "success", "studio", result, { planId });
       await appendExecutionLog(workspace, "success", "studio", result, { planId, stepLabel: state.nextStepSummary?.id ?? state.currentPosition.nextRecommended });
       await refresh();
@@ -275,8 +342,9 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
         nextAction: stage === "Blocked" ? "Resolve the blocker or reopen prepare." : stage === "Finished" ? "Review the outcome or reopen prepare to extend the plan." : "Run the next step or switch on auto continue."
       });
       await refresh();
-      await system(`Run next step completed.\nPrompt source: ${prompt.handoffDoc.displayPath}\nVisible change: ${headline}\n${getPrimaryAgentAdapter().label} summary:\n${result}`);
+      await activeLiveResult.finalize(`Run next step completed.\nPrompt source: ${prompt.handoffDoc.displayPath}\nVisible change: ${headline}\n${getPrimaryAgentAdapter().label} summary:\n${result}`);
     } catch (error) {
+      await liveResult?.discard();
       const message = error instanceof Error ? error.message : String(error);
       await saveExecutionState(workspace, "failure", "studio", message, { planId });
       await appendExecutionLog(workspace, "failure", "studio", message, { planId, stepLabel: state.nextStepSummary?.id ?? state.currentPosition.nextRecommended });
@@ -290,15 +358,25 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
   const autoContinue = async (maxSteps?: number) => {
     if (busy) return;
     busy = true; render("auto continuing...");
+    let liveResult: LiveStudioMessage | null = null;
     try {
       const before = await readPackSnapshot(workspace, { planId });
-      const result = await executeAutoRun(workspace, { source: "studio", planId, maxSteps });
+      const activeLiveResult = liveResult = startLiveMessage("system", "Auto continue is running...\n\n");
+      const result = await executeAutoRun(workspace, {
+        source: "studio",
+        planId,
+        maxSteps,
+        onMessage: async (line) => { activeLiveResult.append(`${line}\n`); },
+        onOutputChunk: (chunk) => { activeLiveResult.append(chunk); }
+      });
       await refresh();
       const headline = await recordVisibleChange(workspace, before, "Auto continue ran one or more operate steps.", {
         planId, action: "operate", stage: state.mode, nextAction: state.nextAction, executionMode: "auto"
       });
-      await refresh(); await system(`Auto continue finished: ${result.summary}\nVisible change: ${headline}`);
+      await refresh();
+      await activeLiveResult.finalize(`Auto continue finished: ${result.summary}\nVisible change: ${headline}`);
     } catch (error) {
+      await liveResult?.discard();
       await system(`Auto continue failed: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
       busy = false; render();
@@ -399,13 +477,20 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
     }
     if (mode === "operate") { await system("Operate is action-first. Use the primary actions or the :command palette."); return; }
     busy = true; render("thinking...");
+    let liveReply: LiveStudioMessage | null = null;
     try {
       await push({ role: "user", content: text });
-      const reply = await requestPlannerReply(workspace, messages, { planId });
-      await push({ role: "assistant", content: reply.trim() });
+      const plannerContext = [...messages];
+      const activeLiveReply = liveReply = startLiveMessage("assistant");
+      const reply = await requestPlannerReply(workspace, plannerContext, {
+        planId,
+        onOutputChunk: (chunk) => { activeLiveReply.append(chunk); }
+      });
+      await activeLiveReply.finalize(reply.trim());
       await refreshPlanningAdvice(workspace, messages, { planId }).catch(() => null);
       await refresh();
     } catch (error) {
+      await liveReply?.discard();
       await system(`Planner request failed: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
       busy = false; render();
@@ -495,6 +580,29 @@ export function limitStudioSnippet(value: string): string {
 
 export function renderStudioInputContent(value: string): string {
   return ESC(value);
+}
+
+export function normalizeStudioStreamChunk(chunk: string): string {
+  return chunk.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+}
+
+export function renderPlanningAdviceTranscript(advice: Pick<PlanningAdviceState, "problemStatement" | "clarity" | "stateAssessment" | "researchNeeded" | "advice" | "nextAction">): string {
+  return [
+    "Gathered context review.",
+    `Problem: ${advice.problemStatement}`,
+    `Clarity: ${advice.clarity}`,
+    "",
+    "Assessment:",
+    advice.stateAssessment,
+    "",
+    "Advice:",
+    advice.advice,
+    ...(advice.researchNeeded.length > 0
+      ? ["", "Research needed:", ...advice.researchNeeded.map((item) => `- ${item}`)]
+      : []),
+    "",
+    `Next action: ${advice.nextAction}`
+  ].join("\n");
 }
 
 export function shouldStickScrollableToBottom(element: Pick<ScrollableElement, "height" | "iheight" | "getScrollHeight" | "getScrollPerc">): boolean {

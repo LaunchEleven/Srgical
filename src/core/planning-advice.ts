@@ -1,3 +1,4 @@
+import type { AgentInvocationOptions } from "./agent";
 import { parsePlanningAdviceResponse, savePlanningAdviceState, type PlanningAdviceState } from "./advice-state";
 import { requestPlanningAdvice } from "./agent";
 import { readPlanningPackState } from "./planning-pack-state";
@@ -7,7 +8,7 @@ import type { PlanningPathOptions } from "./workspace";
 export async function refreshPlanningAdvice(
   workspaceRoot: string,
   messages: ChatMessage[],
-  options: PlanningPathOptions = {}
+  options: PlanningPathOptions & Pick<AgentInvocationOptions, "onOutputChunk"> = {}
 ): Promise<PlanningAdviceState> {
   const packState = await readPlanningPackState(workspaceRoot, options);
   const raw = await requestPlanningAdvice(workspaceRoot, messages, packState, options);

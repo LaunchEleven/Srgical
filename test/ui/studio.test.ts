@@ -7,6 +7,8 @@ import {
   getPreferredStudioMouseOptions,
   handleTranscriptNavigationKey,
   limitStudioSnippet,
+  normalizeStudioStreamChunk,
+  renderPlanningAdviceTranscript,
   renderStudioInputContent,
   renderCommandSyntaxHelpText,
   renderOperateHelpText,
@@ -54,6 +56,27 @@ test("renderStudioInputContent escapes user text without appending a second fake
   const escaped = renderStudioInputContent("{bold}x{/bold}");
   assert.match(escaped, /x/);
   assert.doesNotMatch(escaped, /_$/);
+});
+
+test("normalizeStudioStreamChunk flattens carriage-return updates into transcript-friendly lines", () => {
+  assert.equal(normalizeStudioStreamChunk("a\r\nb\rc"), "a\nb\nc");
+});
+
+test("renderPlanningAdviceTranscript turns parsed advice into a readable transcript summary", () => {
+  const rendered = renderPlanningAdviceTranscript({
+    problemStatement: "Build a single-page beta distribution demo.",
+    clarity: "mostly clear",
+    stateAssessment: "The user intent is clear but the repo integration target is still ambiguous.",
+    researchNeeded: ["Confirm whether this is standalone or integrated."],
+    advice: "Lock the target before drafting tracker slices.",
+    nextAction: "Confirm the integration target."
+  });
+
+  assert.match(rendered, /Gathered context review\./);
+  assert.match(rendered, /Problem: Build a single-page beta distribution demo\./);
+  assert.match(rendered, /Clarity: mostly clear/);
+  assert.match(rendered, /Research needed:/);
+  assert.match(rendered, /Next action: Confirm the integration target\./);
 });
 
 test("shouldStickScrollableToBottom keeps the transcript pinned when it already fits or is near the end", () => {
