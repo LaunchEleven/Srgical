@@ -2,7 +2,13 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
 import { mkdir, writeFile } from "node:fs/promises";
-import { limitStudioSnippet, renderOperateHelpText, renderPrepareHelpText, selectAutoGatherFiles } from "../../src/ui/studio";
+import {
+  limitStudioSnippet,
+  renderCommandSyntaxHelpText,
+  renderOperateHelpText,
+  renderPrepareHelpText,
+  selectAutoGatherFiles
+} from "../../src/ui/studio";
 import { createTempWorkspace } from "../helpers/workspace";
 
 test("selectAutoGatherFiles only returns existing evidence files and respects the cap", async () => {
@@ -41,17 +47,39 @@ test("limitStudioSnippet leaves short content alone and truncates long content c
 test("prepare help explains slice options and compatibility aliases", () => {
   const help = renderPrepareHelpText();
 
+  assert.match(help, /Plain text without a prefix is normal planning chat/);
+  assert.match(help, /Commands start with `:`/);
   assert.match(help, /`:slice`: slice the current draft using the recommended preset \(`high \+ spike`\)/);
   assert.match(help, /`:slice \[low\|medium\|high\] \[spike\]`: override slice settings for this run/);
   assert.match(help, /`:slice --help`: show the slice arguments, defaults, and examples/);
+  assert.match(help, /`:help commands`: explain the `:` command syntax quickly/);
   assert.match(help, /`\/dice \.\.\.`: legacy compatibility alias for slicing/);
 });
 
 test("operate help explains the execution-focused command descriptions", () => {
   const help = renderOperateHelpText();
 
+  assert.match(help, /Plain text chat is disabled here so execution stays action-first/);
+  assert.match(help, /Commands start with `:`/);
   assert.match(help, /`:run`: execute the next queued step once/);
   assert.match(help, /`:auto \[n\]`: continue automatically for up to `n` steps/);
   assert.match(help, /`:checkpoint`: toggle PR checkpoint mode on or off/);
+  assert.match(help, /`:help commands`: explain the `:` command syntax quickly/);
   assert.match(help, /`:unblock`: move the current blocked step back to `todo` with retry notes/);
+});
+
+test("command syntax help explains that :command is not literal in prepare mode", () => {
+  const help = renderCommandSyntaxHelpText("prepare");
+
+  assert.match(help, /There is no literal `:command` command/);
+  assert.match(help, /In prepare, plain text is normal chat with the planner/);
+  assert.match(help, /Examples: `:help`, `:slice --help`, `:build`, `:run`, `:auto 3`/);
+  assert.match(help, /Old slash commands are retired/);
+});
+
+test("command syntax help explains operate mode stays command-first", () => {
+  const help = renderCommandSyntaxHelpText("operate");
+
+  assert.match(help, /There is no literal `:command` command/);
+  assert.match(help, /In operate, plain text chat is disabled so commands stay explicit/);
 });

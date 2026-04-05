@@ -30,6 +30,24 @@ type ChatMessage = { role: "user" | "assistant" | "system"; content: string };
 
 const FILE_LIMIT = 6;
 const SNIPPET_LIMIT = 1600;
+const STUDIO_THEME = {
+  headerFg: "#eaffef",
+  headerBg: "#0d1510",
+  panelBg: "#0b120e",
+  sidePanelBg: "#0d1711",
+  inputBg: "#102016",
+  footerFg: "#9ec2aa",
+  prepareAccent: "#7ee787",
+  operateAccent: "#59d98e",
+  transcriptBorder: "#2f8f5b",
+  sidebarBorder: "#43c77a",
+  inputBorder: "#7ee787",
+  transcriptText: "#f3fff5",
+  sidebarText: "#d9ffe5",
+  userLabel: "#b7ffb3",
+  aiLabel: "#8ef0c0",
+  systemLabel: "#59d98e"
+} as const;
 const ESC = (blessed as typeof blessed & { helpers: { escape(text: string): string } }).helpers.escape;
 
 export async function launchStudio(options: StudioOptions = {}): Promise<void> {
@@ -55,27 +73,33 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
   let gatheredFingerprint = "";
 
   const screen = blessed.screen({ smartCSR: true, fullUnicode: true, mouse: true, title: mode === "prepare" ? "srgical prepare" : "srgical operate" });
-  const header = blessed.box({ top: 0, left: 0, width: "100%", height: 3, tags: true, style: { fg: "#f7efe6", bg: "#15171d" } });
+  const header = blessed.box({ top: 0, left: 0, width: "100%", height: 3, tags: true, style: { fg: STUDIO_THEME.headerFg, bg: STUDIO_THEME.headerBg } });
   const transcript = blessed.box({
     top: 3, left: 0, width: "68%", height: "100%-10", tags: true, scrollable: true, alwaysScroll: true, mouse: true,
     padding: { top: 1, right: 1, bottom: 1, left: 1 }, border: { type: "line" }, label: " Transcript ",
-    style: { fg: "#fff7ed", bg: "#101114", border: { fg: "#ff7a59" } }
+    style: { fg: STUDIO_THEME.transcriptText, bg: STUDIO_THEME.panelBg, border: { fg: STUDIO_THEME.transcriptBorder } }
   });
   const sidebar = blessed.box({
     top: 3, left: "68%", width: "32%", height: "100%-10", tags: true,
     padding: { top: 1, right: 1, bottom: 1, left: 1 }, border: { type: "line" }, label: " Control ",
-    style: { fg: "#d8fff5", bg: "#11161c", border: { fg: "#4de2c5" } }
+    style: { fg: STUDIO_THEME.sidebarText, bg: STUDIO_THEME.sidePanelBg, border: { fg: STUDIO_THEME.sidebarBorder } }
   });
   const input = blessed.box({
     bottom: 1, left: 0, width: "100%", height: 6, tags: true, padding: { top: 0, right: 1, bottom: 0, left: 1 },
-    border: { type: "line" }, label: " Message / :command ", style: { fg: "#fff8ef", bg: "#1a1112", border: { fg: "#ffb14a" } }
+    border: { type: "line" }, label: " Message or command starting with : (:help) ", style: { fg: STUDIO_THEME.transcriptText, bg: STUDIO_THEME.inputBg, border: { fg: STUDIO_THEME.inputBorder } }
   });
-  const footer = blessed.box({ bottom: 0, left: 0, width: "100%", height: 1, tags: true, style: { fg: "#bfb8c7", bg: "#15171d" } });
+  const footer = blessed.box({ bottom: 0, left: 0, width: "100%", height: 1, tags: true, style: { fg: STUDIO_THEME.footerFg, bg: STUDIO_THEME.headerBg } });
   screen.append(header); screen.append(transcript); screen.append(sidebar); screen.append(input); screen.append(footer);
 
   const render = (status = "ready") => {
-    header.setContent(` {bold}SRGICAL ${mode.toUpperCase()}{/bold}   ${path.basename(workspace) || workspace}   {${mode === "prepare" ? "#ffb14a-fg" : "#4de2c5-fg"}}PLAN ${state.planId.toUpperCase()} | ${state.mode.toUpperCase()}{/}`);
-    transcript.setContent(messages.map((m) => `${m.role === "user" ? "{#ffb14a-fg}YOU{/}" : m.role === "assistant" ? "{#4de2c5-fg}AI{/}" : "{#ff7a59-fg}SYSTEM{/}"}\n${ESC(m.content)}`).join("\n\n"));
+    header.setContent(
+      ` {bold}SRGICAL ${mode.toUpperCase()}{/bold}   ${path.basename(workspace) || workspace}   {${mode === "prepare" ? `${STUDIO_THEME.prepareAccent}-fg` : `${STUDIO_THEME.operateAccent}-fg`}}PLAN ${state.planId.toUpperCase()} | ${state.mode.toUpperCase()}{/}`
+    );
+    transcript.setContent(
+      messages
+        .map((m) => `${m.role === "user" ? `{${STUDIO_THEME.userLabel}-fg}YOU{/}` : m.role === "assistant" ? `{${STUDIO_THEME.aiLabel}-fg}AI{/}` : `{${STUDIO_THEME.systemLabel}-fg}SYSTEM{/}`}\n${ESC(m.content)}`)
+        .join("\n\n")
+    );
     sidebar.setContent([
       "{bold}Overview{/bold}",
       `stage: ${state.mode}`,
@@ -101,12 +125,12 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
         ? ["F2 Gather More", "F3 Build Draft", "F4 Slice Plan", "F5 Review Changes", "F6 Approve Ready", "F7 Open Operate"]
         : ["F2 Run Next Step", "F3 Auto Continue", "F4 PR Checkpoints", "F5 Refine Plan", "F6 Review Last Change", "F7 Resolve Blocker"])
     ].join("\n"));
-    input.setContent(`${ESC(inputValue)}{#ffb14a-fg}_{/}`);
+    input.setContent(`${ESC(inputValue)}{${STUDIO_THEME.prepareAccent}-fg}_{/}`);
     footer.setContent(busy
       ? " Working... "
       : mode === "prepare"
-        ? " F2 Gather   F3 Build   F4 Slice   F5 Review   F6 Approve   F7 Operate   :help "
-        : " F2 Run   F3 Auto   F4 Checkpoint   F5 Refine   F6 Review   F7 Unblock   :help ");
+        ? " Text chats with planner | commands start with : | :help | F2 Gather F3 Build F4 Slice F5 Review F6 Approve F7 Operate "
+        : " Commands start with : | :help | F2 Run F3 Auto F4 Checkpoint F5 Prepare F6 Review F7 Unblock ");
     screen.render();
   };
 
@@ -283,8 +307,16 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
 
   const handleCommand = async (command: string) => {
     if (command === ":quit" || command === ":q") { screen.destroy(); return; }
+    if (command === ":command" || command.startsWith(":command ")) {
+      await system("`:` is only the command prefix.\nUse commands like `:help`, `:slice --help`, `:gather`, or `:operate`.\nIf you want to chat with the planner, just type normal text without the `:`.");
+      return;
+    }
     if (command === ":help" || command === ":help prepare" || command === ":help operate") {
       await system(mode === "prepare" ? renderPrepareHelpText() : renderOperateHelpText());
+      return;
+    }
+    if (command === ":help commands") {
+      await system(renderCommandSyntaxHelpText(mode));
       return;
     }
     if (command === ":help slice" || command === ":help dice") { await system(renderPlanDiceHelp(":slice")); return; }
@@ -310,7 +342,7 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
     if (command === ":checkpoint") { await toggleCheckpoint(); return; }
     if (command === ":unblock") { await resolveBlocker(); return; }
     if (command === ":stop") { const result = await requestAutoRunStop(workspace, { planId }); await system(result.stopReason ?? "Stop requested."); await refresh(); return; }
-    await system(`Unknown command: ${command}`);
+    await system(`Unknown command: ${command}\nTry \`:help\` to list commands or \`:help commands\` for the quick command syntax explanation.`);
   };
 
   const submit = async () => {
@@ -338,6 +370,11 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
     if (text === "/help") {
       await push({ role: "system", content: "Command: /help" });
       await system(mode === "prepare" ? renderPrepareHelpText() : renderOperateHelpText());
+      return;
+    }
+    if (text.startsWith("/")) {
+      await push({ role: "system", content: `Command: ${text}` });
+      await system("Slash commands were retired in the rebooted studio.\nUse `:` commands now, for example `:help`, `:gather`, `:slice --help`, or `:operate`.\nIf you just want to chat with the planner, type plain text without a prefix.");
       return;
     }
     if (mode === "operate") { await system("Operate is action-first. Use the primary actions or the :command palette."); return; }
@@ -371,8 +408,8 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
   });
 
   await system(mode === "prepare"
-    ? `Prepare mode gathers context, builds the draft, slices it into steps, and gets the plan ready to operate.\nStage: ${state.mode}\nNext action: ${state.nextAction}`
-    : `Operate mode is execution-only.\nStage: ${state.mode}\nNext action: ${state.nextAction}`);
+    ? `Prepare mode gathers context, builds the draft, slices it into steps, and gets the plan ready to operate.\nType normal text to chat with the planner.\nUse \`:\` to run a studio command such as \`:help\`, \`:build\`, \`:slice --help\`, or \`:operate\`.\nStage: ${state.mode}\nNext action: ${state.nextAction}`
+    : `Operate mode is execution-only.\nUse \`:\` to run studio commands such as \`:run\`, \`:auto 3\`, \`:checkpoint\`, or \`:prepare\`.\nStage: ${state.mode}\nNext action: ${state.nextAction}`);
   render();
   if (mode === "prepare") { await autoGather("boot"); }
   input.focus();
@@ -415,12 +452,15 @@ export function limitStudioSnippet(value: string): string {
 export function renderPrepareHelpText(): string {
   return [
     "Prepare commands:",
+    "- Plain text without a prefix is normal planning chat.",
+    "- Commands start with `:`. Example: `:help`, `:build`, `:slice high spike`, `:operate`.",
     "- `:gather`: run another evidence pass and refresh the known unknowns.",
     "- `:build`: write or refresh the current draft from transcript context and repo evidence.",
     "- `:slice`: slice the current draft using the recommended preset (`high + spike`).",
     "- `:slice [low|medium|high] [spike]`: override slice settings for this run.",
     "- `:slice --help`: show the slice arguments, defaults, and examples.",
     "- `/dice ...`: legacy compatibility alias for slicing; `/dice --help` shows the same option guide with legacy defaults.",
+    "- `:help commands`: explain the `:` command syntax quickly.",
     "- `:review`: show the current changes log and manifest snapshot.",
     "- `:approve`: mark the current draft ready for operate.",
     "- `:operate`: switch to operate mode.",
@@ -432,14 +472,29 @@ export function renderPrepareHelpText(): string {
 export function renderOperateHelpText(): string {
   return [
     "Operate commands:",
+    "- Plain text chat is disabled here so execution stays action-first.",
+    "- Commands start with `:`. Example: `:run`, `:auto 3`, `:checkpoint`, `:prepare`.",
     "- `:run`: execute the next queued step once.",
     "- `:auto [n]`: continue automatically for up to `n` steps, or the remaining queue when `n` is omitted.",
     "- `:checkpoint`: toggle PR checkpoint mode on or off.",
     "- `:review`: show the latest visible change summary and manifest snapshot.",
     "- `:unblock`: move the current blocked step back to `todo` with retry notes.",
+    "- `:help commands`: explain the `:` command syntax quickly.",
     "- `:prepare`: switch back to prepare mode to refine the plan.",
     "- `:status`: show the current stage, next action, and next step.",
     "- `:stop`: request stop for an active auto-continue run.",
     "- `:quit`: exit studio."
+  ].join("\n");
+}
+
+export function renderCommandSyntaxHelpText(mode: StudioMode): string {
+  return [
+    "Command syntax:",
+    "- `:` is just the command prefix. There is no literal `:command` command.",
+    mode === "prepare"
+      ? "- In prepare, plain text is normal chat with the planner."
+      : "- In operate, plain text chat is disabled so commands stay explicit.",
+    "- Examples: `:help`, `:slice --help`, `:build`, `:run`, `:auto 3`.",
+    "- Old slash commands are retired. Use `:` commands instead. `/dice` and `/help` still work as compatibility shortcuts."
   ].join("\n");
 }
