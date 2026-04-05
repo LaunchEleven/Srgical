@@ -3,13 +3,16 @@ import assert from "node:assert/strict";
 import path from "node:path";
 import { mkdir, writeFile } from "node:fs/promises";
 import {
+  clampScrollableScrollPosition,
   getScrollablePageStep,
   getPreferredStudioMouseOptions,
+  getStudioPalette,
   handleTranscriptNavigationKey,
   limitStudioSnippet,
   normalizeStudioStreamChunk,
   renderPlanningAdviceTranscript,
   renderStudioInputContent,
+  renderStudioTranscript,
   renderCommandSyntaxHelpText,
   renderOperateHelpText,
   renderPrepareHelpText,
@@ -81,6 +84,19 @@ test("renderPlanningAdviceTranscript turns parsed advice into a readable transcr
   assert.match(rendered, /Next action: Confirm the integration target\./);
 });
 
+test("renderStudioTranscript applies the role colors and escapes transcript content", () => {
+  const rendered = renderStudioTranscript([
+    { role: "assistant", content: "AI says hi." },
+    { role: "user", content: "{bold}user{/bold}" },
+    { role: "system", content: "System note." }
+  ]);
+
+  assert.match(rendered, /\{#fde047-fg\}AI\{\/\}/);
+  assert.match(rendered, /\{#4ade80-fg\}YOU\{\/\}/);
+  assert.match(rendered, /\{#60a5fa-fg\}SYSTEM\{\/\}/);
+  assert.doesNotMatch(rendered, /\{bold\}user\{\/bold\}/);
+});
+
 test("shouldStickScrollableToBottom keeps the transcript pinned when it already fits or is near the end", () => {
   assert.equal(shouldStickScrollableToBottom({
     height: 24,
@@ -137,6 +153,23 @@ test("getPreferredStudioMouseOptions opts into modern mouse reporting", () => {
     sgrMouse: true,
     sendFocus: true
   });
+});
+
+test("getStudioPalette makes prepare and operate feel visually distinct", () => {
+  const prepare = getStudioPalette("prepare");
+  const operate = getStudioPalette("operate");
+
+  assert.equal(prepare.transcriptLabel, " Prepare Transcript ");
+  assert.equal(operate.transcriptLabel, " Operate Transcript ");
+  assert.notEqual(prepare.headerBg, operate.headerBg);
+  assert.notEqual(prepare.transcriptBorder, operate.transcriptBorder);
+  assert.notEqual(prepare.inputLabel, operate.inputLabel);
+});
+
+test("clampScrollableScrollPosition preserves a valid viewport offset", () => {
+  assert.equal(clampScrollableScrollPosition(10, 50), 10);
+  assert.equal(clampScrollableScrollPosition(-3, 50), 0);
+  assert.equal(clampScrollableScrollPosition(80, 12), 11);
 });
 
 test("handleTranscriptNavigationKey maps paging keys into transcript navigation actions", () => {

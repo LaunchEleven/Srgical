@@ -28,25 +28,31 @@ import { fileExists, getPlanningPackPaths, readText, resolvePlanId, resolveWorks
 export type StudioMode = "prepare" | "operate";
 type StudioOptions = { workspace?: string; planId?: string | null; mode?: StudioMode };
 type ChatMessage = { role: "user" | "assistant" | "system"; content: string };
-type ScrollableElement = Pick<blessed.Widgets.ScrollableBoxElement, "height" | "iheight" | "getScrollHeight" | "getScrollPerc" | "setScrollPerc" | "scroll">;
+type ScrollableElement = Pick<blessed.Widgets.ScrollableBoxElement, "height" | "iheight" | "getScroll" | "getScrollHeight" | "getScrollPerc" | "setScroll" | "setScrollPerc" | "scroll">;
 type PositionedElement = { lpos?: { xi: number; xl: number; yi: number; yl: number } };
 type StudioMouseOptions = { vt200Mouse: boolean; allMotion: boolean; sgrMouse: boolean; sendFocus: boolean };
 type LiveStudioMessage = { append(chunk: string): void; finalize(content: string): Promise<void>; discard(): Promise<void> };
+type StudioPalette = {
+  headerFg: string;
+  headerBg: string;
+  panelBg: string;
+  sidePanelBg: string;
+  inputBg: string;
+  footerFg: string;
+  accent: string;
+  transcriptBorder: string;
+  scrollbarTrack: string;
+  sidebarBorder: string;
+  inputBorder: string;
+  transcriptLabel: string;
+  sidebarLabel: string;
+  inputLabel: string;
+};
 
 const FILE_LIMIT = 6;
 const SNIPPET_LIMIT = 1600;
 const STUDIO_THEME = {
   headerFg: "#ecfeff",
-  headerBg: "#081521",
-  panelBg: "#07111c",
-  sidePanelBg: "#0a1724",
-  inputBg: "#0d1c2c",
-  footerFg: "#8fd3e8",
-  prepareAccent: "#5eead4",
-  operateAccent: "#60a5fa",
-  transcriptBorder: "#38bdf8",
-  sidebarBorder: "#34d399",
-  inputBorder: "#7dd3fc",
   transcriptText: "#edf8ff",
   sidebarText: "#d8f3ff",
   userLabel: "#4ade80",
@@ -77,40 +83,71 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
   let busy = false;
   let gatheredFingerprint = "";
   let transcriptWheelHandled = false;
+  let lastTranscriptContent: string | null = null;
+  const initialPalette = getStudioPalette(mode);
 
   const screen = blessed.screen({ smartCSR: true, fullUnicode: true, mouse: true, sendFocus: true, title: mode === "prepare" ? "srgical prepare" : "srgical operate" });
-  const header = blessed.box({ top: 0, left: 0, width: "100%", height: 3, tags: true, style: { fg: STUDIO_THEME.headerFg, bg: STUDIO_THEME.headerBg } });
+  const header = blessed.box({ top: 0, left: 0, width: "100%", height: 3, tags: true, style: { fg: STUDIO_THEME.headerFg, bg: initialPalette.headerBg } });
   const transcript = blessed.box({
     top: 3, left: 0, width: "68%", height: "100%-10", tags: true, scrollable: true, alwaysScroll: true, mouse: true, keys: true, vi: true, clickable: true, input: true,
-    padding: { top: 1, right: 1, bottom: 1, left: 1 }, border: { type: "line" }, label: " Transcript ",
-    scrollbar: { ch: " ", track: { bg: "#12263b" }, style: { bg: STUDIO_THEME.transcriptBorder } },
-    style: { fg: STUDIO_THEME.transcriptText, bg: STUDIO_THEME.panelBg, border: { fg: STUDIO_THEME.transcriptBorder } }
+    padding: { top: 1, right: 1, bottom: 1, left: 1 }, border: { type: "line" }, label: initialPalette.transcriptLabel,
+    scrollbar: { ch: " ", track: { bg: initialPalette.scrollbarTrack }, style: { bg: initialPalette.transcriptBorder } },
+    style: { fg: STUDIO_THEME.transcriptText, bg: initialPalette.panelBg, border: { fg: initialPalette.transcriptBorder } }
   });
   const sidebar = blessed.box({
     top: 3, left: "68%", width: "32%", height: "100%-10", tags: true,
-    padding: { top: 1, right: 1, bottom: 1, left: 1 }, border: { type: "line" }, label: " Control ",
-    style: { fg: STUDIO_THEME.sidebarText, bg: STUDIO_THEME.sidePanelBg, border: { fg: STUDIO_THEME.sidebarBorder } }
+    padding: { top: 1, right: 1, bottom: 1, left: 1 }, border: { type: "line" }, label: initialPalette.sidebarLabel,
+    style: { fg: STUDIO_THEME.sidebarText, bg: initialPalette.sidePanelBg, border: { fg: initialPalette.sidebarBorder } }
   });
   const input = blessed.box({
     bottom: 1, left: 0, width: "100%", height: 6, tags: true, mouse: true, clickable: true, padding: { top: 0, right: 1, bottom: 0, left: 1 },
-    border: { type: "line" }, label: " Message or command starting with : (:help) ", style: { fg: STUDIO_THEME.transcriptText, bg: STUDIO_THEME.inputBg, border: { fg: STUDIO_THEME.inputBorder } }
+    border: { type: "line" }, label: initialPalette.inputLabel, style: { fg: STUDIO_THEME.transcriptText, bg: initialPalette.inputBg, border: { fg: initialPalette.inputBorder } }
   });
-  const footer = blessed.box({ bottom: 0, left: 0, width: "100%", height: 1, tags: true, style: { fg: STUDIO_THEME.footerFg, bg: STUDIO_THEME.headerBg } });
+  const footer = blessed.box({ bottom: 0, left: 0, width: "100%", height: 1, tags: true, style: { fg: initialPalette.footerFg, bg: initialPalette.headerBg } });
   screen.append(header); screen.append(transcript); screen.append(sidebar); screen.append(input); screen.append(footer);
   screen.enableMouse(transcript);
   screen.enableMouse(input);
   screen.program.setMouse(getPreferredStudioMouseOptions(), true);
 
   const render = (status = "ready") => {
+    const palette = getStudioPalette(mode);
+    const transcriptContent = renderStudioTranscript(messages);
     const shouldStickTranscript = shouldStickScrollableToBottom(transcript);
+    const transcriptScroll = transcript.getScroll();
+    const transcriptChanged = transcriptContent !== lastTranscriptContent;
+    const transcriptScrollbar = (transcript as blessed.Widgets.BoxElement & {
+      scrollbar?: { track?: { bg?: string }; style?: { bg?: string } };
+    }).scrollbar;
+
+    header.style.bg = palette.headerBg;
+    transcript.style.bg = palette.panelBg;
+    transcript.style.border.fg = palette.transcriptBorder;
+    if (transcriptScrollbar) {
+      transcriptScrollbar.track = transcriptScrollbar.track ?? {};
+      transcriptScrollbar.track.bg = palette.scrollbarTrack;
+      transcriptScrollbar.style = transcriptScrollbar.style ?? {};
+      transcriptScrollbar.style.bg = palette.transcriptBorder;
+    }
+    sidebar.style.bg = palette.sidePanelBg;
+    sidebar.style.border.fg = palette.sidebarBorder;
+    input.style.bg = palette.inputBg;
+    input.style.border.fg = palette.inputBorder;
+    footer.style.bg = palette.headerBg;
+    footer.style.fg = palette.footerFg;
+    transcript.setLabel(palette.transcriptLabel);
+    sidebar.setLabel(palette.sidebarLabel);
+    input.setLabel(palette.inputLabel);
+
     header.setContent(
-      ` {bold}SRGICAL ${mode.toUpperCase()}{/bold}   ${path.basename(workspace) || workspace}   {${mode === "prepare" ? `${STUDIO_THEME.prepareAccent}-fg` : `${STUDIO_THEME.operateAccent}-fg`}}PLAN ${state.planId.toUpperCase()} | ${state.mode.toUpperCase()}{/}`
+      ` {bold}SRGICAL ${mode.toUpperCase()}{/bold}   ${path.basename(workspace) || workspace}   {${palette.accent}-fg}PLAN ${state.planId.toUpperCase()} | ${state.mode.toUpperCase()}{/}`
     );
-    transcript.setContent(
-      messages
-        .map((m) => `${m.role === "user" ? `{${STUDIO_THEME.userLabel}-fg}YOU{/}` : m.role === "assistant" ? `{${STUDIO_THEME.aiLabel}-fg}AI{/}` : `{${STUDIO_THEME.systemLabel}-fg}SYSTEM{/}`}\n${ESC(m.content)}`)
-        .join("\n\n")
-    );
+    if (transcriptChanged) {
+      transcript.setContent(transcriptContent);
+      lastTranscriptContent = transcriptContent;
+      if (!shouldStickTranscript) {
+        transcript.setScroll(clampScrollableScrollPosition(transcriptScroll, transcript.getScrollHeight()));
+      }
+    }
     sidebar.setContent([
       "{bold}Overview{/bold}",
       `stage: ${state.mode}`,
@@ -142,9 +179,9 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
       : mode === "prepare"
         ? " Text chats with planner | PgUp/PgDn/Home/End scroll transcript | :help | F2 Gather F3 Build F4 Slice F5 Review F6 Approve F7 Operate "
         : " Commands start with : | PgUp/PgDn/Home/End scroll transcript | :help | F2 Run F3 Auto F4 Checkpoint F5 Prepare F6 Review F7 Unblock ");
-    const pinnedBeforeRender = shouldStickTranscript && tryStickScrollableToBottom(transcript);
+    const pinnedBeforeRender = transcriptChanged && shouldStickTranscript && tryStickScrollableToBottom(transcript);
     screen.render();
-    if (shouldStickTranscript && !pinnedBeforeRender) {
+    if (transcriptChanged && shouldStickTranscript && !pinnedBeforeRender) {
       transcript.setScrollPerc(100);
       screen.render();
     }
@@ -582,6 +619,12 @@ export function renderStudioInputContent(value: string): string {
   return ESC(value).replace(/ /g, "\u00a0");
 }
 
+export function renderStudioTranscript(messages: ChatMessage[]): string {
+  return messages
+    .map((m) => `${m.role === "user" ? `{${STUDIO_THEME.userLabel}-fg}YOU{/}` : m.role === "assistant" ? `{${STUDIO_THEME.aiLabel}-fg}AI{/}` : `{${STUDIO_THEME.systemLabel}-fg}SYSTEM{/}`}\n${ESC(m.content)}`)
+    .join("\n\n");
+}
+
 export function normalizeStudioStreamChunk(chunk: string): string {
   return chunk.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
 }
@@ -623,6 +666,46 @@ export function getPreferredStudioMouseOptions(): StudioMouseOptions {
     sgrMouse: true,
     sendFocus: true
   };
+}
+
+export function getStudioPalette(mode: StudioMode): StudioPalette {
+  return mode === "prepare"
+    ? {
+        headerFg: STUDIO_THEME.headerFg,
+        headerBg: "#061711",
+        panelBg: "#07140f",
+        sidePanelBg: "#0b1d16",
+        inputBg: "#0f2119",
+        footerFg: "#99f6e4",
+        accent: "#2dd4bf",
+        transcriptBorder: "#14b8a6",
+        scrollbarTrack: "#10261f",
+        sidebarBorder: "#22c55e",
+        inputBorder: "#5eead4",
+        transcriptLabel: " Prepare Transcript ",
+        sidebarLabel: " Prepare Control ",
+        inputLabel: " Plan Message or :command "
+      }
+    : {
+        headerFg: STUDIO_THEME.headerFg,
+        headerBg: "#081424",
+        panelBg: "#081220",
+        sidePanelBg: "#0c1829",
+        inputBg: "#101d31",
+        footerFg: "#93c5fd",
+        accent: "#60a5fa",
+        transcriptBorder: "#3b82f6",
+        scrollbarTrack: "#13243b",
+        sidebarBorder: "#38bdf8",
+        inputBorder: "#60a5fa",
+        transcriptLabel: " Operate Transcript ",
+        sidebarLabel: " Operate Control ",
+        inputLabel: " Operate Commands (:help) "
+      };
+}
+
+export function clampScrollableScrollPosition(scroll: number, scrollHeight: number): number {
+  return Math.max(0, Math.min(scroll, Math.max(scrollHeight - 1, 0)));
 }
 
 export function handleTranscriptNavigationKey(
