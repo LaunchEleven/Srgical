@@ -47,9 +47,9 @@ const STUDIO_THEME = {
   inputBorder: "#7dd3fc",
   transcriptText: "#edf8ff",
   sidebarText: "#d8f3ff",
-  userLabel: "#6ee7b7",
-  aiLabel: "#7dd3fc",
-  systemLabel: "#f4d35e"
+  userLabel: "#4ade80",
+  aiLabel: "#fde047",
+  systemLabel: "#60a5fa"
 } as const;
 const ESC = (blessed as typeof blessed & { helpers: { escape(text: string): string } }).helpers.escape;
 
