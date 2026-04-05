@@ -579,7 +579,7 @@ export function limitStudioSnippet(value: string): string {
 }
 
 export function renderStudioInputContent(value: string): string {
-  return ESC(value);
+  return ESC(value).replace(/ /g, "\u00a0");
 }
 
 export function normalizeStudioStreamChunk(chunk: string): string {

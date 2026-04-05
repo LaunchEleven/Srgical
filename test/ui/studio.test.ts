@@ -53,6 +53,8 @@ test("limitStudioSnippet leaves short content alone and truncates long content c
 
 test("renderStudioInputContent escapes user text without appending a second fake cursor", () => {
   assert.equal(renderStudioInputContent("Let"), "Let");
+  assert.equal(renderStudioInputContent("Let "), "Let\u00a0");
+  assert.equal(renderStudioInputContent("a b"), "a\u00a0b");
   const escaped = renderStudioInputContent("{bold}x{/bold}");
   assert.match(escaped, /x/);
   assert.doesNotMatch(escaped, /_$/);
