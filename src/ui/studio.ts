@@ -33,22 +33,22 @@ type PositionedElement = { lpos?: { xi: number; xl: number; yi: number; yl: numb
 const FILE_LIMIT = 6;
 const SNIPPET_LIMIT = 1600;
 const STUDIO_THEME = {
-  headerFg: "#eaffef",
-  headerBg: "#0d1510",
-  panelBg: "#0b120e",
-  sidePanelBg: "#0d1711",
-  inputBg: "#102016",
-  footerFg: "#9ec2aa",
-  prepareAccent: "#7ee787",
-  operateAccent: "#59d98e",
-  transcriptBorder: "#2f8f5b",
-  sidebarBorder: "#43c77a",
-  inputBorder: "#7ee787",
-  transcriptText: "#f3fff5",
-  sidebarText: "#d9ffe5",
-  userLabel: "#b7ffb3",
-  aiLabel: "#8ef0c0",
-  systemLabel: "#59d98e"
+  headerFg: "#ecfeff",
+  headerBg: "#081521",
+  panelBg: "#07111c",
+  sidePanelBg: "#0a1724",
+  inputBg: "#0d1c2c",
+  footerFg: "#8fd3e8",
+  prepareAccent: "#5eead4",
+  operateAccent: "#60a5fa",
+  transcriptBorder: "#38bdf8",
+  sidebarBorder: "#34d399",
+  inputBorder: "#7dd3fc",
+  transcriptText: "#edf8ff",
+  sidebarText: "#d8f3ff",
+  userLabel: "#6ee7b7",
+  aiLabel: "#7dd3fc",
+  systemLabel: "#f4d35e"
 } as const;
 const ESC = (blessed as typeof blessed & { helpers: { escape(text: string): string } }).helpers.escape;
 
@@ -80,7 +80,7 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
   const transcript = blessed.box({
     top: 3, left: 0, width: "68%", height: "100%-10", tags: true, scrollable: true, alwaysScroll: true, mouse: true, keys: true, vi: true, clickable: true, input: true,
     padding: { top: 1, right: 1, bottom: 1, left: 1 }, border: { type: "line" }, label: " Transcript ",
-    scrollbar: { ch: " ", track: { bg: "#143120" }, style: { bg: STUDIO_THEME.transcriptBorder } },
+    scrollbar: { ch: " ", track: { bg: "#12263b" }, style: { bg: STUDIO_THEME.transcriptBorder } },
     style: { fg: STUDIO_THEME.transcriptText, bg: STUDIO_THEME.panelBg, border: { fg: STUDIO_THEME.transcriptBorder } }
   });
   const sidebar = blessed.box({
