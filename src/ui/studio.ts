@@ -28,6 +28,7 @@ export type StudioMode = "prepare" | "operate";
 type StudioOptions = { workspace?: string; planId?: string | null; mode?: StudioMode };
 type ChatMessage = { role: "user" | "assistant" | "system"; content: string };
 type ScrollableElement = Pick<blessed.Widgets.ScrollableBoxElement, "height" | "iheight" | "getScrollHeight" | "getScrollPerc" | "setScrollPerc" | "scroll">;
+type PositionedElement = { lpos?: { xi: number; xl: number; yi: number; yl: number } };
 
 const FILE_LIMIT = 6;
 const SNIPPET_LIMIT = 1600;
@@ -72,6 +73,7 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
   let inputValue = "";
   let busy = false;
   let gatheredFingerprint = "";
+  let transcriptWheelHandled = false;
 
   const screen = blessed.screen({ smartCSR: true, fullUnicode: true, mouse: true, title: mode === "prepare" ? "srgical prepare" : "srgical operate" });
   const header = blessed.box({ top: 0, left: 0, width: "100%", height: 3, tags: true, style: { fg: STUDIO_THEME.headerFg, bg: STUDIO_THEME.headerBg } });
@@ -414,13 +416,31 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
   screen.key(["f5"], async () => { if (mode === "prepare") { await review(); } else { mode = "prepare"; screen.title = "srgical prepare"; await refresh(); } });
   screen.key(["f6"], async () => { mode === "prepare" ? await approve() : await review(); });
   screen.key(["f7"], async () => { if (mode === "prepare") { mode = "operate"; screen.title = "srgical operate"; await refresh(); } else { await resolveBlocker(); } });
-  screen.key(["pageup"], () => { scrollTranscriptByPage(-1); });
-  screen.key(["pagedown"], () => { scrollTranscriptByPage(1); });
-  screen.key(["home"], () => { scrollTranscriptTo("top"); });
-  screen.key(["end"], () => { scrollTranscriptTo("bottom"); });
+  transcript.on("wheelup", () => { transcriptWheelHandled = true; });
+  transcript.on("wheeldown", () => { transcriptWheelHandled = true; });
+  screen.on("wheelup", (data) => {
+    if (!isMouseWithinElement(transcript, data)) return;
+    if (transcriptWheelHandled) {
+      transcriptWheelHandled = false;
+      return;
+    }
+    scrollTranscriptBy(-3);
+  });
+  screen.on("wheeldown", (data) => {
+    if (!isMouseWithinElement(transcript, data)) return;
+    if (transcriptWheelHandled) {
+      transcriptWheelHandled = false;
+      return;
+    }
+    scrollTranscriptBy(3);
+  });
   transcript.on("click", () => { transcript.focus(); });
   input.on("click", () => { input.focus(); });
+  transcript.on("keypress", (_ch: string, key: blessed.Widgets.Events.IKeyEventArg) => {
+    handleTranscriptNavigationKey(key, scrollTranscriptByPage, scrollTranscriptTo);
+  });
   input.on("keypress", async (ch: string, key: blessed.Widgets.Events.IKeyEventArg) => {
+    if (handleTranscriptNavigationKey(key, scrollTranscriptByPage, scrollTranscriptTo)) return;
     if (key.name === "enter") { await submit(); return; }
     if (key.name === "backspace") { inputValue = inputValue.slice(0, -1); render(); return; }
     if (key.name === "escape") { inputValue = ""; render(); return; }
@@ -480,6 +500,30 @@ export function getScrollablePageStep(element: Pick<ScrollableElement, "height" 
   return Math.max(getScrollableViewportHeight(element) - 1, 1);
 }
 
+export function handleTranscriptNavigationKey(
+  key: Pick<blessed.Widgets.Events.IKeyEventArg, "name">,
+  scrollByPage: (direction: -1 | 1) => void,
+  scrollTo: (target: "top" | "bottom") => void
+): boolean {
+  if (key.name === "pageup") {
+    scrollByPage(-1);
+    return true;
+  }
+  if (key.name === "pagedown") {
+    scrollByPage(1);
+    return true;
+  }
+  if (key.name === "home") {
+    scrollTo("top");
+    return true;
+  }
+  if (key.name === "end") {
+    scrollTo("bottom");
+    return true;
+  }
+  return false;
+}
+
 function tryStickScrollableToBottom(element: ScrollableElement): boolean {
   const viewportHeight = getScrollableViewportHeight(element);
   if (viewportHeight <= 0) return false;
@@ -492,6 +536,15 @@ function getScrollableViewportHeight(element: Pick<ScrollableElement, "height" |
   const innerHeight = typeof element.iheight === "number" ? element.iheight : Number(element.iheight);
   if (!Number.isFinite(height) || !Number.isFinite(innerHeight)) return 0;
   return Math.max(height - innerHeight, 0);
+}
+
+function isMouseWithinElement(
+  element: blessed.Widgets.BoxElement,
+  data: blessed.Widgets.Events.IMouseEventArg
+): boolean {
+  const pos = (element as blessed.Widgets.BoxElement & PositionedElement).lpos;
+  if (!pos) return false;
+  return data.x >= pos.xi && data.x < pos.xl && data.y >= pos.yi && data.y < pos.yl;
 }
 
 export function renderPrepareHelpText(): string {

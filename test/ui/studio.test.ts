@@ -4,6 +4,7 @@ import path from "node:path";
 import { mkdir, writeFile } from "node:fs/promises";
 import {
   getScrollablePageStep,
+  handleTranscriptNavigationKey,
   limitStudioSnippet,
   renderCommandSyntaxHelpText,
   renderOperateHelpText,
@@ -93,6 +94,30 @@ test("getScrollablePageStep uses the visible transcript height and never drops b
     height: "100%-10",
     iheight: 4
   }), 1);
+});
+
+test("handleTranscriptNavigationKey maps paging keys into transcript navigation actions", () => {
+  const calls: string[] = [];
+  const handledPageUp = handleTranscriptNavigationKey(
+    { name: "pageup" },
+    (direction) => { calls.push(`page:${direction}`); },
+    (target) => { calls.push(`jump:${target}`); }
+  );
+  const handledHome = handleTranscriptNavigationKey(
+    { name: "home" },
+    (direction) => { calls.push(`page:${direction}`); },
+    (target) => { calls.push(`jump:${target}`); }
+  );
+  const handledOther = handleTranscriptNavigationKey(
+    { name: "enter" },
+    (direction) => { calls.push(`page:${direction}`); },
+    (target) => { calls.push(`jump:${target}`); }
+  );
+
+  assert.equal(handledPageUp, true);
+  assert.equal(handledHome, true);
+  assert.equal(handledOther, false);
+  assert.deepEqual(calls, ["page:-1", "jump:top"]);
 });
 
 test("prepare help explains slice options and compatibility aliases", () => {
