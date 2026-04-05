@@ -7,6 +7,7 @@ import {
   getPreferredStudioMouseOptions,
   handleTranscriptNavigationKey,
   limitStudioSnippet,
+  renderStudioInputContent,
   renderCommandSyntaxHelpText,
   renderOperateHelpText,
   renderPrepareHelpText,
@@ -46,6 +47,13 @@ test("limitStudioSnippet leaves short content alone and truncates long content c
 
   assert.ok(clipped.length < long.length);
   assert.match(clipped, /\.\.\. \[truncated after 1600 chars\]$/);
+});
+
+test("renderStudioInputContent escapes user text without appending a second fake cursor", () => {
+  assert.equal(renderStudioInputContent("Let"), "Let");
+  const escaped = renderStudioInputContent("{bold}x{/bold}");
+  assert.match(escaped, /x/);
+  assert.doesNotMatch(escaped, /_$/);
 });
 
 test("shouldStickScrollableToBottom keeps the transcript pinned when it already fits or is near the end", () => {

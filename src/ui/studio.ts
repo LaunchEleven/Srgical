@@ -134,7 +134,7 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
         ? ["F2 Gather More", "F3 Build Draft", "F4 Slice Plan", "F5 Review Changes", "F6 Approve Ready", "F7 Open Operate"]
         : ["F2 Run Next Step", "F3 Auto Continue", "F4 PR Checkpoints", "F5 Refine Plan", "F6 Review Last Change", "F7 Resolve Blocker"])
     ].join("\n"));
-    input.setContent(`${ESC(inputValue)}{${STUDIO_THEME.prepareAccent}-fg}_{/}`);
+    input.setContent(renderStudioInputContent(inputValue));
     footer.setContent(busy
       ? " Working... "
       : mode === "prepare"
@@ -491,6 +491,10 @@ async function collect(dir: string, root: string, limit: number): Promise<string
 
 export function limitStudioSnippet(value: string): string {
   return value.length <= SNIPPET_LIMIT ? value : `${value.slice(0, SNIPPET_LIMIT).trimEnd()}\n... [truncated after ${SNIPPET_LIMIT} chars]`;
+}
+
+export function renderStudioInputContent(value: string): string {
+  return ESC(value);
 }
 
 export function shouldStickScrollableToBottom(element: Pick<ScrollableElement, "height" | "iheight" | "getScrollHeight" | "getScrollPerc">): boolean {
