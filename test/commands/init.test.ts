@@ -1,131 +1,61 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { runInitCommand } from "../../src/commands/init";
-import { readPlanningPackState } from "../../src/core/planning-pack-state";
-import { loadPlanningState } from "../../src/core/planning-state";
-import { saveStudioSession } from "../../src/core/studio-session";
-import { captureStdout } from "../helpers/capture";
-import { createTempWorkspace } from "../helpers/workspace";
-import { getPlanningPackPaths, readActivePlanId, readText, writeText } from "../../src/core/workspace";
 import { mkdtemp } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { pathToFileURL } from "node:url";
+import { runInitCommand } from "../../src/commands/init";
+import { ensurePreparePack } from "../../src/core/prepare-pack";
+import { readPlanningPackState } from "../../src/core/planning-pack-state";
+import { ensurePlanningDir, readActivePlanId, readText, writeText } from "../../src/core/workspace";
+import { createTempWorkspace } from "../helpers/workspace";
 
-test("init --plan creates a named planning pack and activates it", async () => {
-  const workspace = await createTempWorkspace("srgical-init-named-");
+test("ensurePreparePack creates the new prepare pack files and activates the plan", async () => {
+  const workspace = await createTempWorkspace("srgical-prepare-pack-");
 
-  const output = await captureStdout(async () => {
-    await runInitCommand(workspace, false, "release-readiness");
-  });
+  const paths = await ensurePreparePack(workspace, { planId: "release-readiness" });
+  const state = await readPlanningPackState(workspace, { planId: "release-readiness" });
+  const manifest = JSON.parse(await readText(paths.manifest)) as { stage: string; nextAction: string };
 
-  const paths = getPlanningPackPaths(workspace, { planId: "release-readiness" });
-  const planningState = await loadPlanningState(workspace, { planId: "release-readiness" });
-
-  assert.match(output, /Created planning pack for plan `release-readiness`/);
   assert.equal(await readActivePlanId(workspace), "release-readiness");
-  assert.equal(planningState?.packMode, "scaffolded");
   assert.match(paths.relativeDir, /\.srgical\/plans\/release-readiness/);
-  assert.match(await readText(paths.plan), /## SRGICAL META/);
-  assert.match(await readText(paths.plan), /Pending first authored draft\./);
+  assert.match(await readText(paths.plan), /## Desired Outcome/);
+  assert.match(await readText(paths.context), /## Repo Truth/);
+  assert.match(await readText(paths.tracker), /- Next step: `DISCOVER-001`/);
+  assert.match(await readText(paths.changes), /Created the initial prepare pack\./);
+  assert.equal(manifest.stage, "discover");
+  assert.match(manifest.nextAction, /Gather more evidence/i);
+  assert.equal(state.mode, "Discover");
+  assert.equal(state.currentPosition.nextRecommended, "DISCOVER-001");
+  assert.equal(state.manifest?.stage, "discover");
 });
 
-test("init without --plan fails because an explicit named plan is required", async () => {
-  const workspace = await createTempWorkspace("srgical-init-missing-plan-");
+test("ensurePreparePack rejects legacy-only packs in the rebooted release", async () => {
+  const workspace = await createTempWorkspace("srgical-legacy-pack-");
+  const paths = await ensurePlanningDir(workspace, { planId: "proto" });
+
+  await writeText(path.join(paths.dir, "01-product-plan.md"), "# Legacy Plan\n");
+  await writeText(path.join(paths.dir, "02-agent-context-kickoff.md"), "# Legacy Context\n");
+  await writeText(path.join(paths.dir, "03-detailed-implementation-plan.md"), "# Legacy Tracker\n");
 
   await assert.rejects(
-    () => runInitCommand(workspace),
-    /requires an explicit named plan/i
+    () => ensurePreparePack(workspace, { planId: "proto" }),
+    /Legacy plan packs using `01-product-plan\.md` \/ `HandoffDoc\.md` are intentionally unsupported in this release\./
   );
 });
 
-test("init accepts a positional plan id", async () => {
-  const workspace = await mkdtemp(path.join(os.tmpdir(), "srgical-init-cli-"));
+test("init is kept only to explain the rebooted workflow", async () => {
+  await assert.rejects(() => runInitCommand(), /Use `srgical prepare <id>` instead\./);
+});
 
+test("the legacy init CLI exits with migration guidance", async () => {
+  const workspace = await mkdtemp(path.join(os.tmpdir(), "srgical-init-cli-"));
   const result = await runCli(["src/index.ts", "init", "release-readiness"], workspace);
 
-  assert.equal(result.exitCode, 0, result.stderr);
-  assert.match(result.stdout, /Created planning pack for plan `release-readiness`/);
-
-  const paths = getPlanningPackPaths(workspace, { planId: "release-readiness" });
-  const planningState = await loadPlanningState(workspace, { planId: "release-readiness" });
-
-  assert.equal(await readActivePlanId(workspace), "release-readiness");
-  assert.equal(planningState?.packMode, "scaffolded");
-  assert.match(paths.relativeDir, /\.srgical\/plans\/release-readiness/);
-});
-
-test("init still treats an existing directory positional arg as workspace", async () => {
-  const workspace = await createTempWorkspace("srgical-init-existing-workspace-");
-
-  const result = await runCli(["src/index.ts", "init", workspace], process.cwd());
-
   assert.equal(result.exitCode, 1);
-  assert.match(result.stderr, /requires an explicit named plan/i);
+  assert.match(result.stderr, /Use `srgical prepare <id>` instead\./);
 });
-
-test("init --force clears stale studio and advice state for a re-scaffolded plan", async () => {
-  const workspace = await createTempWorkspace("srgical-init-force-reset-");
-  const paths = await getOrCreateScaffold(workspace, "proto");
-
-  await saveStudioSession(
-    workspace,
-    [
-      {
-        role: "user",
-        content: "We need to define the repo scope, the main delivery constraints, and the first execution slice."
-      },
-      {
-        role: "assistant",
-        content:
-          "The repo already contains the CLI surface, so the first grounded slice should focus on making planning-pack state deterministic and easy to inspect."
-      },
-      {
-        role: "user",
-        content: "Yes, go with that and write the pack."
-      },
-      {
-        role: "assistant",
-        content:
-          "That gives us enough goal, repo context, constraints, and an initial executable slice to move from scaffold into a grounded first draft."
-      }
-    ],
-    { planId: "proto" }
-  );
-
-  await writeText(
-    paths.adviceState,
-    JSON.stringify(
-      {
-        version: 1,
-        planId: "proto",
-        updatedAt: "2026-04-03T00:00:00.000Z",
-        problemStatement: "stale",
-        clarity: "clear",
-        stateAssessment: "stale",
-        researchNeeded: [],
-        advice: "stale",
-        nextAction: "stale"
-      },
-      null,
-      2
-    )
-  );
-
-  await runInitCommand(workspace, true, "proto");
-
-  const state = await readPlanningPackState(workspace, { planId: "proto" });
-
-  assert.equal(state.docsPresent, 0);
-  assert.equal(state.readiness.score, 0);
-  assert.equal(state.advice, null);
-});
-
-async function getOrCreateScaffold(workspace: string, planId: string) {
-  await runInitCommand(workspace, false, planId);
-  return getPlanningPackPaths(workspace, { planId });
-}
 
 function runCli(args: string[], cwd: string): Promise<{ exitCode: number | null; stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {

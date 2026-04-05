@@ -144,15 +144,15 @@ function sanitizeMaxSteps(value: number | undefined, derivedRemainingSteps: numb
 
 function assertAutoRunnable(state: PlanningPackState): void {
   if (!state.packPresent) {
-    throw new Error("Auto mode requires an existing planning pack.");
+    throw new Error("Auto continue requires an existing prepare pack.");
   }
 
   if (state.packMode !== "authored") {
-    throw new Error("Auto mode only runs authored plans. Finish planning and `/write` the pack first.");
+    throw new Error("Auto continue only runs drafted plans. Open `srgical prepare <id>` and build the draft first.");
   }
 
   if (state.approvalStatus !== "approved") {
-    throw new Error("Auto mode requires an approved plan baseline. Review the current draft and run `/confirm-plan` first.");
+    throw new Error("Auto continue requires an approved draft. Open `srgical prepare <id>`, review the plan, and approve it first.");
   }
 
   if (!isExecutionReadyState(state)) {
@@ -182,7 +182,7 @@ function describeNaturalStop(
   if (state.nextStepSummary.status.toLowerCase() === "blocked") {
     return {
       status: "stopped",
-      reason: `Auto mode stopped because ${state.nextStepSummary.id} is blocked. Resolve the blocker in the tracker, then continue with \`/go\` (studio operate) or rerun auto mode.`
+      reason: `Auto continue stopped because ${state.nextStepSummary.id} is blocked. Resolve the blocker, then continue from operate.`
     };
   }
 
@@ -190,7 +190,7 @@ function describeNaturalStop(
     return state.approvalStatus !== "approved"
       ? {
           status: "stopped",
-          reason: `Auto mode stopped because ${state.nextStepSummary.id} is no longer on an approved plan baseline. Review the draft and run \`/confirm-plan\` before continuing.`
+          reason: `Auto continue stopped because ${state.nextStepSummary.id} is no longer on an approved draft. Reopen prepare, review the plan, and approve it again before continuing.`
         }
       : {
           status: "stopped",

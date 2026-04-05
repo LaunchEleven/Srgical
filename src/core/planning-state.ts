@@ -147,7 +147,7 @@ export function inferLegacyPackMode(position: {
   lastCompleted: string | null;
   nextRecommended: string | null;
 }): PlanningPackMode {
-  return position.lastCompleted === "BOOT-001" && position.nextRecommended === "PLAN-001" ? "scaffolded" : "authored";
+  return position.lastCompleted === "BOOT-001" && position.nextRecommended === "DISCOVER-001" ? "scaffolded" : "authored";
 }
 
 function normalizePlanningState(parsed: Record<string, unknown>): PlanningStateFile | null {

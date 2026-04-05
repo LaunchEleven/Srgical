@@ -8,35 +8,35 @@ import {
   type AgentStatus
 } from "../../src/core/agent";
 import { executeAutoRun } from "../../src/core/auto-run";
+import { updatePlanManifest } from "../../src/core/plan-manifest";
+import { applyPlanningPackDocumentState } from "../../src/core/planning-doc-state";
+import { recordPlanningPackWrite, setHumanWriteConfirmation } from "../../src/core/planning-state";
 import type { ChatMessage } from "../../src/core/prompts";
 import type { PlanDiceOptions } from "../../src/core/plan-dicing";
-import { savePlanningState, setHumanWriteConfirmation } from "../../src/core/planning-state";
 import { writeText } from "../../src/core/workspace";
 import { createTempWorkspace, writePlanningPack } from "../helpers/workspace";
 
 test("execute-auto-run forwards live output chunks from execution attempts", async (t) => {
   const workspace = await createTempWorkspace("srgical-auto-run-stream-");
-  const planPaths = await writePlanningPack(workspace);
+  const planPaths = await seedAutoRunnablePlan(workspace);
   const streamedChunks: string[] = [];
 
-  await savePlanningState(workspace, "authored");
-  await setHumanWriteConfirmation(workspace, true);
   await writeText(
     planPaths.tracker,
-    `# Detailed Implementation Plan
+    `# Tracker
 
 ## Current Position
 
-- Last Completed: \`PLAN-001\`
-- Next Recommended: \`EXEC-001\`
-- Updated At: \`2026-04-04T00:00:00.000Z\`
-- Updated By: \`Codex\`
+- Last completed: \`PLAN-001\`
+- Next step: \`EXEC-001\`
+- Updated at: \`2026-04-04T00:00:00.000Z\`
+- Updated by: \`srgical\`
 
 ## Delivery
 
-| ID | Status | Depends On | Scope | Acceptance | Notes |
-| --- | --- | --- | --- | --- | --- |
-| EXEC-001 | pending | PLAN-001 | Execute the first slice. | The first slice lands. | Pending. |
+| ID | Type | Status | Depends On | Scope | Acceptance | Validation | Notes |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| EXEC-001 | build | todo | PLAN-001 | Execute the first slice. | The first slice lands. | npm test | Pending. |
 `
   );
 
@@ -50,20 +50,20 @@ test("execute-auto-run forwards live output chunks from execution attempts", asy
         options?.onOutputChunk?.("stream chunk 2\n");
         await writeText(
           planPaths.tracker,
-          `# Detailed Implementation Plan
+          `# Tracker
 
 ## Current Position
 
-- Last Completed: \`EXEC-001\`
-- Next Recommended: none queued
-- Updated At: \`2026-04-04T00:01:00.000Z\`
-- Updated By: \`Codex\`
+- Last completed: \`EXEC-001\`
+- Next step: none queued
+- Updated at: \`2026-04-04T00:01:00.000Z\`
+- Updated by: \`srgical\`
 
 ## Delivery
 
-| ID | Status | Depends On | Scope | Acceptance | Notes |
-| --- | --- | --- | --- | --- | --- |
-| EXEC-001 | done | PLAN-001 | Execute the first slice. | The first slice lands. | Completed. |
+| ID | Type | Status | Depends On | Scope | Acceptance | Validation | Notes |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| EXEC-001 | build | done | PLAN-001 | Execute the first slice. | The first slice lands. | npm test | Completed. |
 `
         );
         return "completed exec-001";
@@ -87,29 +87,27 @@ test("execute-auto-run forwards live output chunks from execution attempts", asy
 
 test("execute-auto-run derives max steps from the remaining execution plan when none is provided", async (t) => {
   const workspace = await createTempWorkspace("srgical-auto-run-derived-max-");
-  const planPaths = await writePlanningPack(workspace);
+  const planPaths = await seedAutoRunnablePlan(workspace);
   const messages: string[] = [];
 
-  await savePlanningState(workspace, "authored");
-  await setHumanWriteConfirmation(workspace, true);
   await writeText(
     planPaths.tracker,
-    `# Detailed Implementation Plan
+    `# Tracker
 
 ## Current Position
 
-- Last Completed: \`EXEC-001\`
-- Next Recommended: \`EXEC-002\`
-- Updated At: \`2026-04-04T00:00:00.000Z\`
-- Updated By: \`Codex\`
+- Last completed: \`EXEC-001\`
+- Next step: \`EXEC-002\`
+- Updated at: \`2026-04-04T00:00:00.000Z\`
+- Updated by: \`srgical\`
 
 ## Delivery
 
-| ID | Status | Depends On | Scope | Acceptance | Notes |
-| --- | --- | --- | --- | --- | --- |
-| EXEC-001 | done | PLAN-001 | Execute the first slice. | The first slice lands. | Completed. |
-| EXEC-002 | pending | EXEC-001 | Execute the second slice. | The second slice lands. | Pending. |
-| EXEC-003 | pending | EXEC-002 | Execute the third slice. | The third slice lands. | Pending. |
+| ID | Type | Status | Depends On | Scope | Acceptance | Validation | Notes |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| EXEC-001 | build | done | PLAN-001 | Execute the first slice. | The first slice lands. | npm test | Completed. |
+| EXEC-002 | build | todo | EXEC-001 | Execute the second slice. | The second slice lands. | npm test | Pending. |
+| EXEC-003 | build | todo | EXEC-002 | Execute the third slice. | The third slice lands. | npm test | Pending. |
 `
   );
 
@@ -192,4 +190,20 @@ function availableStatus(id: string, label: string): AgentStatus {
     command: `${id}.cmd`,
     version: "1.0.0"
   };
+}
+
+async function seedAutoRunnablePlan(workspace: string) {
+  const paths = await writePlanningPack(workspace);
+
+  await applyPlanningPackDocumentState(paths, "grounded");
+  await recordPlanningPackWrite(workspace, "dice");
+  await setHumanWriteConfirmation(workspace, true);
+  await updatePlanManifest(workspace, {
+    stage: "ready",
+    nextAction: "Open operate and run the next step.",
+    contextReady: true,
+    approvedAt: "2026-04-04T00:00:00.000Z"
+  });
+
+  return paths;
 }

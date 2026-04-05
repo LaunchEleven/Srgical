@@ -51,7 +51,7 @@ export function renderPostinstallMessage(completionSummary?: string | null): str
     completionSummary ? paintLine(completionSummary, "info") : null,
     "",
     renderSectionHeading("Next"),
-    paintLine("Start here: srgical doctor", "brand", { bold: true }),
+    paintLine("Start here: srgical prepare <id>", "brand", { bold: true }),
     "More: srgical about",
     ""
   ]

@@ -1,207 +1,127 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
-import { mkdtemp } from "node:fs/promises";
-import os from "node:os";
-import path from "node:path";
-import { pathToFileURL } from "node:url";
 import { runDoctorCommand } from "../../src/commands/doctor";
+import { runStatusCommand } from "../../src/commands/status";
 import {
   resetAgentAdaptersForTesting,
   setAgentAdaptersForTesting,
   type AgentAdapter,
   type AgentStatus
 } from "../../src/core/agent";
-import type { ChatMessage } from "../../src/core/prompts";
+import { updatePlanManifest } from "../../src/core/plan-manifest";
+import { recordPlanningPackWrite, setHumanWriteConfirmation } from "../../src/core/planning-state";
+import { applyPlanningPackDocumentState } from "../../src/core/planning-doc-state";
 import { saveStoredActiveAgentId } from "../../src/core/studio-session";
-import { getPlanningPackPaths, readActivePlanId, writeText } from "../../src/core/workspace";
+import type { ChatMessage } from "../../src/core/prompts";
+import { writeText } from "../../src/core/workspace";
 import { captureStdout } from "../helpers/capture";
 import { createTempWorkspace, writePlanningPack } from "../helpers/workspace";
 
-test("doctor reports all supported agents and the queued next step", async (t) => {
-  const workspace = await createTempWorkspace("srgical-doctor-next-");
-  const paths = await writePlanningPack(workspace);
+test("status reports the selected plan stage, next action, and visible change summary", async (t) => {
+  const workspace = await createTempWorkspace("srgical-status-selected-");
+  const paths = await writePlanningPack(workspace, { planId: "proto" });
+
+  await applyPlanningPackDocumentState(paths, "grounded");
+  await recordPlanningPackWrite(workspace, "dice", { planId: "proto" });
+  await setHumanWriteConfirmation(workspace, true, { planId: "proto" });
+  await saveStoredActiveAgentId(workspace, "claude", { planId: "proto" });
+  await writeText(
+    paths.tracker,
+    `# Tracker
+
+## Current Position
+
+- Last completed: \`BOOT-001\`
+- Next step: \`SPIKE-001\`
+- Updated at: \`2026-04-05T00:00:00.000Z\`
+- Updated by: \`srgical\`
+
+## Phase 1 - Proof
+
+| ID | Type | Status | Depends On | Scope | Acceptance | Validation | Notes |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| BOOT-001 | research | done | - | Create the new prepare pack scaffold. | The visible plan files exist. | Scaffold files written successfully. | Completed during pack creation. |
+| SPIKE-001 | spike | todo | BOOT-001 | Prove the tracker rewrite preserves the next-step contract. | We can show the next step and validation rules cleanly. | npm test -- test/core/planning-pack-state.test.ts | Validate tracker output before downstream build steps. |
+| BUILD-001 | build | todo | SPIKE-001 | Implement the polished prepare status panel. | The panel shows stage, unknowns, and the next action. | npm test -- test/commands/doctor.test.ts | Wait for the spike result first. |
+`
+  );
+  await updatePlanManifest(
+    workspace,
+    {
+      stage: "ready",
+      nextAction: "Open operate and run the next step.",
+      nextStepId: "SPIKE-001",
+      stepCounts: {
+        todo: 2,
+        doing: 0,
+        blocked: 0,
+        done: 1,
+        skipped: 0,
+        total: 3
+      },
+      lastChangeSummary: "Tracker updated: inserted SPIKE-001 before BUILD-001.",
+      evidence: ["src/ui/studio.ts", "docs/studio-plan-tutorial.md"],
+      unknowns: ["Whether the spike proves the tracker output is stable enough to build on."],
+      executionMode: "step",
+      contextReady: true,
+      approvedAt: "2026-04-05T00:01:00.000Z"
+    },
+    { planId: "proto" }
+  );
 
   setAgentAdaptersForTesting([
-    createFakeAdapter({
-      id: "codex",
-      label: "Codex",
-      status: availableStatus("codex", "Codex", "0.113.0")
-    }),
     createFakeAdapter({
       id: "claude",
       label: "Claude Code",
       status: availableStatus("claude", "Claude Code", "1.2.3")
     }),
     createFakeAdapter({
-      id: "augment",
-      label: "Augment CLI",
-      status: availableStatus("augment", "Augment CLI", "2.0.0")
-    })
-  ]);
-  t.after(resetAgentAdaptersForTesting);
-
-  await saveStoredActiveAgentId(workspace, "claude");
-
-  await writeText(
-    paths.tracker,
-    `# Detailed Implementation Plan
-
-## Current Position
-
-- Last Completed: \`PACK002\`
-- Next Recommended: \`EXEC001\`
-- Updated At: \`2026-03-24T00:00:00.000Z\`
-- Updated By: \`Codex\`
-
-## Execution
-
-| ID | Status | Depends On | Scope | Acceptance | Notes |
-| --- | --- | --- | --- | --- | --- |
-| EXEC001 | pending | PACK002 | Summarize the next step. | The next step is visible before execution. | Pending command output work. |
-`
-  );
-
-  await writeText(
-    getPlanningPackPaths(workspace, { planId: paths.planId }).adviceState,
-    JSON.stringify(
-      {
-        version: 1,
-        planId: "default",
-        updatedAt: "2026-03-24T00:05:00.000Z",
-        problemStatement: "Summarize the queued execution work before running it.",
-        clarity: "mostly clear",
-        stateAssessment: "The execution target is visible, but validation expectations still need to be tightened.",
-        researchNeeded: ["confirm validation command", "confirm expected output surface"],
-        advice: "Tighten the acceptance language before the first execution handoff.",
-        nextAction: "Review EXEC001 acceptance and then run the step."
-      },
-      null,
-      2
-    )
-  );
-
-  const output = await captureStdout(async () => {
-    await runDoctorCommand(workspace);
-  });
-
-  assert.match(output, /Active plan: default/);
-  assert.match(output, /Active agent: Claude Code \(claude\) - available \(1\.2\.3\)/);
-  assert.match(output, /Supported agents:/);
-  assert.match(output, /- Codex \(codex\): available \(0\.113\.0\) via codex\.cmd/);
-  assert.match(output, /- Claude Code \(claude\) \[active\]: available \(1\.2\.3\) via claude\.cmd/);
-  assert.match(output, /- Augment CLI \(augment\): available \(2\.0\.0\) via augment\.cmd/);
-  assert.match(output, /Plans:/);
-  assert.match(
-    output,
-    /default \[active\]: \| path \.srgical\/plans\/default \| mode Draft Written \| docs 1\/5 \| draft written \| approval pending review \/ confirmation \| readiness 1\/5 \| execution started \| auto idle/
-  );
-  assert.match(output, /Next Step: EXEC001 \(Execution\)/);
-  assert.match(output, /Docs present: 1\/5/);
-  assert.match(output, /AI advice: Summarize the queued execution work before running it\./);
-  assert.match(output, /Clarity: mostly clear/);
-  assert.match(output, /Research: confirm validation command, confirm expected output surface/);
-  assert.match(output, /Next: Review EXEC001 acceptance and then run the step\./);
-  assert.match(
-    output,
-    /Next move: run `srgical studio <id>` \(or `srgical studio plan --plan <id>` \/ `srgical ssp <id>`\) to refine, dice, or approve the current draft\./
-  );
-});
-
-test("doctor reports missing supported agents safely when no next step is queued", async (t) => {
-  const workspace = await createTempWorkspace("srgical-doctor-none-");
-  const paths = await writePlanningPack(workspace);
-
-  setAgentAdaptersForTesting([
-    createFakeAdapter({
       id: "codex",
       label: "Codex",
-      status: unavailableStatus("codex", "Codex", "missing codex")
-    }),
-    createFakeAdapter({
-      id: "claude",
-      label: "Claude Code",
-      status: unavailableStatus("claude", "Claude Code", "missing claude")
-    }),
-    createFakeAdapter({
-      id: "augment",
-      label: "Augment CLI",
-      status: unavailableStatus("augment", "Augment CLI", "missing augment")
+      status: availableStatus("codex", "Codex", "0.113.0")
     })
   ]);
   t.after(resetAgentAdaptersForTesting);
 
-  await writeText(
-    paths.tracker,
-    `# Detailed Implementation Plan
-
-## Current Position
-
-- Last Completed: \`DIST001\`
-- Next Recommended: none queued
-- Updated At: \`2026-03-24T00:00:00.000Z\`
-- Updated By: \`Codex\`
-`
-  );
-
   const output = await captureStdout(async () => {
-    await runDoctorCommand(workspace);
+    await runStatusCommand(workspace, { planId: "proto" });
   });
 
-  assert.match(output, /Active agent: Codex \(codex\) - missing \(missing codex\)/);
-  assert.match(output, /- Codex \(codex\) \[active\]: missing \(missing codex\) via codex\.cmd/);
-  assert.match(output, /- Claude Code \(claude\): missing \(missing claude\) via claude\.cmd/);
-  assert.match(output, /- Augment CLI \(augment\): missing \(missing augment\) via augment\.cmd/);
-  assert.match(output, /Next Step: unavailable/);
-  assert.match(output, /Tracker does not currently expose a next recommended step\./);
-  assert.match(output, /Mode: Draft Written/);
-  assert.match(output, /AI advice: none cached yet \(run `\/advice` in studio to generate guidance\)\./);
-  assert.match(
-    output,
-    /Next move: run `srgical studio <id>` \(or `srgical studio plan --plan <id>` \/ `srgical ssp <id>`\) to refine, dice, or approve the current draft\./
-  );
+  assert.match(output, /Active plan: proto/);
+  assert.match(output, /Active agent: Claude Code \(claude\)/);
+  assert.match(output, /- proto \[active\]: stage Ready \| next action Open operate and run the next step\./);
+  assert.match(output, /Stage: Ready/);
+  assert.match(output, /Next action: Open operate and run the next step\./);
+  assert.match(output, /Next step: SPIKE-001/);
+  assert.match(output, /Last change: Tracker updated: inserted SPIKE-001 before BUILD-001\./);
+  assert.match(output, /Evidence: src\/ui\/studio\.ts \| docs\/studio-plan-tutorial\.md/);
+  assert.match(output, /Unknowns: Whether the spike proves the tracker output is stable enough to build on\./);
+  assert.match(output, /Execution mode: step/);
 });
 
-test("doctor stays helpful before any plan has been created", async (t) => {
-  const workspace = await createTempWorkspace("srgical-doctor-empty-");
+test("status stays helpful before any plan has been created", async (t) => {
+  const workspace = await createTempWorkspace("srgical-status-empty-");
 
   setAgentAdaptersForTesting([
     createFakeAdapter({
       id: "codex",
       label: "Codex",
       status: availableStatus("codex", "Codex", "0.113.0")
-    }),
-    createFakeAdapter({
-      id: "claude",
-      label: "Claude Code",
-      status: unavailableStatus("claude", "Claude Code", "missing claude")
     })
   ]);
   t.after(resetAgentAdaptersForTesting);
 
   const output = await captureStdout(async () => {
-    await runDoctorCommand(workspace);
+    await runStatusCommand(workspace);
   });
 
   assert.match(output, /Active plan: none/);
-  assert.match(output, /Supported agents:/);
-  assert.match(output, /- none: no planning packs detected yet/);
-  assert.match(output, /Selected plan details: none selected yet\./);
-  assert.match(
-    output,
-    /Next move: run `srgical init <id>` for a scaffold or `srgical studio <id>` to start planning\./
-  );
+  assert.match(output, /No plans yet\. Start with `srgical prepare <id>`\./);
+  assert.match(output, /Next: run `srgical prepare <id>` to create or open a plan\./);
 });
 
-test("doctor accepts a positional plan id", async () => {
-  const workspace = await mkdtemp(path.join(os.tmpdir(), "srgical-doctor-cli-"));
-  await writePlanningPack(workspace, { planId: "proto" });
-
-  const result = await runCli(["src/index.ts", "doctor", "proto"], workspace);
-
-  assert.equal(result.exitCode, 0, result.stderr);
-  assert.match(result.stdout, /Active plan: proto/);
-  assert.equal(await readActivePlanId(workspace), "proto");
+test("doctor is kept only to explain the rebooted workflow", async () => {
+  await assert.rejects(() => runDoctorCommand(), /Use `srgical status <id>` instead\./);
 });
 
 function createFakeAdapter(options: {
@@ -249,45 +169,4 @@ function availableStatus(id: string, label: string, version: string): AgentStatu
     command: `${id}.cmd`,
     version
   };
-}
-
-function unavailableStatus(id: string, label: string, error: string): AgentStatus {
-  return {
-    id,
-    label,
-    available: false,
-    command: `${id}.cmd`,
-    error
-  };
-}
-
-function runCli(args: string[], cwd: string): Promise<{ exitCode: number | null; stdout: string; stderr: string }> {
-  return new Promise((resolve, reject) => {
-    const resolvedArgs = args.map((arg, index) => (index === 0 ? path.resolve(process.cwd(), arg) : arg));
-    const tsxLoaderUrl = pathToFileURL(path.resolve(process.cwd(), "node_modules", "tsx", "dist", "loader.mjs")).href;
-    const child = spawn(process.execPath, ["--import", tsxLoaderUrl, ...resolvedArgs], {
-      cwd,
-      stdio: ["ignore", "pipe", "pipe"],
-      env: {
-        ...process.env,
-        SRGICAL_DISABLE_UPDATE_CHECK: "true"
-      }
-    });
-
-    let stdout = "";
-    let stderr = "";
-
-    child.stdout.on("data", (chunk) => {
-      stdout += String(chunk);
-    });
-
-    child.stderr.on("data", (chunk) => {
-      stderr += String(chunk);
-    });
-
-    child.on("error", reject);
-    child.on("close", (exitCode) => {
-      resolve({ exitCode, stdout, stderr });
-    });
-  });
 }

@@ -26,11 +26,11 @@ export async function unblockTrackerStep(
 ): Promise<UnblockTrackerResult> {
   const paths = getPlanningPackPaths(workspaceRoot, options);
   const tracker = await readText(paths.tracker);
-  const currentNext = readCurrentPositionValue(tracker, "Next Recommended");
+  const currentNext = readCurrentPositionValue(tracker, "Next step") ?? readCurrentPositionValue(tracker, "Next Recommended");
   const stepId = normalizeStepId(options.requestedStepId) ?? normalizeStepId(currentNext);
 
   if (!stepId) {
-    throw new Error("Tracker does not expose a `Next Recommended` step. Specify `/unblock <STEP_ID>`.");
+    throw new Error("Tracker does not expose a `Next step`. Specify `:unblock <STEP_ID>`.");
   }
 
   const rowMatch = findStepRow(tracker, stepId);
@@ -43,7 +43,7 @@ export async function unblockTrackerStep(
     throw new Error(`\`${stepId}\` is not blocked (current status: ${previousStatus || "unknown"}).`);
   }
 
-  rowMatch.cells[rowMatch.statusColumnIndex] = "pending";
+  rowMatch.cells[rowMatch.statusColumnIndex] = "todo";
   const reason = options.reason?.trim();
   const existingNotes = rowMatch.cells[rowMatch.notesColumnIndex]?.trim() ?? "";
   const unblockNote = reason
@@ -55,9 +55,9 @@ export async function unblockTrackerStep(
   lines[rowMatch.rowLineIndex] = renderTableRow(rowMatch.cells);
 
   let updated = lines.join("\n");
-  updated = writeCurrentPositionValue(updated, "Next Recommended", stepId);
-  updated = writeCurrentPositionValue(updated, "Updated At", new Date().toISOString());
-  updated = writeCurrentPositionValue(updated, "Updated By", UPDATED_BY);
+  updated = writeCurrentPositionValue(updated, "Next step", stepId);
+  updated = writeCurrentPositionValue(updated, "Updated at", new Date().toISOString());
+  updated = writeCurrentPositionValue(updated, "Updated by", UPDATED_BY);
 
   await writeText(paths.tracker, updated);
 
@@ -128,7 +128,7 @@ function readCurrentPositionValue(tracker: string, label: string): string | null
 
 function writeCurrentPositionValue(tracker: string, label: string, value: string): string {
   const withBackticks = value.toLowerCase() === "none queued" ? value : `\`${value}\``;
-  const expression = new RegExp(`- ${escapeRegExp(label)}: (?:\\\`[^\\\`]*\\\`|[^\\n]*)`);
+  const expression = new RegExp(`- ${escapeRegExp(label)}: (?:\\\`[^\\\`]*\\\`|[^\\n]*)`, "i");
 
   if (!expression.test(tracker)) {
     return tracker;

@@ -7,13 +7,13 @@ import { spawn } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import { writePlanningPack } from "../helpers/workspace";
 
-test("hidden completion suggests matching plans for doctor positional plan ids", async () => {
-  const workspace = await mkdtemp(path.join(os.tmpdir(), "srgical-complete-doctor-"));
+test("hidden completion suggests matching plans for prepare positional plan ids", async () => {
+  const workspace = await mkdtemp(path.join(os.tmpdir(), "srgical-complete-prepare-"));
   await writePlanningPack(workspace, { planId: "proto" });
   await writePlanningPack(workspace, { planId: "prototype" });
   await writePlanningPack(workspace, { planId: "release" });
 
-  const result = await runCli(["src/index.ts", "__complete", "--index", "1", "--", "doctor", "prot"], workspace);
+  const result = await runCli(["src/index.ts", "__complete", "--index", "1", "--", "prepare", "prot"], workspace);
 
   assert.equal(result.exitCode, 0, result.stderr);
   assert.deepEqual(splitLines(result.stdout), ["proto", "prototype"]);
@@ -25,7 +25,18 @@ test("hidden completion suggests matching plans for --plan options", async () =>
   await writePlanningPack(workspace, { planId: "prototype" });
   await writePlanningPack(workspace, { planId: "release" });
 
-  const result = await runCli(["src/index.ts", "__complete", "--index", "2", "--", "run-next", "--plan", "prot"], workspace);
+  const result = await runCli(["src/index.ts", "__complete", "--index", "2", "--", "operate", "--plan", "prot"], workspace);
+
+  assert.equal(result.exitCode, 0, result.stderr);
+  assert.deepEqual(splitLines(result.stdout), ["proto", "prototype"]);
+});
+
+test("hidden completion suggests matching plans for status positional plan ids", async () => {
+  const workspace = await mkdtemp(path.join(os.tmpdir(), "srgical-complete-status-"));
+  await writePlanningPack(workspace, { planId: "proto" });
+  await writePlanningPack(workspace, { planId: "prototype" });
+
+  const result = await runCli(["src/index.ts", "__complete", "--index", "1", "--", "status", "prot"], workspace);
 
   assert.equal(result.exitCode, 0, result.stderr);
   assert.deepEqual(splitLines(result.stdout), ["proto", "prototype"]);

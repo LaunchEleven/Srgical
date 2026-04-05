@@ -129,21 +129,21 @@ test("request-planner-reply uses Claude print mode with plan permissions", async
   assert.equal(reply, "Planned response from Claude.");
 });
 
-test("write-planning-pack uses Claude acceptEdits settings and preserves planning-epoch summaries", async (t) => {
+test("write-planning-pack uses Claude acceptEdits settings and preserves revision summaries", async (t) => {
   const workspace = await createTempWorkspace("srgical-claude-pack-");
   const paths = await writeInitialPlanningPack(workspace);
   let invocationCount = 0;
 
   await writeText(
     paths.tracker,
-    `# Detailed Implementation Plan
+    `# Tracker
 
 ## Current Position
 
-- Last Completed: \`DIST001\`
-- Next Recommended: none queued
-- Updated At: \`2026-03-24T00:00:00.000Z\`
-- Updated By: \`Codex\`
+- Last completed: \`DISCOVER-001\`
+- Next step: none queued
+- Updated at: \`2026-03-24T00:00:00.000Z\`
+- Updated by: \`srgical\`
 `
   );
 
@@ -162,7 +162,7 @@ test("write-planning-pack uses Claude acceptEdits settings and preserves plannin
       assert.equal(args[argValueIndex(args, "--permission-mode")], "acceptEdits");
 
       const prompt = await readFile(args[argValueIndex(args, "--append-system-prompt-file")], "utf8");
-      assert.match(prompt, /You are writing a planning pack for the current repository\./);
+      assert.match(prompt, /You are writing a prepare pack for the current repository\./);
 
       const settings = JSON.parse(await readFile(args[argValueIndex(args, "--settings")], "utf8")) as {
         permissions?: { allow?: string[] };
@@ -180,7 +180,7 @@ test("write-planning-pack uses Claude acceptEdits settings and preserves plannin
   const result = await writePlanningPack(workspace, [{ role: "user", content: "Refresh the pack." }]);
 
   assert.equal(invocationCount, 2);
-  assert.match(result, /Started a new planning epoch by archiving the previous active pack/);
+  assert.match(result, /Started a new revision by snapshotting the previous active pack to \.srgical\/plans\/default\/revision-1\./);
   assert.match(result, /Claude pack write complete\./);
 });
 
@@ -199,8 +199,8 @@ test("write-planning-pack falls back locally with Claude-specific messaging when
   const result = await writePlanningPack(workspace, [{ role: "user", content: "Refresh the pack locally." }]);
   const context = await readText(paths.context);
 
-  assert.match(result, /Local fallback pack refresh completed because Claude Code was unavailable\./);
-  assert.match(context, /Triggered an explicit local planning-pack refresh because Claude Code was unavailable\./);
+  assert.match(result, /Local fallback prepare refresh completed because Claude Code was unavailable\./);
+  assert.match(context, /Triggered an explicit local prepare refresh because Claude Code was unavailable\./);
   assert.match(context, /without invoking Claude Code\./);
 });
 

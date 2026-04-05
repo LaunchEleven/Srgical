@@ -20,11 +20,11 @@ export type PlanningEpochPreparation = {
 };
 
 const ARCHIVED_PACK_FILE_NAMES = [
-  "01-product-plan.md",
-  "02-agent-context-kickoff.md",
-  "03-detailed-implementation-plan.md",
-  "04-next-agent-prompt.md",
-  "HandoffDoc.md",
+  "plan.md",
+  "context.md",
+  "tracker.md",
+  "changes.md",
+  "manifest.json",
   "studio-session.json",
   "planning-state.json",
   "auto-run-state.json",
@@ -68,7 +68,7 @@ export function formatPlanningEpochSummary(preparation: PlanningEpochPreparation
   }
 
   return [
-    `Started a new planning epoch by archiving the previous active pack to ${preparation.archiveDir}.`,
+    `Started a new revision by snapshotting the previous active pack to ${preparation.archiveDir}.`,
     preparation.archivedFiles.length > 0
       ? `Archived files: ${preparation.archivedFiles.join(", ")}`
       : "Archived files: none"
@@ -108,8 +108,8 @@ function listArchivablePaths(paths: PlanningPackPaths): string[] {
     paths.plan,
     paths.context,
     paths.tracker,
-    paths.nextPrompt,
-    paths.handoff,
+    paths.changes,
+    paths.manifest,
     paths.studioSession,
     paths.planningState,
     paths.autoRunState,
@@ -130,7 +130,7 @@ async function nextPlanningEpochName(planningDir: string): Promise<string> {
         continue;
       }
 
-      const match = /^planning-(\d+)$/.exec(entry.name);
+      const match = /^revision-(\d+)$/.exec(entry.name);
       if (!match) {
         continue;
       }
@@ -138,10 +138,10 @@ async function nextPlanningEpochName(planningDir: string): Promise<string> {
       highest = Math.max(highest, Number(match[1]));
     }
   } catch {
-    return "planning-1";
+    return "revision-1";
   }
 
-  return `planning-${highest + 1}`;
+  return `revision-${highest + 1}`;
 }
 
 function toRelativePackPath(workspaceRoot: string, value: string): string {
@@ -149,7 +149,7 @@ function toRelativePackPath(workspaceRoot: string, value: string): string {
 }
 
 export function isArchivedPlanningDirName(value: string): boolean {
-  return /^planning-\d+$/.test(value);
+  return /^revision-\d+$/.test(value);
 }
 
 export function listArchivedPackFileNames(): string[] {

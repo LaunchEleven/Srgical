@@ -1,7 +1,8 @@
 import { loadPlanningAdviceState, type PlanningAdviceState } from "./advice-state";
 import { loadAutoRunState, type AutoRunState } from "./auto-run-state";
-import { readPlanningPackDocumentSummary } from "./planning-doc-state";
 import { loadExecutionState, type ExecutionState } from "./execution-state";
+import { readPlanningPackDocumentSummary } from "./planning-doc-state";
+import { formatPlanStage, loadPlanManifest, type PlanManifest } from "./plan-manifest";
 import {
   hasHumanWriteConfirmation,
   inferLegacyPackMode,
@@ -13,7 +14,7 @@ import {
   type PlanningStateFile
 } from "./planning-state";
 import { DEFAULT_STUDIO_MESSAGES, loadStudioSessionState } from "./studio-session";
-import { getPlanningPackPaths, planningPackExists, readText, type PlanningPathOptions } from "./workspace";
+import { getPlanningPackPaths, legacyPlanningPackExists, planningPackExists, readText, type PlanningPathOptions } from "./workspace";
 
 export type PlanningCurrentPosition = {
   lastCompleted: string | null;
@@ -23,10 +24,12 @@ export type PlanningCurrentPosition = {
 
 export type PlanningStepSummary = {
   id: string;
+  type: string;
   status: string;
   dependsOn: string;
   scope: string;
   acceptance: string;
+  validation: string;
   notes: string;
   phase: string | null;
 };
@@ -49,22 +52,13 @@ export type PlanningReadiness = {
   missingLabels: string[];
 };
 
-export type PlanningMode =
-  | "No Pack"
-  | "Gathering Context"
-  | "Ready to Draft"
-  | "Draft Written"
-  | "Sliced Draft"
-  | "Approved"
-  | "Approved - Stale"
-  | "Ready to Execute"
-  | "Execution Active"
-  | "Auto Running";
+export type PlanningMode = "No Pack" | "Discover" | "Prepare" | "Ready" | "Execute" | "Blocked" | "Finished" | "Out of Date" | "Auto Running";
 
 export type PlanningPackState = {
   planId: string;
   packDir: string;
   packPresent: boolean;
+  legacyPackPresent: boolean;
   trackerReadable: boolean;
   docsPresent: number;
   remainingExecutionSteps: number;
@@ -86,6 +80,10 @@ export type PlanningPackState = {
   executionActivated: boolean;
   mode: PlanningMode;
   hasFailureOverlay: boolean;
+  manifest: PlanManifest | null;
+  evidence: string[];
+  unknowns: string[];
+  nextAction: string;
 };
 
 export async function readPlanningPackState(
@@ -93,36 +91,40 @@ export async function readPlanningPackState(
   options: PlanningPathOptions = {}
 ): Promise<PlanningPackState> {
   const paths = getPlanningPackPaths(workspaceRoot, options);
-  const packPresent = await planningPackExists(workspaceRoot, options);
+  const [packPresent, legacyPackPresent, lastExecution, planningState, advice, autoRun, studioSession, manifest] = await Promise.all([
+    planningPackExists(workspaceRoot, options),
+    legacyPlanningPackExists(workspaceRoot, options),
+    loadExecutionState(workspaceRoot, options),
+    loadPlanningState(workspaceRoot, options),
+    loadPlanningAdviceState(workspaceRoot, options),
+    loadAutoRunState(workspaceRoot, options),
+    loadStudioSessionState(workspaceRoot, options),
+    loadPlanManifest(workspaceRoot, options)
+  ]);
+
   const currentPosition = emptyCurrentPosition();
   let nextStepSummary: PlanningStepSummary | null = null;
   let remainingExecutionSteps = 0;
   let trackerReadable = false;
+  let trackerRows: PlanningStepSummary[] = [];
 
   if (packPresent) {
     try {
       const tracker = await readText(paths.tracker);
-      const trackerRows = parseTrackerRows(tracker);
+      trackerRows = parseTrackerRows(tracker);
       Object.assign(currentPosition, parseCurrentPosition(tracker));
       nextStepSummary = parseNextStepSummary(trackerRows, currentPosition.nextRecommended);
       remainingExecutionSteps = countRemainingExecutionSteps(trackerRows, currentPosition.nextRecommended);
-      trackerReadable = currentPosition.lastCompleted !== null || currentPosition.nextRecommended !== null;
+      trackerReadable = currentPosition.lastCompleted !== null || currentPosition.nextRecommended !== null || trackerRows.length > 0;
     } catch {
       trackerReadable = false;
     }
   }
 
-  const [lastExecution, planningState, advice, autoRun, studioSession] = await Promise.all([
-    loadExecutionState(workspaceRoot, options),
-    loadPlanningState(workspaceRoot, options),
-    loadPlanningAdviceState(workspaceRoot, options),
-    loadAutoRunState(workspaceRoot, options),
-    loadStudioSessionState(workspaceRoot, options)
-  ]);
   const fallbackPackMode = planningState?.packMode ?? inferLegacyPackMode(currentPosition);
   const planningDocs = await readPlanningPackDocumentSummary(paths, fallbackPackMode === "authored" ? "grounded" : "boilerplate");
-
-  const docsPresent = planningDocs.groundedCount;
+  const manifestPresent = packPresent && manifest ? 1 : 0;
+  const docsPresent = planningDocs.groundedCount + manifestPresent;
   const draftState = planningState?.draftState ?? (fallbackPackMode === "authored" ? "written" : "scaffolded");
   const readiness = buildReadiness(studioSession.messages, nextStepSummary, {
     packMode: fallbackPackMode,
@@ -131,26 +133,22 @@ export async function readPlanningPackState(
   const packMode = fallbackPackMode;
   const humanWriteConfirmed = hasHumanWriteConfirmation(planningState);
   const approvalStatus = planningState?.approvalStatus ?? "pending";
-  const executionActivated = Boolean(
-    lastExecution ||
-      (autoRun && autoRun.status !== "idle") ||
-      (isExecutionStepSummary(nextStepSummary) && currentPosition.lastCompleted !== "PLAN-001")
-  );
+  const executionActivated = Boolean(lastExecution || (autoRun && autoRun.status !== "idle") || (nextStepSummary && currentPosition.lastCompleted !== "DISCOVER-001"));
   const mode = derivePlanningMode({
     packPresent,
-    packMode,
-    draftState,
     approvalStatus,
-    readiness,
     nextStepSummary,
     autoRun,
-    executionActivated
+    executionActivated,
+    manifest
   });
+  const nextAction = manifest?.nextAction ?? advice?.nextAction ?? defaultNextAction(mode);
 
   return {
     planId: paths.planId,
     packDir: paths.relativeDir,
     packPresent,
+    legacyPackPresent,
     trackerReadable,
     docsPresent,
     remainingExecutionSteps,
@@ -171,7 +169,11 @@ export async function readPlanningPackState(
     autoRun,
     executionActivated,
     mode,
-    hasFailureOverlay: lastExecution?.status === "failure"
+    hasFailureOverlay: lastExecution?.status === "failure",
+    manifest,
+    evidence: manifest?.evidence ?? [],
+    unknowns: manifest?.unknowns ?? [],
+    nextAction
   };
 }
 
@@ -180,8 +182,8 @@ export function isExecutionStepSummary(step: PlanningStepSummary | null): boolea
     return false;
   }
 
-  const phase = step.phase?.toLowerCase() ?? "";
-  return phase.includes("delivery") || phase.includes("execution") || /^exec[-\d]/i.test(step.id);
+  const status = step.status.trim().toLowerCase();
+  return status === "todo" || status === "doing";
 }
 
 export function isExecutionReadyState(state: PlanningPackState): boolean {
@@ -190,13 +192,11 @@ export function isExecutionReadyState(state: PlanningPackState): boolean {
 
 function derivePlanningMode(input: {
   packPresent: boolean;
-  packMode: PlanningPackMode;
-  draftState: PlanningDraftState;
   approvalStatus: PlanningApprovalStatus;
-  readiness: PlanningReadiness;
   nextStepSummary: PlanningStepSummary | null;
   autoRun: AutoRunState | null;
   executionActivated: boolean;
+  manifest: PlanManifest | null;
 }): PlanningMode {
   if (!input.packPresent) {
     return "No Pack";
@@ -206,23 +206,27 @@ function derivePlanningMode(input: {
     return "Auto Running";
   }
 
-  if (input.packMode === "scaffolded") {
-    return input.readiness.readyToWrite ? "Ready to Draft" : "Gathering Context";
+  if (input.manifest) {
+    return formatPlanStage(input.manifest.stage) as PlanningMode;
   }
 
   if (input.approvalStatus === "stale") {
-    return "Approved - Stale";
+    return "Out of Date";
   }
 
   if (input.approvalStatus === "approved") {
-    if (isExecutionStepSummary(input.nextStepSummary)) {
-      return input.executionActivated ? "Execution Active" : "Ready to Execute";
+    if (!input.nextStepSummary) {
+      return "Finished";
     }
 
-    return "Approved";
+    if (input.nextStepSummary.status.toLowerCase() === "blocked") {
+      return "Blocked";
+    }
+
+    return input.executionActivated ? "Execute" : "Ready";
   }
 
-  return input.draftState === "sliced" ? "Sliced Draft" : "Draft Written";
+  return "Prepare";
 }
 
 function buildReadiness(
@@ -249,30 +253,29 @@ function buildReadiness(
   const userTranscript = userMessages.map((message) => message.content.toLowerCase()).join("\n");
   const transcript = effectiveMessages.map((message) => message.content.toLowerCase()).join("\n");
   const commitmentCaptured =
-    /(^|\b)(yes|agreed|approved|go with that|use that|let'?s do that|write (it|that|the pack|the draft)|capture that|lock it in|sounds right|that seam works)\b/.test(
+    /(^|\b)(yes|agreed|approved|go with that|use that|let'?s do that|build the draft|write (it|that|the draft)|capture that|lock it in|sounds right|that seam works)\b/.test(
       userTranscript
     );
   const checks: PlanningReadinessCheck[] = [
     {
       id: "goal",
-      label: "Goal captured",
+      label: "Desired outcome captured",
       passed: userMessages.some((message) => message.content.trim().length >= 12)
     },
     {
       id: "repo",
       label: "Repo context captured",
-      passed: /repo|current|existing|already|codebase|today|currently|workspace/.test(transcript)
+      passed: /repo|current|existing|already|codebase|today|currently|workspace|evidence|file/.test(transcript)
     },
     {
       id: "constraints",
       label: "Constraints or decisions captured",
-      passed: /constraint|must|should|can't|cannot|need|require|locked|decision|prefer|non-negotiable/.test(transcript)
+      passed: /constraint|must|should|can't|cannot|need|require|decision|prefer|non-negotiable|confirmed/.test(transcript)
     },
     {
       id: "execution",
-      label: "First executable slice captured",
-      passed:
-        isExecutionStepSummary(nextStepSummary) || /step|slice|execute|execution|implement|delivery|tracker/.test(transcript)
+      label: "First safe slice captured",
+      passed: Boolean(nextStepSummary) || /step|slice|execute|execution|implement|tracker|spike|validation/.test(transcript)
     },
     {
       id: "approval",
@@ -285,9 +288,9 @@ function buildReadiness(
   const readyForFirstDraft =
     checks.filter((check) => check.id !== "approval").every((check) => check.passed) &&
     substantiveUserMessages.length >= 2 &&
-    substantiveAssistantMessages.length >= 2;
+    substantiveAssistantMessages.length >= 1;
   const readyToWrite = readyForFirstDraft;
-  const readyToDice = readyForFirstDraft && (options.packMode === "authored" || options.docsPresent > 0);
+  const readyToDice = readyForFirstDraft && options.packMode === "authored";
   const readyToApprove = options.packMode === "authored" && options.docsPresent > 0;
   const missingLabels = checks.filter((check) => !check.passed).map((check) => check.label);
 
@@ -309,6 +312,7 @@ function isContextBearingSystemMessage(content: string): boolean {
     content.startsWith("Reading ") ||
     content.startsWith("Loaded context file:") ||
     content.includes("===== BEGIN FILE ") ||
+    content.startsWith("Auto-gather") ||
     content.startsWith("/assess") ||
     content.startsWith("/gather") ||
     content.startsWith("/gaps") ||
@@ -318,14 +322,16 @@ function isContextBearingSystemMessage(content: string): boolean {
 
 function parseCurrentPosition(tracker: string): PlanningCurrentPosition {
   return {
-    lastCompleted: readCurrentPositionValue(tracker, "Last Completed"),
-    nextRecommended: normalizeStepReference(readCurrentPositionValue(tracker, "Next Recommended")),
-    updatedAt: readCurrentPositionValue(tracker, "Updated At")
+    lastCompleted: readCurrentPositionValue(tracker, "Last completed") ?? readCurrentPositionValue(tracker, "Last Completed"),
+    nextRecommended: normalizeStepReference(
+      readCurrentPositionValue(tracker, "Next step") ?? readCurrentPositionValue(tracker, "Next Recommended")
+    ),
+    updatedAt: readCurrentPositionValue(tracker, "Updated at") ?? readCurrentPositionValue(tracker, "Updated At")
   };
 }
 
 function readCurrentPositionValue(tracker: string, label: string): string | null {
-  const match = tracker.match(new RegExp(`- ${escapeRegExp(label)}: (?:\\\`([^\\\`]+)\\\`|([^\\n]+))`));
+  const match = tracker.match(new RegExp(`- ${escapeRegExp(label)}: (?:\\\`([^\\\`]+)\\\`|([^\\n]+))`, "i"));
   return match?.[1]?.trim() ?? match?.[2]?.trim() ?? null;
 }
 
@@ -334,7 +340,7 @@ function normalizeStepReference(value: string | null): string | null {
     return null;
   }
 
-  return value.toLowerCase() === "none queued" ? null : value;
+  return value.toLowerCase() === "none queued" || value.toLowerCase() === "none" ? null : value;
 }
 
 function escapeRegExp(value: string): string {
@@ -354,19 +360,18 @@ function countRemainingExecutionSteps(rows: PlanningStepSummary[], nextRecommend
     return 0;
   }
 
-  const executionRows = rows.filter((row) => isExecutionStepSummary(row));
-  const nextIndex = executionRows.findIndex((row) => row.id === nextRecommended);
-  const candidateRows = nextIndex >= 0 ? executionRows.slice(nextIndex) : executionRows;
+  const nextIndex = rows.findIndex((row) => row.id === nextRecommended);
+  const candidateRows = nextIndex >= 0 ? rows.slice(nextIndex) : rows;
 
   return candidateRows.filter((row) => !isTerminalExecutionStatus(row.status)).length;
 }
 
 function isTerminalExecutionStatus(status: string): boolean {
   const normalized = status.trim().toLowerCase();
-  return normalized === "done" || normalized === "completed" || normalized === "complete" || normalized === "skipped";
+  return normalized === "done" || normalized === "skipped";
 }
 
-function parseTrackerRows(tracker: string): PlanningStepSummary[] {
+export function parseTrackerRows(tracker: string): PlanningStepSummary[] {
   const lines = tracker.split(/\r?\n/);
   const rows: PlanningStepSummary[] = [];
   let currentPhase: string | null = null;
@@ -418,10 +423,12 @@ function buildTrackerRow(headers: string[], cells: string[], phase: string | nul
 
   return {
     id,
+    type: values.get("type") ?? "",
     status: values.get("status") ?? "",
     dependsOn: values.get("depends_on") ?? "",
     scope: values.get("scope") ?? "",
     acceptance: values.get("acceptance") ?? "",
+    validation: values.get("validation") ?? "",
     notes: values.get("notes") ?? "",
     phase
   };
@@ -453,4 +460,26 @@ function emptyCurrentPosition(): PlanningCurrentPosition {
     nextRecommended: null,
     updatedAt: null
   };
+}
+
+function defaultNextAction(mode: PlanningMode): string {
+  switch (mode) {
+    case "Discover":
+      return "Gather more evidence or describe the outcome you want before building the first draft.";
+    case "Prepare":
+      return "Build or slice the draft, review the changes, then approve when the plan is clear.";
+    case "Ready":
+      return "Open operate and run the next step.";
+    case "Execute":
+    case "Auto Running":
+      return "Keep execution focused on the next step and review what changed after each run.";
+    case "Blocked":
+      return "Resolve the blocker or reopen prepare to reshape the pending work.";
+    case "Finished":
+      return "Review the outcome or reopen prepare to extend the plan.";
+    case "Out of Date":
+      return "Review the updated draft and approve the new baseline before operating again.";
+    case "No Pack":
+      return "Create a prepare pack first.";
+  }
 }

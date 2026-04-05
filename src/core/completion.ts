@@ -6,25 +6,25 @@ type CompletionRequest = {
   cwd?: string;
 };
 
-type CommandDescriptor = {
-  path: string[];
-  argStartIndex: number;
-  positionalPlan: boolean;
-  planOption: boolean;
-};
-
-const SUBCOMMANDS_WITH_POSITIONAL_PLAN = new Set(["doctor", "studio", "ssp", "sso", "ssc"]);
-const STUDIO_SUBCOMMANDS = new Set(["plan", "operate", "config"]);
-const OPTIONS_WITH_VALUES = new Set(["--plan", "--agent", "--max-steps", "--set-reference", "--add-reference"]);
+const COMMANDS_WITH_POSITIONAL_PLAN = new Set(["prepare", "operate", "status"]);
 
 export async function completeCliValues(request: CompletionRequest): Promise<string[]> {
-  const completion = extractPlanCompletionRequest(request);
+  const currentWord = request.words[request.wordIndex] ?? "";
+  const topLevel = request.words[0] ?? "";
 
-  if (!completion) {
+  if (!topLevel || request.wordIndex < 0) {
     return [];
   }
 
-  return listMatchingPlanIds(completion.workspace, completion.prefix);
+  if (request.wordIndex > 0 && request.words[request.wordIndex - 1] === "--plan") {
+    return listMatchingPlanIds(request.cwd, currentWord);
+  }
+
+  if (COMMANDS_WITH_POSITIONAL_PLAN.has(topLevel) && request.wordIndex === 1 && !currentWord.startsWith("-")) {
+    return listMatchingPlanIds(request.cwd, currentWord);
+  }
+
+  return [];
 }
 
 export function renderCompletionScript(shell: string): string {
@@ -96,7 +96,7 @@ async function listMatchingPlanIds(workspaceCandidate: string | undefined, prefi
       continue;
     }
 
-    if (normalizedPrefix.length > 0 && !ref.planId.toLowerCase().startsWith(normalizedPrefix)) {
+    if (normalizedPrefix && !ref.planId.toLowerCase().startsWith(normalizedPrefix)) {
       continue;
     }
 
@@ -104,114 +104,4 @@ async function listMatchingPlanIds(workspaceCandidate: string | undefined, prefi
   }
 
   return matches;
-}
-
-function extractPlanCompletionRequest(
-  request: CompletionRequest
-): {
-  prefix: string;
-  workspace?: string;
-} | null {
-  if (request.wordIndex < 0 || request.words.length === 0) {
-    return null;
-  }
-
-  const descriptor = parseCommandDescriptor(request.words);
-
-  if (!descriptor) {
-    return null;
-  }
-
-  const currentWord = request.words[request.wordIndex] ?? "";
-
-  if (descriptor.planOption && request.wordIndex > 0 && request.words[request.wordIndex - 1] === "--plan") {
-    return {
-      prefix: currentWord.startsWith("-") ? "" : currentWord,
-      workspace: extractWorkspaceCandidate(request.words, descriptor, request.wordIndex)
-    };
-  }
-
-  if (descriptor.positionalPlan && request.wordIndex === descriptor.argStartIndex && !currentWord.startsWith("-")) {
-    return {
-      prefix: currentWord,
-      workspace: request.cwd
-    };
-  }
-
-  return null;
-}
-
-function parseCommandDescriptor(words: string[]): CommandDescriptor | null {
-  const topLevel = words[0] ?? "";
-
-  if (!topLevel) {
-    return null;
-  }
-
-  if (topLevel === "run-next") {
-    return {
-      path: ["run-next"],
-      argStartIndex: 1,
-      positionalPlan: false,
-      planOption: true
-    };
-  }
-
-  if (topLevel === "studio") {
-    const subcommand = words[1] ?? "";
-
-    if (STUDIO_SUBCOMMANDS.has(subcommand)) {
-      return {
-        path: ["studio", subcommand],
-        argStartIndex: 2,
-        positionalPlan: true,
-        planOption: true
-      };
-    }
-
-    return {
-      path: ["studio"],
-      argStartIndex: 1,
-      positionalPlan: true,
-      planOption: true
-    };
-  }
-
-  if (SUBCOMMANDS_WITH_POSITIONAL_PLAN.has(topLevel)) {
-    return {
-      path: [topLevel],
-      argStartIndex: 1,
-      positionalPlan: true,
-      planOption: topLevel !== "ssp" && topLevel !== "sso" && topLevel !== "ssc" ? true : true
-    };
-  }
-
-  return null;
-}
-
-function extractWorkspaceCandidate(words: string[], descriptor: CommandDescriptor, stopIndexExclusive: number): string | undefined {
-  const positionals: string[] = [];
-  let optionAwaitingValue: string | null = null;
-
-  for (let index = descriptor.argStartIndex; index < stopIndexExclusive; index += 1) {
-    const token = words[index];
-
-    if (!token) {
-      continue;
-    }
-
-    if (optionAwaitingValue) {
-      optionAwaitingValue = null;
-      continue;
-    }
-
-    if (token.startsWith("-")) {
-      optionAwaitingValue = OPTIONS_WITH_VALUES.has(token) ? token : null;
-      continue;
-    }
-
-    positionals.push(token);
-  }
-
-  return positionals[0];
 }

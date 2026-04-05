@@ -36,12 +36,12 @@ export async function writePlanningPackFallback(
   await writeText(paths.context, updatedContext);
 
   const summary = [
-    `Local fallback pack refresh completed because ${agentLabel} was unavailable.`,
+    `Local fallback prepare refresh completed because ${agentLabel} was unavailable.`,
     `Reason: ${reason}`,
     createdFiles.length > 0 ? `Created: ${createdFiles.join(", ")}` : "Created: none",
     preservedFiles.length > 0 ? `Preserved: ${preservedFiles.join(", ")}` : "Preserved: none",
-    currentPosition.nextRecommended
-      ? `Tracker remains on next recommended step: ${currentPosition.nextRecommended}`
+    currentPosition.nextStepId
+      ? `Tracker remains on next step: ${currentPosition.nextStepId}`
       : "Tracker next step is not yet available."
   ];
 
@@ -57,18 +57,18 @@ function buildFallbackEntry(
   preservedFiles: string[],
   currentPosition: {
     lastCompleted: string | null;
-    nextRecommended: string | null;
+    nextStepId: string | null;
   },
   agentLabel: string
 ): string {
   const now = new Date();
   const transcriptSummary = summarizeRecentUserMessages(messages);
-  const nextRecommended = currentPosition.nextRecommended ?? "PLAN-001";
+  const nextStepId = currentPosition.nextStepId ?? "DISCOVER-001";
 
   return [
     `### ${now.toISOString().slice(0, 10)} - PACK-LOCAL - srgical`,
     "",
-    `- Triggered an explicit local planning-pack refresh because ${agentLabel} was unavailable.`,
+    `- Triggered an explicit local prepare refresh because ${agentLabel} was unavailable.`,
     `- Reason: ${reason}.`,
     createdFiles.length > 0
       ? `- Created missing planning-pack files: ${createdFiles.join(", ")}.`
@@ -81,33 +81,33 @@ function buildFallbackEntry(
       : "- Recent user direction: no user transcript was available for summarization.",
     `- Validation: local fallback pack refresh completed without invoking ${agentLabel}.`,
     `- Blockers: live planner and live pack-authoring behavior remain unavailable until ${agentLabel} is restored.`,
-    `- Next recommended work: \`${nextRecommended}\`.`
+    `- Next step: \`${nextStepId}\`.`
   ].join("\n");
 }
 
 async function readCurrentPosition(trackerPath: string): Promise<{
   lastCompleted: string | null;
-  nextRecommended: string | null;
+  nextStepId: string | null;
 }> {
   const exists = await fileExists(trackerPath);
 
   if (!exists) {
     return {
       lastCompleted: null,
-      nextRecommended: null
+      nextStepId: null
     };
   }
 
   try {
     const tracker = await readText(trackerPath);
     return {
-      lastCompleted: readCurrentPositionValue(tracker, "Last Completed"),
-      nextRecommended: readCurrentPositionValue(tracker, "Next Recommended")
+      lastCompleted: readCurrentPositionValue(tracker, "Last completed"),
+      nextStepId: readCurrentPositionValue(tracker, "Next step")
     };
   } catch {
     return {
       lastCompleted: null,
-      nextRecommended: null
+      nextStepId: null
     };
   }
 }
@@ -142,34 +142,34 @@ function sanitizeInlineText(value: string): string {
 }
 
 function appendFallbackEntry(context: string, entry: string): string {
-  if (context.includes("## Handoff Log")) {
+  if (context.includes("## Evidence Gathered")) {
     return `${context.trimEnd()}\n\n${entry}\n`;
   }
 
-  return `${context.trimEnd()}\n\n## Handoff Log\n\n${entry}\n`;
+  return `${context.trimEnd()}\n\n## Evidence Gathered\n\n${entry}\n`;
 }
 
 function toPackLabel(paths: ReturnType<typeof getPlanningPackPaths>, filePath: string): string {
   const prefix = `${paths.relativeDir}/`;
 
   if (filePath === paths.plan) {
-    return `${prefix}01-product-plan.md`;
+    return `${prefix}plan.md`;
   }
 
   if (filePath === paths.context) {
-    return `${prefix}02-agent-context-kickoff.md`;
+    return `${prefix}context.md`;
   }
 
   if (filePath === paths.tracker) {
-    return `${prefix}03-detailed-implementation-plan.md`;
+    return `${prefix}tracker.md`;
   }
 
-  if (filePath === paths.nextPrompt) {
-    return `${prefix}04-next-agent-prompt.md`;
+  if (filePath === paths.changes) {
+    return `${prefix}changes.md`;
   }
 
-  if (filePath === paths.handoff) {
-    return `${prefix}HandoffDoc.md`;
+  if (filePath === paths.manifest) {
+    return `${prefix}manifest.json`;
   }
 
   return filePath;

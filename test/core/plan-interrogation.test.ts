@@ -4,7 +4,7 @@ import { buildBlockedStepResolutionDirective, buildPlanInterrogationDirective } 
 import { writeText } from "../../src/core/workspace";
 import { createTempWorkspace, writePlanningPack } from "../helpers/workspace";
 
-test("build-plan-interrogation-directive includes strict assess language and focus text", async () => {
+test("build-plan-interrogation-directive includes strict assess language and the new pack files", async () => {
   const workspace = await createTempWorkspace("srgical-plan-interrogate-assess-");
   const paths = await writePlanningPack(workspace, { planId: "prototype" });
 
@@ -16,7 +16,11 @@ test("build-plan-interrogation-directive includes strict assess language and foc
   assert.match(prompt, /can-execute-with-100%-accuracy-now: yes\/no/);
   assert.match(prompt, /Focus: API integration boundaries/);
   assert.match(prompt, /Planning framework wrapper:/);
-  assert.match(prompt, /01-product-plan\.md:/);
+  assert.match(prompt, /plan\.md:/);
+  assert.match(prompt, /context\.md:/);
+  assert.match(prompt, /tracker\.md:/);
+  assert.match(prompt, /changes\.md:/);
+  assert.match(prompt, /manifest\.json:/);
 });
 
 test("build-plan-interrogation-directive includes gather-specific output contract", async () => {

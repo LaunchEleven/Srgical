@@ -14,5 +14,5 @@ test("about reports package, release, and agent information", async () => {
   assert.match(output, /Repository: https:\/\/github\.com\/LaunchEleven\/Srgical/);
   assert.match(output, /Release notes: https:\/\/github\.com\/LaunchEleven\/Srgical\/releases\/tag\/v0\.0\.0/);
   assert.match(output, /Supported agents: codex, claude, augment/);
-  assert.match(output, /Next steps: `srgical doctor`, `srgical studio plan`, `srgical studio operate`, or `srgical changelog`/);
+  assert.match(output, /Next steps: `srgical prepare <id>`, `srgical operate <id>`, `srgical status \[id\]`, or `srgical changelog`/);
 });

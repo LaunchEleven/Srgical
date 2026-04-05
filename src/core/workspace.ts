@@ -21,8 +21,8 @@ export type PlanningPackPaths = {
   plan: string;
   context: string;
   tracker: string;
-  nextPrompt: string;
-  handoff: string;
+  changes: string;
+  manifest: string;
   studioSession: string;
   studioOperateConfig: string;
   executionState: string;
@@ -67,11 +67,11 @@ export function getPlanningPackPaths(root: string, options: PlanningPathOptions 
     planId,
     dir,
     relativeDir,
-    plan: path.join(dir, "01-product-plan.md"),
-    context: path.join(dir, "02-agent-context-kickoff.md"),
-    tracker: path.join(dir, "03-detailed-implementation-plan.md"),
-    nextPrompt: path.join(dir, "04-next-agent-prompt.md"),
-    handoff: path.join(dir, "HandoffDoc.md"),
+    plan: path.join(dir, "plan.md"),
+    context: path.join(dir, "context.md"),
+    tracker: path.join(dir, "tracker.md"),
+    changes: path.join(dir, "changes.md"),
+    manifest: path.join(dir, "manifest.json"),
     studioSession: path.join(dir, "studio-session.json"),
     studioOperateConfig: path.join(dir, "studio-operate-config.json"),
     executionState: path.join(dir, "execution-state.json"),
@@ -111,11 +111,22 @@ export async function planningPackExists(root: string, options: PlanningPathOpti
     fileExists(paths.plan),
     fileExists(paths.context),
     fileExists(paths.tracker),
-    fileExists(paths.nextPrompt),
-    fileExists(paths.handoff)
+    fileExists(paths.changes),
+    fileExists(paths.manifest)
   ]);
 
   return checks.every(Boolean);
+}
+
+export async function legacyPlanningPackExists(root: string, options: PlanningPathOptions = {}): Promise<boolean> {
+  const paths = getPlanningPackPaths(root, options);
+  const checks = await Promise.all([
+    fileExists(path.join(paths.dir, "01-product-plan.md")),
+    fileExists(path.join(paths.dir, "02-agent-context-kickoff.md")),
+    fileExists(path.join(paths.dir, "03-detailed-implementation-plan.md"))
+  ]);
+
+  return checks.some(Boolean);
 }
 
 export async function listPlanningDirectories(root: string): Promise<PlanningDirectoryRef[]> {
@@ -185,7 +196,7 @@ export async function resolvePlanId(root: string, requestedPlanId?: string | nul
   }
 
   throw new Error(
-    "A named plan is required. Pass `<id>` or `--plan <id>`, or create one with `srgical init <id>` before continuing."
+    "A named plan is required. Pass `<id>` or `--plan <id>`, or create one with `srgical prepare <id>` before continuing."
   );
 }
 
@@ -225,4 +236,14 @@ export async function isGitRepo(root: string): Promise<boolean> {
 
     current = parent;
   }
+}
+
+export function buildLegacyWorkflowError(replacementCommand: string): Error {
+  return new Error(
+    [
+      "This reboot removed the legacy srgical workflow.",
+      `Use \`${replacementCommand}\` instead.`,
+      "Legacy plan packs using `01-product-plan.md` / `HandoffDoc.md` are intentionally unsupported in this release."
+    ].join("\n")
+  );
 }

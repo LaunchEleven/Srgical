@@ -15,7 +15,7 @@ const PLANNER_BLOCKER_QUESTION_BUDGET = 3;
 export const PLANNING_FRAMEWORK_WRAPPER = [
   "Planning framework wrapper:",
   "- Evidence before invention: prefer repo truth and transcript facts over generic best practice guesses.",
-  "- Separate locked decisions, working assumptions, and unknowns explicitly.",
+  "- Separate confirmed decisions, working assumptions, and unknowns explicitly.",
   "- Prefer one concrete recommendation over broad option-dumps.",
   "- Keep the next move executable: name the smallest practical next step.",
   "- If something is unknown, say it is unknown instead of smoothing it over.",
@@ -75,9 +75,9 @@ Convergence signal:
 
 Deterministic planning state:
 ${packState ? renderPlanningStateSummary(packState) : "- unavailable during this request"}
-- Treat this state as the source of truth for whether the CLI will actually allow \`/write\`.
-- If readiness says the first draft is not yet writable, do not tell the user to run \`/write\` now.
-- If the only missing signal is explicit approval, tell the user they can still run \`/write\` now and use \`/confirm-plan\` later when they want to approve the current draft.
+- Treat this state as the source of truth for whether the CLI is ready for Build Draft, Slice Plan, or approval.
+- If readiness says the first draft is not yet writable, do not tell the user to build the draft yet.
+- If the only missing signal is explicit approval, tell the user they can build or slice the draft now and approve it later when they want to operate from it.
 
 Response contract (choose exactly one mode):
 Mode A - Single blocker (only when truly required)
@@ -96,7 +96,7 @@ WORKING ASSUMPTIONS
 WATCHOUTS
 - concise bullets of the main execution risks or ambiguity still worth noting
 NEXT
-- the best next move, usually continue planning, gather repo truth, or ask for explicit approval to write the first draft
+- the best next move, usually continue planning, gather repo truth, or tell the user to build the draft
 
 Mode C - Locked plan summary (only after the user clearly signals convergence or approval)
 LOCKED PLAN
@@ -104,11 +104,10 @@ LOCKED PLAN
 DEFERRED / LATER
 - concise bullets of descoped items
 NEXT
-- run /write (sync the current draft from transcript)
-- run /review
-- run /open all
-- run /dice [low|medium|high] [spike] if you want tighter execution slices
-- run /confirm-plan when the current written or sliced draft should become the approved execution baseline
+- Build Draft
+- Review Changes
+- Slice Plan
+- Approve Ready when the current draft should become the operate baseline
 
 Conversation so far:
 
@@ -134,36 +133,37 @@ export async function buildPackWriterPrompt(
 ): Promise<string> {
   const repoTruth = await buildRepoTruthSnapshot(workspaceRoot, options);
 
-  return `You are writing a planning pack for the current repository.
+  return `You are writing a prepare pack for the current repository.
 
 Read the conversation transcript below and update or create the following files under .srgical/:
 
-- 01-product-plan.md
-- 02-agent-context-kickoff.md
-- 03-detailed-implementation-plan.md
-- 04-next-agent-prompt.md
-- HandoffDoc.md (canonical execution handoff)
+- plan.md
+- context.md
+- tracker.md
+- changes.md
+- manifest.json
 
 Operating rules:
 - Start from the repo truth snapshot below, not from generic assumptions.
 - Treat any existing .srgical files as current project state to refine in place, not blank templates to overwrite casually.
 - Preserve the scaffold metadata sections and update the draft sections beneath them rather than deleting document identity.
-- Preserve valid locked decisions, completed steps, and step IDs unless the repo truth or conversation clearly requires a change.
+- Preserve valid confirmed decisions, completed steps, and step IDs unless the repo truth or conversation clearly requires a change.
 - Prefer repo truth for what already exists in the codebase and the conversation for what the user now wants next.
 - Make the pack specific to the actual commands, docs, stack, and current capabilities in this workspace.
 - Do not invent frameworks, release channels, adapters, tests, or subsystems that are not supported by the repo truth or transcript.
 - Keep the workflow local-first, explicit, incremental, and validation-aware.
 - Apply SOLID and loose DDD thinking pragmatically where it improves boundaries, naming, or step structure.
 - Capture telemetry, logging, and feature-flag considerations when the work would realistically need them.
+- tracker.md must use only these statuses: todo, doing, blocked, done, skipped.
+- tracker.md must include a Type column using research, spike, build, validate, or rollout.
+- manifest.json must stay truthful about stage, nextAction, nextStepId, revision, stepCounts, executionMode, and lastChangeSummary.
 
 Quality bar:
-- 01-product-plan.md should capture the real product direction, locked decisions, and current repo findings.
-- 02-agent-context-kickoff.md should capture current repo truth, working agreements, current position, and a concise handoff log.
-- 03-detailed-implementation-plan.md should keep a readable status legend, current position, phase-based next steps, and concrete notes.
-- The first grounded draft should replace scaffold-only placeholders with authored content or explicit open questions.
-- HandoffDoc.md should enforce incremental execution, validation, tracker updates, and stop conditions.
-- 04-next-agent-prompt.md should remain aligned with HandoffDoc.md for compatibility with older execution flows.
-- The tracker should stay execution-ready: use concrete step IDs, realistic acceptance criteria, and concise validation notes instead of filler.
+- plan.md should capture the real outcome, confirmed decisions, and current repo findings.
+- context.md should capture repo truth, gathered evidence, unknowns, and working agreements.
+- tracker.md should keep a readable legend, current position, tiny execution-ready steps, concrete acceptance, and concrete validation.
+- changes.md should summarize what changed in this refinement and what the next step is now.
+- manifest.json should be updated consistently with the visible docs.
 
 Repo truth snapshot:
 
@@ -192,15 +192,15 @@ export async function buildPlanDicePrompt(
     ? "Spike mode is enabled. If a risky seam would benefit from a temporary validation spike, add an explicit spike phase or step block that happens on a throwaway branch and feeds confirmed learning back into the real plan. Do not claim the spike already happened unless the transcript or repo truth proves it."
     : "Spike mode is disabled. Do not add throwaway spike work unless the transcript already requires it.";
 
-  return `You are refining the current planning pack by dicing it into evolutionarily small execution steps.
+  return `You are refining the current prepare pack by slicing it into evolutionarily small execution steps.
 
 Read the conversation transcript below and update the following files under .srgical/:
 
-- 01-product-plan.md
-- 02-agent-context-kickoff.md
-- 03-detailed-implementation-plan.md
-- 04-next-agent-prompt.md
-- HandoffDoc.md (canonical execution handoff)
+- plan.md
+- context.md
+- tracker.md
+- changes.md
+- manifest.json
 
 Dice settings:
 - requested resolution: ${diceOptions.resolution}
@@ -218,13 +218,16 @@ Operating rules:
 - Use pragmatic SOLID and loose DDD thinking where it improves boundaries, naming, or step decomposition.
 - Surface telemetry, logging, and feature-flag considerations when the work would realistically need them.
 - Do not invent repo facts, frameworks, or implementation details unsupported by the repo truth or transcript.
+- Preserve completed steps except for note corrections. Pending and future steps may be reshaped.
+- If the first risky seam needs proof, insert an explicit SPIKE-### step with hypothesis, validation, and follow-through notes.
 
 Quality bar:
-- 01-product-plan.md should clearly describe the target outcome, deferred work, and the architectural seams the slices are protecting.
-- 02-agent-context-kickoff.md should explain what is true now, why the chosen slicing approach is appropriate, and what the immediate next work is.
-- 03-detailed-implementation-plan.md should become the main slicing artifact: concise phases, tiny step IDs, explicit dependencies, concrete acceptance criteria, and validation notes.
+- plan.md should clearly describe the target outcome, deferred work, and the seams the slices are protecting.
+- context.md should explain what is true now, why the chosen slicing approach is appropriate, and what the immediate next work is.
+- tracker.md should become the main slicing artifact: concise phases, tiny step IDs, explicit dependencies, concrete acceptance criteria, and concrete validation notes.
 - If spike mode is enabled and useful, the tracker should show exactly where the spike fits and how its findings feed the real rollout.
-- HandoffDoc.md and 04-next-agent-prompt.md should tell the execution agent to honor the chosen slice size and update docs after each step block.
+- changes.md should summarize what changed in this slice refinement.
+- manifest.json should update stepCounts, stage, nextAction, nextStepId, and lastChangeSummary to match the new draft.
 
 Repo truth snapshot:
 
@@ -298,8 +301,8 @@ async function buildRepoTruthSnapshot(workspaceRoot: string, options: PlanningPa
     planSnippet,
     contextSnippet,
     trackerSnippet,
-    nextPromptSnippet,
-    handoffSnippet
+    changesSnippet,
+    manifestSnippet
   ] = await Promise.all([
     summarizePackageManifest(workspaceRoot),
     listDirectoryEntries(workspaceRoot),
@@ -311,8 +314,8 @@ async function buildRepoTruthSnapshot(workspaceRoot: string, options: PlanningPa
     readOptionalAbsoluteSnippet(paths.plan, workspaceRoot, FILE_SNIPPET_LIMIT),
     readOptionalAbsoluteSnippet(paths.context, workspaceRoot, FILE_SNIPPET_LIMIT),
     readOptionalAbsoluteSnippet(paths.tracker, workspaceRoot, FILE_SNIPPET_LIMIT),
-    readOptionalAbsoluteSnippet(paths.nextPrompt, workspaceRoot, FILE_SNIPPET_LIMIT),
-    readOptionalAbsoluteSnippet(paths.handoff, workspaceRoot, FILE_SNIPPET_LIMIT)
+    readOptionalAbsoluteSnippet(paths.changes, workspaceRoot, FILE_SNIPPET_LIMIT),
+    readOptionalAbsoluteSnippet(paths.manifest, workspaceRoot, FILE_SNIPPET_LIMIT)
   ]);
 
   return [
@@ -338,15 +341,15 @@ async function buildRepoTruthSnapshot(workspaceRoot: string, options: PlanningPa
     renderNamedSnippet("docs/adr/0001-tech-stack.md", adrSnippet),
     "",
     "Existing planning-pack files:",
-    renderNamedSnippet(".srgical/01-product-plan.md", planSnippet),
+    renderNamedSnippet(".srgical/plans/<id>/plan.md", planSnippet),
     "",
-    renderNamedSnippet(".srgical/02-agent-context-kickoff.md", contextSnippet),
+    renderNamedSnippet(".srgical/plans/<id>/context.md", contextSnippet),
     "",
-    renderNamedSnippet(".srgical/03-detailed-implementation-plan.md", trackerSnippet),
+    renderNamedSnippet(".srgical/plans/<id>/tracker.md", trackerSnippet),
     "",
-    renderNamedSnippet(".srgical/04-next-agent-prompt.md", nextPromptSnippet),
+    renderNamedSnippet(".srgical/plans/<id>/changes.md", changesSnippet),
     "",
-    renderNamedSnippet(".srgical/HandoffDoc.md", handoffSnippet)
+    renderNamedSnippet(".srgical/plans/<id>/manifest.json", manifestSnippet)
   ].join("\n");
 }
 
@@ -355,9 +358,11 @@ function renderPlanningStateSummary(packState: PlanningPackState): string {
     `- planId: ${packState.planId}`,
     `- packDir: ${packState.packDir}`,
     `- packPresent: ${packState.packPresent}`,
+    `- legacyPackPresent: ${packState.legacyPackPresent}`,
+    `- stage: ${packState.mode}`,
+    `- nextAction: ${packState.nextAction}`,
     `- packMode: ${packState.packMode}`,
     `- draftState: ${packState.draftState}`,
-    `- mode: ${packState.mode}`,
     `- docsPresent: ${packState.docsPresent}/5`,
     `- readiness: ${packState.readiness.score}/${packState.readiness.total}`,
     `- readinessReadyForFirstDraft: ${packState.readiness.readyForFirstDraft}`,
@@ -367,10 +372,12 @@ function renderPlanningStateSummary(packState: PlanningPackState): string {
     `- missingReadinessSignals: ${packState.readiness.missingLabels.join(", ") || "none"}`,
     `- approvalStatus: ${packState.approvalStatus}`,
     `- approvalInvalidatedBy: ${packState.approvalInvalidatedBy ?? "none"}`,
-    `- nextRecommended: ${packState.currentPosition.nextRecommended ?? "none queued"}`,
+    `- nextStep: ${packState.currentPosition.nextRecommended ?? "none"}`,
     `- nextStepId: ${packState.nextStepSummary?.id ?? "none"}`,
     `- executionActivated: ${packState.executionActivated}`,
-    `- autoRunStatus: ${packState.autoRun?.status ?? "idle"}`
+    `- autoRunStatus: ${packState.autoRun?.status ?? "idle"}`,
+    `- evidence: ${packState.evidence.join(" | ") || "none"}`,
+    `- unknowns: ${packState.unknowns.join(" | ") || "none"}`
   ].join("\n");
 }
 

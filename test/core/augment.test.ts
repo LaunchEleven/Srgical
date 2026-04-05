@@ -137,20 +137,20 @@ test("request-planner-reply uses Augment print mode with ask permissions", async
   assert.equal(reply, "Planned response from Augment.");
 });
 
-test("write-planning-pack uses Augment print mode and preserves planning-epoch summaries", async (t) => {
+test("write-planning-pack uses Augment print mode and preserves revision summaries", async (t) => {
   const workspace = await createTempWorkspace("srgical-augment-pack-");
   const paths = await writeInitialPlanningPack(workspace);
 
   await writeText(
     paths.tracker,
-    `# Detailed Implementation Plan
+    `# Tracker
 
 ## Current Position
 
-- Last Completed: \`DIST001\`
-- Next Recommended: none queued
-- Updated At: \`2026-03-24T00:00:00.000Z\`
-- Updated By: \`Codex\`
+- Last completed: \`DISCOVER-001\`
+- Next step: none queued
+- Updated at: \`2026-03-24T00:00:00.000Z\`
+- Updated by: \`srgical\`
 `
   );
 
@@ -165,7 +165,6 @@ test("write-planning-pack uses Augment print mode and preserves planning-epoch s
       }
 
       assert.equal(cwd, workspace);
-
       assert.ok(args.includes("--print"));
       assert.ok(args.includes("--quiet"));
       assert.equal(args[argValueIndex(args, "--workspace-root")], workspace);
@@ -178,7 +177,7 @@ test("write-planning-pack uses Augment print mode and preserves planning-epoch s
 
       const prompt = await readFile(args[argValueIndex(args, "--instruction-file")], "utf8");
       const rules = await readFile(args[argValueIndex(args, "--rules")], "utf8");
-      assert.match(prompt, /You are writing a planning pack for the current repository\./);
+      assert.match(prompt, /You are writing a prepare pack for the current repository\./);
       assert.match(rules, /Preserve a clear next-step handoff after each meaningful change\./);
 
       return {
@@ -191,7 +190,7 @@ test("write-planning-pack uses Augment print mode and preserves planning-epoch s
 
   const result = await writePlanningPack(workspace, [{ role: "user", content: "Refresh the pack." }]);
 
-  assert.match(result, /Started a new planning epoch by archiving the previous active pack/);
+  assert.match(result, /Started a new revision by snapshotting the previous active pack to \.srgical\/plans\/default\/revision-1\./);
   assert.match(result, /Augment pack write complete\./);
 });
 
@@ -210,8 +209,8 @@ test("write-planning-pack falls back locally with Augment-specific messaging whe
   const result = await writePlanningPack(workspace, [{ role: "user", content: "Refresh the pack locally." }]);
   const context = await readText(paths.context);
 
-  assert.match(result, /Local fallback pack refresh completed because Augment CLI was unavailable\./);
-  assert.match(context, /Triggered an explicit local planning-pack refresh because Augment CLI was unavailable\./);
+  assert.match(result, /Local fallback prepare refresh completed because Augment CLI was unavailable\./);
+  assert.match(context, /Triggered an explicit local prepare refresh because Augment CLI was unavailable\./);
   assert.match(context, /without invoking Augment CLI\./);
 });
 

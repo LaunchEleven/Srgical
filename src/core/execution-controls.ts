@@ -36,10 +36,10 @@ export function hasQueuedNextStep(nextRecommended: string | null): boolean {
 
 export function formatNoQueuedNextStepMessage(source: "studio" | "run-next"): string {
   return [
-    "No next recommended step is currently queued in `.srgical/03-detailed-implementation-plan.md`.",
+    "No next step is currently queued in `.srgical/plans/<id>/tracker.md`.",
     source === "run-next"
-      ? "Run `srgical studio plan` (or `srgical ssp`) to queue more work or update the tracker before executing again."
-      : "Use the planning studio to queue more work or update the tracker before running execution again."
+      ? "Run `srgical prepare <id>` to reshape the plan or queue more work before executing again."
+      : "Use prepare to reshape the plan or queue more work before running execution again."
   ].join("\n");
 }
 
@@ -86,15 +86,15 @@ export function formatExecutionFailureMessage(
     `Reason: ${errorMessage}`,
     "",
     "Recovery:",
-    "- Review `.srgical/HandoffDoc.md` (or `.srgical/04-next-agent-prompt.md`) and `.srgical/03-detailed-implementation-plan.md`.",
-    "- Inspect `.srgical/execution-state.json` for the latest recorded failure summary."
+    "- Review `.srgical/plans/<id>/plan.md`, `.srgical/plans/<id>/context.md`, `.srgical/plans/<id>/tracker.md`, and `.srgical/plans/<id>/changes.md`.",
+    "- Inspect `.srgical/plans/<id>/execution-state.json` for the latest recorded failure summary."
   ];
 
   if (source === "run-next") {
-    lines.push("- Inspect `.srgical/execution-log.md` for the durable run history.");
+    lines.push("- Inspect `.srgical/plans/<id>/execution-log.md` for the durable run history.");
   }
 
-  lines.push("- Preview safely with `srgical run-next --dry-run` or `/preview` in the studio.");
+  lines.push("- Preview safely with `srgical operate <id> --dry-run` or `/preview` in operate.");
 
   return lines.join("\n");
 }

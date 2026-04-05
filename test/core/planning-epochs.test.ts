@@ -13,32 +13,34 @@ test("preparePlanningPackForWrite archives the active pack when no next step is 
   await writeText(paths.context, "# Old Context\n");
   await writeText(
     paths.tracker,
-    `# Detailed Implementation Plan
+    `# Tracker
 
 ## Current Position
 
-- Last Completed: \`DIST001\`
-- Next Recommended: none queued
-- Updated At: \`2026-03-24T00:00:00.000Z\`
-- Updated By: \`Codex\`
+- Last completed: \`DISCOVER-001\`
+- Next step: none queued
+- Updated at: \`2026-03-24T00:00:00.000Z\`
+- Updated by: \`srgical\`
 `
   );
-  await writeText(paths.nextPrompt, "# Old Prompt\n");
+  await writeText(paths.changes, "# Old Changes\n");
+  await writeText(paths.manifest, "{\n  \"version\": 1\n}\n");
   await writeText(paths.executionLog, "# Execution Log\n");
 
   const result = await preparePlanningPackForWrite(workspace);
-  const archiveDir = path.join(workspace, ".srgical", "plans", "default", "planning-1");
+  const archiveDir = path.join(workspace, ".srgical", "plans", "default", "revision-1");
 
   assert.equal(result.archived, true);
-  assert.equal(result.archiveDir, ".srgical/plans/default/planning-1");
-  assert.match(await readText(path.join(archiveDir, "01-product-plan.md")), /# Old Plan/);
-  assert.match(await readText(path.join(archiveDir, "02-agent-context-kickoff.md")), /# Old Context/);
-  assert.match(await readText(path.join(archiveDir, "04-next-agent-prompt.md")), /# Old Prompt/);
+  assert.equal(result.archiveDir, ".srgical/plans/default/revision-1");
+  assert.match(await readText(path.join(archiveDir, "plan.md")), /# Old Plan/);
+  assert.match(await readText(path.join(archiveDir, "context.md")), /# Old Context/);
+  assert.match(await readText(path.join(archiveDir, "changes.md")), /# Old Changes/);
+  assert.match(await readText(path.join(archiveDir, "manifest.json")), /"version": 1/);
   assert.match(await readText(path.join(archiveDir, "execution-log.md")), /# Execution Log/);
 
   const activeTracker = await readText(paths.tracker);
-  assert.match(activeTracker, /- Last Completed: `BOOT-001`/);
-  assert.match(activeTracker, /- Next Recommended: `PLAN-001`/);
+  assert.match(activeTracker, /- Last completed: `BOOT-001`/);
+  assert.match(activeTracker, /- Next step: `DISCOVER-001`/);
 });
 
 test("preparePlanningPackForWrite keeps the active pack in place when execution is still queued", async () => {
@@ -48,14 +50,14 @@ test("preparePlanningPackForWrite keeps the active pack in place when execution 
   await writeText(paths.plan, "# Active Plan\n");
   await writeText(
     paths.tracker,
-    `# Detailed Implementation Plan
+    `# Tracker
 
 ## Current Position
 
-- Last Completed: \`PACK002\`
-- Next Recommended: \`EXEC001\`
-- Updated At: \`2026-03-24T00:00:00.000Z\`
-- Updated By: \`Codex\`
+- Last completed: \`DISCOVER-001\`
+- Next step: \`BUILD-001\`
+- Updated at: \`2026-03-24T00:00:00.000Z\`
+- Updated by: \`srgical\`
 `
   );
 

@@ -129,7 +129,7 @@ export async function buildStudioOperateGuidancePromptSection(
   }
 
   const lines: string[] = [
-    "Operate guidance references (loaded from `srgical studio config` for this plan):",
+    "Operate guidance references (loaded from this plan's operate config):",
     "- Treat these as secondary guard rails after the canonical handoff and tracker updates.",
     "- Use them to keep implementation and PR messaging aligned with local standards.",
     ""

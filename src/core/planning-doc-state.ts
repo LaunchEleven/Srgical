@@ -1,6 +1,6 @@
 import { fileExists, readText, writeText, type PlanningPackPaths } from "./workspace";
 
-export type PlanningDocumentKey = "plan" | "context" | "tracker" | "nextPrompt" | "handoff";
+export type PlanningDocumentKey = "plan" | "context" | "tracker" | "changes";
 export type PlanningDocumentState = "boilerplate" | "grounded";
 
 type PlanningDocumentSummary = {
@@ -8,7 +8,7 @@ type PlanningDocumentSummary = {
   boilerplateCount: number;
 };
 
-const PLANNING_DOC_KEYS: PlanningDocumentKey[] = ["plan", "context", "tracker", "nextPrompt", "handoff"];
+const PLANNING_DOC_KEYS: PlanningDocumentKey[] = ["plan", "context", "tracker", "changes"];
 const DOC_STATE_MARKER_PREFIX = "<!-- SRGICAL:DOC_STATE ";
 
 export function stampPlanningDocumentState(
@@ -92,8 +92,7 @@ function parsePlanningDocumentState(content: string): { docKey: PlanningDocument
       (parsed.docKey === "plan" ||
         parsed.docKey === "context" ||
         parsed.docKey === "tracker" ||
-        parsed.docKey === "nextPrompt" ||
-        parsed.docKey === "handoff") &&
+        parsed.docKey === "changes") &&
       (parsed.state === "boilerplate" || parsed.state === "grounded")
     ) {
       return {

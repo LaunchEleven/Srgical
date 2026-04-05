@@ -29,7 +29,7 @@ export function renderAboutSummary(): string {
     `Supported agents: ${supportedAgents || "none registered"}`,
     "",
     renderSectionHeading("Next"),
-    paintLine("Next steps: `srgical doctor`, `srgical studio plan`, `srgical studio operate`, or `srgical changelog`", "brand", {
+    paintLine("Next steps: `srgical prepare <id>`, `srgical operate <id>`, `srgical status [id]`, or `srgical changelog`", "brand", {
       bold: true
     })
   ]

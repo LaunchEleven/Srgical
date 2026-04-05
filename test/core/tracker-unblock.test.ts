@@ -4,26 +4,26 @@ import { unblockTrackerStep } from "../../src/core/tracker-unblock";
 import { readText, writeText } from "../../src/core/workspace";
 import { createTempWorkspace, writePlanningPack } from "../helpers/workspace";
 
-test("unblock-tracker-step marks the blocked next step pending and records retry context", async () => {
+test("unblock-tracker-step marks the blocked next step todo and records retry context", async () => {
   const workspace = await createTempWorkspace("srgical-unblock-success-");
   const paths = await writePlanningPack(workspace, { planId: "prototype" });
 
   await writeText(
     paths.tracker,
-    `# Detailed Implementation Plan
+    `# Tracker
 
 ## Current Position
 
-- Last Completed: \`PLAN-001\`
-- Next Recommended: \`EXEC-001\`
-- Updated At: \`2026-03-30T00:00:00.000Z\`
-- Updated By: \`codex\`
+- Last completed: \`PLAN-001\`
+- Next step: \`EXEC-001\`
+- Updated at: \`2026-03-30T00:00:00.000Z\`
+- Updated by: \`codex\`
 
 ## Delivery
 
-| ID | Status | Depends On | Scope | Acceptance | Notes |
-| --- | --- | --- | --- | --- | --- |
-| EXEC-001 | blocked | PLAN-001 | Build and validate the first feature slice. | All checks pass. | npm install failed with EACCES. |
+| ID | Type | Status | Depends On | Scope | Acceptance | Validation | Notes |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| EXEC-001 | build | blocked | PLAN-001 | Build and validate the first feature slice. | All checks pass. | npm test | npm install failed with EACCES. |
 `
   );
 
@@ -37,10 +37,10 @@ test("unblock-tracker-step marks the blocked next step pending and records retry
   assert.equal(result.previousStatus, "blocked");
   assert.equal(result.nextRecommendedBefore, "EXEC-001");
   assert.equal(result.nextRecommendedAfter, "EXEC-001");
-  assert.match(tracker, /\| EXEC-001 \| pending \| PLAN-001 \| Build and validate the first feature slice\./);
+  assert.match(tracker, /\| EXEC-001 \| build \| todo \| PLAN-001 \| Build and validate the first feature slice\./);
   assert.match(tracker, /unblock retry requested \(.+\) - registry access restored/);
-  assert.match(tracker, /- Next Recommended: `EXEC-001`/);
-  assert.match(tracker, /- Updated By: `srgical`/);
+  assert.match(tracker, /- Next step: `EXEC-001`/);
+  assert.match(tracker, /- Updated by: `srgical`/);
 });
 
 test("unblock-tracker-step rejects a target step that is not currently blocked", async () => {
@@ -49,20 +49,20 @@ test("unblock-tracker-step rejects a target step that is not currently blocked",
 
   await writeText(
     paths.tracker,
-    `# Detailed Implementation Plan
+    `# Tracker
 
 ## Current Position
 
-- Last Completed: \`PLAN-001\`
-- Next Recommended: \`EXEC-001\`
-- Updated At: \`2026-03-30T00:00:00.000Z\`
-- Updated By: \`codex\`
+- Last completed: \`PLAN-001\`
+- Next step: \`EXEC-001\`
+- Updated at: \`2026-03-30T00:00:00.000Z\`
+- Updated by: \`codex\`
 
 ## Delivery
 
-| ID | Status | Depends On | Scope | Acceptance | Notes |
-| --- | --- | --- | --- | --- | --- |
-| EXEC-001 | pending | PLAN-001 | Build and validate the first feature slice. | All checks pass. | Ready to run. |
+| ID | Type | Status | Depends On | Scope | Acceptance | Validation | Notes |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| EXEC-001 | build | todo | PLAN-001 | Build and validate the first feature slice. | All checks pass. | npm test | Ready to run. |
 `
   );
 
@@ -80,20 +80,20 @@ test("unblock-tracker-step rejects when the target step cannot be found in track
 
   await writeText(
     paths.tracker,
-    `# Detailed Implementation Plan
+    `# Tracker
 
 ## Current Position
 
-- Last Completed: \`PLAN-001\`
-- Next Recommended: \`EXEC-999\`
-- Updated At: \`2026-03-30T00:00:00.000Z\`
-- Updated By: \`codex\`
+- Last completed: \`PLAN-001\`
+- Next step: \`EXEC-999\`
+- Updated at: \`2026-03-30T00:00:00.000Z\`
+- Updated by: \`codex\`
 
 ## Delivery
 
-| ID | Status | Depends On | Scope | Acceptance | Notes |
-| --- | --- | --- | --- | --- | --- |
-| EXEC-001 | blocked | PLAN-001 | Build and validate the first feature slice. | All checks pass. | waiting on env. |
+| ID | Type | Status | Depends On | Scope | Acceptance | Validation | Notes |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| EXEC-001 | build | blocked | PLAN-001 | Build and validate the first feature slice. | All checks pass. | npm test | waiting on env. |
 `
   );
 

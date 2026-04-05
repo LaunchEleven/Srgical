@@ -1,13 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildPlanDicePrompt, buildPlannerPrompt, type ChatMessage } from "../../src/core/prompts";
+import { buildPackWriterPrompt, buildPlanDicePrompt, buildPlannerPrompt, type ChatMessage } from "../../src/core/prompts";
 import type { PlanningPackState } from "../../src/core/planning-pack-state";
 import { createTempWorkspace, writePlanningPack } from "../helpers/workspace";
 
-test("build-planner-prompt enforces convergence and working-plan contract", () => {
+test("build-planner-prompt enforces convergence and the new prepare actions", () => {
   const messages: ChatMessage[] = [
-    { role: "user", content: "We should skip export and keep this browser-only." },
-    { role: "assistant", content: "Locked. One scope lock: desktop-only for V1?" },
+    { role: "user", content: "We should keep this workflow local-first and make the next action obvious after every refinement." },
+    { role: "assistant", content: "Locked. The visible contract is prepare for shaping and operate for execution. Any blocker before we build the draft?" },
     { role: "user", content: "yes absolutely" }
   ];
 
@@ -20,13 +20,12 @@ test("build-planner-prompt enforces convergence and working-plan contract", () =
   assert.match(prompt, /Estimated blocker questions already asked by planner: 1/);
   assert.match(prompt, /User readiness signal detected: yes/);
   assert.match(prompt, /Deterministic planning state:/);
-  assert.match(prompt, /they can still run `\/write` now and use `\/confirm-plan` later/i);
-  assert.match(prompt, /Planning framework wrapper:/);
-  assert.match(prompt, /Apply SOLID pragmatically/);
-  assert.match(prompt, /Mode B - Working plan snapshot/);
-  assert.match(prompt, /Mode C - Locked plan summary/);
-  assert.match(prompt, /- run \/write/);
-  assert.match(prompt, /- run \/dice \[low\|medium\|high\] \[spike\]/);
+  assert.match(prompt, /ready for Build Draft, Slice Plan, or approval/i);
+  assert.match(prompt, /Build Draft/);
+  assert.match(prompt, /Slice Plan/);
+  assert.match(prompt, /Approve Ready/);
+  assert.doesNotMatch(prompt, /\/write/);
+  assert.doesNotMatch(prompt, /\/confirm-plan/);
 });
 
 test("build-planner-prompt blocks further questioning when budget is exhausted", () => {
@@ -43,12 +42,28 @@ test("build-planner-prompt blocks further questioning when budget is exhausted",
   assert.match(prompt, /you must not ask another question; produce closure/i);
 });
 
+test("build-pack-writer-prompt references the rebooted prepare pack files", async () => {
+  const workspace = await createTempWorkspace("srgical-pack-writer-prompt-");
+  await writePlanningPack(workspace, { planId: "proto" });
+
+  const prompt = await buildPackWriterPrompt([{ role: "user", content: "Build the first real draft." }], workspace, { planId: "proto" });
+
+  assert.match(prompt, /You are writing a prepare pack for the current repository\./);
+  assert.match(prompt, /plan\.md/);
+  assert.match(prompt, /context\.md/);
+  assert.match(prompt, /tracker\.md/);
+  assert.match(prompt, /changes\.md/);
+  assert.match(prompt, /manifest\.json/);
+  assert.match(prompt, /tracker\.md must use only these statuses: todo, doing, blocked, done, skipped\./);
+  assert.match(prompt, /Type column using research, spike, build, validate, or rollout/);
+});
+
 test("build-plan-dice-prompt includes requested resolution and optional spike mode", async () => {
   const workspace = await createTempWorkspace("srgical-dice-prompt-");
   await writePlanningPack(workspace, { planId: "proto" });
 
   const prompt = await buildPlanDicePrompt(
-    [{ role: "user", content: "Dice this into tiny safe steps and consider a throwaway validation spike first." }],
+    [{ role: "user", content: "Slice this into tiny safe steps and add a spike if the seam is risky." }],
     workspace,
     {
       resolution: "high",
@@ -60,8 +75,8 @@ test("build-plan-dice-prompt includes requested resolution and optional spike mo
   assert.match(prompt, /requested resolution: high/);
   assert.match(prompt, /live-fire spike mode: enabled/);
   assert.match(prompt, /very fine-grained evolutionary slices/i);
-  assert.match(prompt, /throwaway branch/i);
-  assert.match(prompt, /telemetry, logging, and feature-flag considerations/i);
+  assert.match(prompt, /SPIKE-###/);
+  assert.match(prompt, /changes\.md should summarize what changed in this slice refinement\./);
 });
 
 function createPackState(): PlanningPackState {
@@ -69,26 +84,30 @@ function createPackState(): PlanningPackState {
     planId: "proto",
     packDir: ".srgical/plans/proto",
     packPresent: true,
+    legacyPackPresent: false,
     trackerReadable: true,
-    docsPresent: 0,
+    docsPresent: 5,
+    remainingExecutionSteps: 1,
     currentPosition: {
       lastCompleted: "BOOT-001",
-      nextRecommended: "PLAN-001",
+      nextRecommended: "SPIKE-001",
       updatedAt: "2026-04-03T00:00:00.000Z"
     },
     nextStepSummary: {
-      id: "PLAN-001",
-      status: "pending",
+      id: "SPIKE-001",
+      type: "spike",
+      status: "todo",
       dependsOn: "BOOT-001",
-      scope: "Write the first grounded draft.",
-      acceptance: "The planning pack becomes grounded and specific.",
-      notes: "Pending user approval.",
-      phase: "Planning"
+      scope: "Validate the risky seam before build work.",
+      acceptance: "We know whether the seam is safe enough to implement.",
+      validation: "npm test -- test/core/planning-pack-state.test.ts",
+      notes: "Pending first proof.",
+      phase: "Phase 1 - Proof"
     },
     lastExecution: null,
     planningState: null,
-    packMode: "scaffolded",
-    draftState: "scaffolded",
+    packMode: "authored",
+    draftState: "sliced",
     readiness: {
       checks: [],
       score: 4,
@@ -96,8 +115,8 @@ function createPackState(): PlanningPackState {
       approvalCaptured: false,
       readyForFirstDraft: true,
       readyToWrite: true,
-      readyToDice: false,
-      readyToApprove: false,
+      readyToDice: true,
+      readyToApprove: true,
       missingLabels: ["Explicit go-ahead captured"]
     },
     humanWriteConfirmed: false,
@@ -109,7 +128,11 @@ function createPackState(): PlanningPackState {
     advice: null,
     autoRun: null,
     executionActivated: false,
-    mode: "Gathering Context",
-    hasFailureOverlay: false
+    mode: "Prepare",
+    hasFailureOverlay: false,
+    manifest: null,
+    evidence: ["src/ui/studio.ts"],
+    unknowns: ["Need one more approval signal before operate."],
+    nextAction: "Review the sliced tracker, then approve when it is clear enough to operate."
   };
 }

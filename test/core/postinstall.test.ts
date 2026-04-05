@@ -36,7 +36,7 @@ test("render-postinstall-message points to the next useful commands", () => {
 
   assert.match(message, /srgical 0\.0\.0 is ready\./);
   assert.match(message, /Release notes: https:\/\/github\.com\/LaunchEleven\/Srgical\/releases\/tag\/v0\.0\.0/);
-  assert.match(message, /Start here: srgical doctor/);
+  assert.match(message, /Start here: srgical prepare <id>/);
   assert.match(message, /More: srgical about/);
 });
 

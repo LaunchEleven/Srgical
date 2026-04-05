@@ -1,39 +1,13 @@
-import { launchStudio, type StudioMode } from "../ui/studio";
+import { buildLegacyWorkflowError } from "../core/workspace";
 
-export async function runStudioCommand(
-  workspaceArg?: string,
-  options: {
-    planId?: string | null;
-    mode?: StudioMode;
-  } = {}
-): Promise<void> {
-  await launchStudio({
-    workspace: workspaceArg,
-    planId: options.planId,
-    mode: options.mode ?? "plan"
-  });
+export async function runStudioCommand(): Promise<void> {
+  throw buildLegacyWorkflowError("srgical prepare <id>");
 }
 
-export async function runStudioPlanCommand(
-  workspaceArg?: string,
-  options: {
-    planId?: string | null;
-  } = {}
-): Promise<void> {
-  await runStudioCommand(workspaceArg, {
-    planId: options.planId,
-    mode: "plan"
-  });
+export async function runStudioPlanCommand(): Promise<void> {
+  throw buildLegacyWorkflowError("srgical prepare <id>");
 }
 
-export async function runStudioOperateCommand(
-  workspaceArg?: string,
-  options: {
-    planId?: string | null;
-  } = {}
-): Promise<void> {
-  await runStudioCommand(workspaceArg, {
-    planId: options.planId,
-    mode: "operate"
-  });
+export async function runStudioOperateCommand(): Promise<void> {
+  throw buildLegacyWorkflowError("srgical operate <id>");
 }

@@ -16,8 +16,8 @@ export async function buildPlanInterrogationDirective(
     readDocSnippet(paths.plan),
     readDocSnippet(paths.context),
     readDocSnippet(paths.tracker),
-    readDocSnippet(paths.handoff),
-    readDocSnippet(paths.nextPrompt)
+    readDocSnippet(paths.changes),
+    readDocSnippet(paths.manifest)
   ]);
 
   return [
@@ -41,15 +41,15 @@ export async function buildPlanInterrogationDirective(
     "",
     "Current planning docs snapshot:",
     "",
-    renderNamedSnippet("01-product-plan.md", plan),
+    renderNamedSnippet("plan.md", plan),
     "",
-    renderNamedSnippet("02-agent-context-kickoff.md", context),
+    renderNamedSnippet("context.md", context),
     "",
-    renderNamedSnippet("03-detailed-implementation-plan.md", tracker),
+    renderNamedSnippet("tracker.md", tracker),
     "",
-    renderNamedSnippet("HandoffDoc.md", handoff),
+    renderNamedSnippet("changes.md", handoff),
     "",
-    renderNamedSnippet("04-next-agent-prompt.md", nextPrompt)
+    renderNamedSnippet("manifest.json", nextPrompt)
   ].join("\n");
 }
 
@@ -75,7 +75,7 @@ export async function buildBlockedStepResolutionDirective(
     "- Root cause hypothesis (from tracker + handoff evidence)",
     "- Fastest unblock path (preferred)",
     "- Fallback unblock paths",
-    "- Exact tracker edits to apply (status, notes, Next Recommended)",
+    "- Exact tracker edits to apply (status, notes, Next step)",
     "- Immediate next command to run in operate mode"
   ].join("\n");
 }
