@@ -32,6 +32,7 @@ type ScrollableElement = Pick<blessed.Widgets.ScrollableBoxElement, "height" | "
 type PositionedElement = { lpos?: { xi: number; xl: number; yi: number; yl: number } };
 type StudioMouseOptions = { vt200Mouse: boolean; allMotion: boolean; sgrMouse: boolean; sendFocus: boolean };
 type LiveStudioMessage = { append(chunk: string): void; finalize(content: string): Promise<void>; discard(): Promise<void> };
+type CursorOffset = { rowOffset: number; colOffset: number };
 type StudioPalette = {
   headerFg: string;
   headerBg: string;
@@ -145,7 +146,13 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
       transcript.setContent(transcriptContent);
       lastTranscriptContent = transcriptContent;
       if (!shouldStickTranscript) {
-        transcript.setScroll(clampScrollableScrollPosition(transcriptScroll, transcript.getScrollHeight()));
+        transcript.setScroll(
+          clampScrollableScrollPosition(
+            transcriptScroll,
+            transcript.getScrollHeight(),
+            getScrollableViewportHeight(transcript)
+          )
+        );
       }
     }
     sidebar.setContent([
@@ -185,6 +192,7 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
       transcript.setScrollPerc(100);
       screen.render();
     }
+    focusStudioInput(screen, input);
   };
 
   const persistMessages = async () => { await saveStudioSession(workspace, messages, { planId }); };
@@ -560,8 +568,8 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
     }
     scrollTranscriptBy(3);
   });
-  transcript.on("click", () => { transcript.focus(); });
-  input.on("click", () => { input.focus(); });
+  transcript.on("click", () => { focusStudioInput(screen, input); });
+  input.on("click", () => { focusStudioInput(screen, input); });
   transcript.on("keypress", (_ch: string, key: blessed.Widgets.Events.IKeyEventArg) => {
     handleTranscriptNavigationKey(key, scrollTranscriptByPage, scrollTranscriptTo);
   });
@@ -578,7 +586,7 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
     : `Operate mode is execution-only.\nUse \`:\` to run studio commands such as \`:run\`, \`:auto 3\`, \`:checkpoint\`, or \`:prepare\`.\nStage: ${state.mode}\nNext action: ${state.nextAction}`);
   render();
   if (mode === "prepare") { await autoGather("boot"); }
-  input.focus();
+  focusStudioInput(screen, input);
 }
 
 export async function selectAutoGatherFiles(workspaceRoot: string): Promise<string[]> {
@@ -623,6 +631,20 @@ export function renderStudioTranscript(messages: ChatMessage[]): string {
   return messages
     .map((m) => `${m.role === "user" ? `{${STUDIO_THEME.userLabel}-fg}YOU{/}` : m.role === "assistant" ? `{${STUDIO_THEME.aiLabel}-fg}AI{/}` : `{${STUDIO_THEME.systemLabel}-fg}SYSTEM{/}`}\n${ESC(m.content)}`)
     .join("\n\n");
+}
+
+export function resolveStudioInputCursor(
+  clines: string[],
+  visibleRows: number,
+  visibleCols: number,
+  measureWidth: (line: string) => number = (line) => line.length
+): CursorOffset {
+  const lines = clines.length > 0 ? clines : [""];
+  const safeRows = Math.max(visibleRows, 1);
+  const safeCols = Math.max(visibleCols, 1);
+  const rowOffset = Math.max(0, Math.min(lines.length - 1, safeRows - 1));
+  const colOffset = Math.max(0, Math.min(measureWidth(lines[rowOffset] ?? ""), safeCols - 1));
+  return { rowOffset, colOffset };
 }
 
 export function normalizeStudioStreamChunk(chunk: string): string {
@@ -704,8 +726,9 @@ export function getStudioPalette(mode: StudioMode): StudioPalette {
       };
 }
 
-export function clampScrollableScrollPosition(scroll: number, scrollHeight: number): number {
-  return Math.max(0, Math.min(scroll, Math.max(scrollHeight - 1, 0)));
+export function clampScrollableScrollPosition(scroll: number, scrollHeight: number, viewportHeight: number): number {
+  const maxScrollTop = Math.max(scrollHeight - Math.max(viewportHeight, 0), 0);
+  return Math.max(0, Math.min(scroll, maxScrollTop));
 }
 
 export function handleTranscriptNavigationKey(
@@ -753,6 +776,41 @@ function isMouseWithinElement(
   const pos = (element as blessed.Widgets.BoxElement & PositionedElement).lpos;
   if (!pos) return false;
   return data.x >= pos.xi && data.x < pos.xl && data.y >= pos.yi && data.y < pos.yl;
+}
+
+function focusStudioInput(screen: blessed.Widgets.Screen, input: blessed.Widgets.BoxElement): void {
+  if (screen.focused !== input) {
+    input.focus();
+  }
+  placeStudioInputCursor(screen, input);
+}
+
+function placeStudioInputCursor(screen: blessed.Widgets.Screen, input: blessed.Widgets.BoxElement): void {
+  const target = input as blessed.Widgets.BoxElement & PositionedElement & {
+    ileft: number;
+    itop: number;
+    iwidth: number;
+    iheight: number;
+    _clines?: string[];
+    strWidth?: (text: string) => number;
+  };
+  const pos = target.lpos;
+  if (!pos) return;
+
+  const innerWidth = Math.max(pos.xl - pos.xi - target.iwidth, 1);
+  const innerHeight = Math.max(pos.yl - pos.yi - target.iheight, 1);
+  const { rowOffset, colOffset } = resolveStudioInputCursor(
+    target._clines ?? [""],
+    innerHeight,
+    innerWidth,
+    (line) => {
+      const measured = target.strWidth ? target.strWidth(line) : line.length;
+      return typeof measured === "number" ? measured : line.length;
+    }
+  );
+
+  screen.program.cup(pos.yi + target.itop + rowOffset, pos.xi + target.ileft + colOffset);
+  screen.program.showCursor();
 }
 
 export function renderPrepareHelpText(): string {

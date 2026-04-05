@@ -12,6 +12,7 @@ import {
   normalizeStudioStreamChunk,
   renderPlanningAdviceTranscript,
   renderStudioInputContent,
+  resolveStudioInputCursor,
   renderStudioTranscript,
   renderCommandSyntaxHelpText,
   renderOperateHelpText,
@@ -97,6 +98,13 @@ test("renderStudioTranscript applies the role colors and escapes transcript cont
   assert.doesNotMatch(rendered, /\{bold\}user\{\/bold\}/);
 });
 
+test("resolveStudioInputCursor keeps the terminal caret inside the visible message box", () => {
+  assert.deepEqual(resolveStudioInputCursor([""], 4, 12), { rowOffset: 0, colOffset: 0 });
+  assert.deepEqual(resolveStudioInputCursor(["hello"], 4, 12), { rowOffset: 0, colOffset: 5 });
+  assert.deepEqual(resolveStudioInputCursor(["123456789012345"], 4, 6), { rowOffset: 0, colOffset: 5 });
+  assert.deepEqual(resolveStudioInputCursor(["line 1", "line 2", "line 3"], 2, 20), { rowOffset: 1, colOffset: 6 });
+});
+
 test("shouldStickScrollableToBottom keeps the transcript pinned when it already fits or is near the end", () => {
   assert.equal(shouldStickScrollableToBottom({
     height: 24,
@@ -167,9 +175,10 @@ test("getStudioPalette makes prepare and operate feel visually distinct", () => 
 });
 
 test("clampScrollableScrollPosition preserves a valid viewport offset", () => {
-  assert.equal(clampScrollableScrollPosition(10, 50), 10);
-  assert.equal(clampScrollableScrollPosition(-3, 50), 0);
-  assert.equal(clampScrollableScrollPosition(80, 12), 11);
+  assert.equal(clampScrollableScrollPosition(10, 50, 20), 10);
+  assert.equal(clampScrollableScrollPosition(-3, 50, 20), 0);
+  assert.equal(clampScrollableScrollPosition(80, 12, 6), 6);
+  assert.equal(clampScrollableScrollPosition(4, 5, 8), 0);
 });
 
 test("handleTranscriptNavigationKey maps paging keys into transcript navigation actions", () => {
