@@ -4,6 +4,7 @@ import path from "node:path";
 import { mkdir, writeFile } from "node:fs/promises";
 import {
   getScrollablePageStep,
+  getPreferredStudioMouseOptions,
   handleTranscriptNavigationKey,
   limitStudioSnippet,
   renderCommandSyntaxHelpText,
@@ -94,6 +95,15 @@ test("getScrollablePageStep uses the visible transcript height and never drops b
     height: "100%-10",
     iheight: 4
   }), 1);
+});
+
+test("getPreferredStudioMouseOptions opts into modern mouse reporting", () => {
+  assert.deepEqual(getPreferredStudioMouseOptions(), {
+    vt200Mouse: true,
+    allMotion: true,
+    sgrMouse: true,
+    sendFocus: true
+  });
 });
 
 test("handleTranscriptNavigationKey maps paging keys into transcript navigation actions", () => {

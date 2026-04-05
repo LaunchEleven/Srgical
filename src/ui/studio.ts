@@ -29,6 +29,7 @@ type StudioOptions = { workspace?: string; planId?: string | null; mode?: Studio
 type ChatMessage = { role: "user" | "assistant" | "system"; content: string };
 type ScrollableElement = Pick<blessed.Widgets.ScrollableBoxElement, "height" | "iheight" | "getScrollHeight" | "getScrollPerc" | "setScrollPerc" | "scroll">;
 type PositionedElement = { lpos?: { xi: number; xl: number; yi: number; yl: number } };
+type StudioMouseOptions = { vt200Mouse: boolean; allMotion: boolean; sgrMouse: boolean; sendFocus: boolean };
 
 const FILE_LIMIT = 6;
 const SNIPPET_LIMIT = 1600;
@@ -75,7 +76,7 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
   let gatheredFingerprint = "";
   let transcriptWheelHandled = false;
 
-  const screen = blessed.screen({ smartCSR: true, fullUnicode: true, mouse: true, title: mode === "prepare" ? "srgical prepare" : "srgical operate" });
+  const screen = blessed.screen({ smartCSR: true, fullUnicode: true, mouse: true, sendFocus: true, title: mode === "prepare" ? "srgical prepare" : "srgical operate" });
   const header = blessed.box({ top: 0, left: 0, width: "100%", height: 3, tags: true, style: { fg: STUDIO_THEME.headerFg, bg: STUDIO_THEME.headerBg } });
   const transcript = blessed.box({
     top: 3, left: 0, width: "68%", height: "100%-10", tags: true, scrollable: true, alwaysScroll: true, mouse: true, keys: true, vi: true, clickable: true, input: true,
@@ -94,6 +95,9 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
   });
   const footer = blessed.box({ bottom: 0, left: 0, width: "100%", height: 1, tags: true, style: { fg: STUDIO_THEME.footerFg, bg: STUDIO_THEME.headerBg } });
   screen.append(header); screen.append(transcript); screen.append(sidebar); screen.append(input); screen.append(footer);
+  screen.enableMouse(transcript);
+  screen.enableMouse(input);
+  screen.program.setMouse(getPreferredStudioMouseOptions(), true);
 
   const render = (status = "ready") => {
     const shouldStickTranscript = shouldStickScrollableToBottom(transcript);
@@ -498,6 +502,15 @@ export function shouldStickScrollableToBottom(element: Pick<ScrollableElement, "
 
 export function getScrollablePageStep(element: Pick<ScrollableElement, "height" | "iheight">): number {
   return Math.max(getScrollableViewportHeight(element) - 1, 1);
+}
+
+export function getPreferredStudioMouseOptions(): StudioMouseOptions {
+  return {
+    vt200Mouse: true,
+    allMotion: true,
+    sgrMouse: true,
+    sendFocus: true
+  };
 }
 
 export function handleTranscriptNavigationKey(
