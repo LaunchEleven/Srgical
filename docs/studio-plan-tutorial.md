@@ -27,6 +27,19 @@ The files update only when you explicitly run a write action:
 - `/write`: turn the current planning transcript into the first grounded draft, or refresh an existing draft
 - `/dice [low|medium|high] [spike]`: rewrite the current draft into more explicit execution slices
 
+### What The `/dice` Args Mean
+
+- `low`
+  Coarser slicing with fewer, larger step blocks.
+- `medium`
+  Balanced slicing with practical PR-sized steps.
+- `high`
+  The smallest practical execution slices with the most explicit tracker detail.
+- `spike`
+  Allow an explicit `SPIKE-###` proof step before risky build work when the first seam needs validation.
+
+Inside the rebooted prepare UI, `:slice --help` shows the same option guide, and `/dice --help` still works as a compatibility alias.
+
 If you keep talking but never run `/write` or `/dice`, the transcript has changed, but the pack files have not.
 
 ## The Fastest Safe Workflow

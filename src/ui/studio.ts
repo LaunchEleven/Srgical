@@ -7,6 +7,13 @@ import { readPackSnapshot } from "../core/change-summary";
 import { appendExecutionLog, saveExecutionState } from "../core/execution-state";
 import { formatExecutionFailureMessage, formatNoQueuedNextStepMessage, hasQueuedNextStep } from "../core/execution-controls";
 import { buildExecutionIterationPrompt } from "../core/handoff";
+import {
+  DEFAULT_SLICE_PLAN_OPTIONS,
+  parsePlanDiceIntent,
+  renderPlanDiceHelp,
+  renderPlanDiceLabel,
+  type PlanDiceOptions
+} from "../core/plan-dicing";
 import { refreshPlanningAdvice } from "../core/planning-advice";
 import { updatePlanManifest } from "../core/plan-manifest";
 import { readPlanningPackState, type PlanningPackState } from "../core/planning-pack-state";
@@ -159,22 +166,22 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
     }
   };
 
-  const slicePlan = async () => {
+  const slicePlan = async (options: PlanDiceOptions = DEFAULT_SLICE_PLAN_OPTIONS, label = "Slice Plan") => {
     if (busy) return;
     if (!state.readiness.readyToDice) { await system("Slice Plan is blocked until a draft exists."); return; }
     busy = true; render("slicing plan...");
     try {
       const before = await readPackSnapshot(workspace, { planId });
       const snapshot = await snapshotRevisionIfNeeded(workspace, { planId });
-      const result = await dicePlanningPack(workspace, messages, { resolution: "high", allowLiveFireSpike: true }, { planId });
+      const result = await dicePlanningPack(workspace, messages, options, { planId });
       await recordPlanningPackWrite(workspace, "dice", { planId });
       const headline = await recordVisibleChange(workspace, before, "Sliced the draft into execution-ready steps.", {
         planId, action: "refine", stage: "Prepare", nextAction: "Review the sliced tracker, then approve when the next step is clear enough to operate."
       });
       await refresh();
-      await system(`Slice Plan completed.\nRevision snapshot: ${snapshot ?? "none"}\nVisible change: ${headline}\n${getPrimaryAgentAdapter().label} summary:\n${result}`);
+      await system(`${label} completed.\nSettings: ${renderPlanDiceLabel(options)}\nRevision snapshot: ${snapshot ?? "none"}\nVisible change: ${headline}\n${getPrimaryAgentAdapter().label} summary:\n${result}`);
     } catch (error) {
-      await system(`Slice Plan failed: ${error instanceof Error ? error.message : String(error)}`);
+      await system(`${label} failed: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
       busy = false; render();
     }
@@ -276,13 +283,26 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
 
   const handleCommand = async (command: string) => {
     if (command === ":quit" || command === ":q") { screen.destroy(); return; }
-    if (command === ":help") { await system(mode === "prepare" ? "Commands: :gather, :build, :slice, :review, :approve, :operate, :status, :quit" : "Commands: :run, :auto [n], :checkpoint, :review, :unblock, :prepare, :stop, :status, :quit"); return; }
+    if (command === ":help" || command === ":help prepare" || command === ":help operate") {
+      await system(mode === "prepare" ? renderPrepareHelpText() : renderOperateHelpText());
+      return;
+    }
+    if (command === ":help slice" || command === ":help dice") { await system(renderPlanDiceHelp(":slice")); return; }
     if (command === ":status") { await system(`Mode: ${mode}\nStage: ${state.mode}\nNext action: ${state.nextAction}\nNext step: ${state.currentPosition.nextRecommended ?? "none"}`); return; }
     if (command === ":prepare") { mode = "prepare"; screen.title = "srgical prepare"; await refresh(); return; }
     if (command === ":operate") { mode = "operate"; screen.title = "srgical operate"; await refresh(); return; }
     if (command === ":gather") { await autoGather("manual"); return; }
     if (command === ":build") { await buildDraft(); return; }
-    if (command.startsWith(":slice")) { await slicePlan(); return; }
+    if (command.startsWith(":slice")) {
+      const intent = parsePlanDiceIntent(command);
+      if (!intent || intent.command !== ":slice") {
+        await system("Unrecognized slice command.\n\n" + renderPlanDiceHelp(":slice"));
+        return;
+      }
+      if (intent.helpRequested) { await system(renderPlanDiceHelp(":slice")); return; }
+      await slicePlan(intent.options, "Slice Plan");
+      return;
+    }
     if (command === ":approve") { await approve(); return; }
     if (command === ":review") { await review(); return; }
     if (command === ":run") { await runStep(); return; }
@@ -298,6 +318,28 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
     inputValue = ""; render();
     if (!text) return;
     if (text.startsWith(":")) { await push({ role: "system", content: `Command: ${text}` }); await handleCommand(text); return; }
+    const diceIntent = parsePlanDiceIntent(text);
+    if (diceIntent) {
+      await push({ role: "system", content: `Command: ${text}` });
+      if (mode !== "prepare") {
+        await system("Slicing is only available in prepare mode. Switch back to prepare first.");
+        return;
+      }
+      if (diceIntent.helpRequested) {
+        await system(renderPlanDiceHelp(diceIntent.command));
+        return;
+      }
+      await slicePlan(
+        diceIntent.options,
+        diceIntent.command === "/dice" ? "Legacy /dice compatibility slice" : "Slice Plan"
+      );
+      return;
+    }
+    if (text === "/help") {
+      await push({ role: "system", content: "Command: /help" });
+      await system(mode === "prepare" ? renderPrepareHelpText() : renderOperateHelpText());
+      return;
+    }
     if (mode === "operate") { await system("Operate is action-first. Use the primary actions or the :command palette."); return; }
     busy = true; render("thinking...");
     try {
@@ -368,4 +410,36 @@ async function collect(dir: string, root: string, limit: number): Promise<string
 
 export function limitStudioSnippet(value: string): string {
   return value.length <= SNIPPET_LIMIT ? value : `${value.slice(0, SNIPPET_LIMIT).trimEnd()}\n... [truncated after ${SNIPPET_LIMIT} chars]`;
+}
+
+export function renderPrepareHelpText(): string {
+  return [
+    "Prepare commands:",
+    "- `:gather`: run another evidence pass and refresh the known unknowns.",
+    "- `:build`: write or refresh the current draft from transcript context and repo evidence.",
+    "- `:slice`: slice the current draft using the recommended preset (`high + spike`).",
+    "- `:slice [low|medium|high] [spike]`: override slice settings for this run.",
+    "- `:slice --help`: show the slice arguments, defaults, and examples.",
+    "- `/dice ...`: legacy compatibility alias for slicing; `/dice --help` shows the same option guide with legacy defaults.",
+    "- `:review`: show the current changes log and manifest snapshot.",
+    "- `:approve`: mark the current draft ready for operate.",
+    "- `:operate`: switch to operate mode.",
+    "- `:status`: show the current stage, next action, and next step.",
+    "- `:quit`: exit studio."
+  ].join("\n");
+}
+
+export function renderOperateHelpText(): string {
+  return [
+    "Operate commands:",
+    "- `:run`: execute the next queued step once.",
+    "- `:auto [n]`: continue automatically for up to `n` steps, or the remaining queue when `n` is omitted.",
+    "- `:checkpoint`: toggle PR checkpoint mode on or off.",
+    "- `:review`: show the latest visible change summary and manifest snapshot.",
+    "- `:unblock`: move the current blocked step back to `todo` with retry notes.",
+    "- `:prepare`: switch back to prepare mode to refine the plan.",
+    "- `:status`: show the current stage, next action, and next step.",
+    "- `:stop`: request stop for an active auto-continue run.",
+    "- `:quit`: exit studio."
+  ].join("\n");
 }
