@@ -52,6 +52,7 @@ type StudioPalette = {
 
 const FILE_LIMIT = 6;
 const SNIPPET_LIMIT = 1600;
+const STUDIO_STREAM_CHAR_DELAY_MS = 4;
 const STUDIO_THEME = {
   headerFg: "#ecfeff",
   transcriptText: "#edf8ff",
@@ -209,6 +210,10 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
     const message: ChatMessage = { role, content: initialContent };
     messages.push(message);
     render();
+    let pending = "";
+    let draining = false;
+    let generation = 0;
+    let idleResolvers: Array<() => void> = [];
 
     const remove = () => {
       const index = messages.indexOf(message);
@@ -217,15 +222,81 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
       }
     };
 
+    const resolveIdle = () => {
+      const resolvers = idleResolvers;
+      idleResolvers = [];
+      for (const resolver of resolvers) {
+        resolver();
+      }
+    };
+
+    const waitForIdle = async () => {
+      if (!draining && pending.length === 0) {
+        return;
+      }
+      await new Promise<void>((resolve) => {
+        idleResolvers.push(resolve);
+      });
+    };
+
+    const drainPending = async (expectedGeneration: number) => {
+      if (draining) {
+        return;
+      }
+      draining = true;
+      try {
+        while (generation === expectedGeneration && pending.length > 0) {
+          message.content += pending[0] ?? "";
+          pending = pending.slice(1);
+          render();
+          if (pending.length > 0) {
+            await delayStudioStream();
+          }
+        }
+      } finally {
+        draining = false;
+        if (pending.length > 0) {
+          void drainPending(generation);
+          return;
+        }
+        resolveIdle();
+      }
+    };
+
+    const queuePending = (content: string, mode: "append" | "replace") => {
+      if (mode === "replace") {
+        generation += 1;
+        pending = content;
+      } else {
+        pending += content;
+      }
+      if (!draining || mode === "replace") {
+        void drainPending(generation);
+      }
+    };
+
     return {
       append(chunk: string) {
         const normalized = normalizeStudioStreamChunk(chunk);
         if (!normalized) return;
-        message.content += normalized;
-        render();
+        queuePending(normalized, "append");
       },
       async finalize(content: string) {
-        message.content = content.trim();
+        const finalized = content.trim();
+        if (!finalized) {
+          generation += 1;
+          pending = "";
+          await waitForIdle();
+          remove();
+          await persistMessages();
+          render();
+          return;
+        }
+        const reveal = planStudioProgressiveReveal(message.content, finalized);
+        message.content = reveal.visible;
+        render();
+        queuePending(reveal.pending, "replace");
+        await waitForIdle();
         if (!message.content) {
           remove();
         }
@@ -233,6 +304,9 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
         render();
       },
       async discard() {
+        generation += 1;
+        pending = "";
+        await waitForIdle();
         remove();
         await persistMessages();
         render();
@@ -633,6 +707,22 @@ export function renderStudioTranscript(messages: ChatMessage[]): string {
     .join("\n\n");
 }
 
+export function planStudioProgressiveReveal(current: string, finalized: string): { visible: string; pending: string } {
+  if (!finalized) {
+    return { visible: "", pending: "" };
+  }
+  if (current && finalized.startsWith(current)) {
+    return {
+      visible: current,
+      pending: finalized.slice(current.length)
+    };
+  }
+  return {
+    visible: "",
+    pending: finalized
+  };
+}
+
 export function resolveStudioInputCursor(
   clines: string[],
   visibleRows: number,
@@ -783,6 +873,12 @@ function focusStudioInput(screen: blessed.Widgets.Screen, input: blessed.Widgets
     input.focus();
   }
   placeStudioInputCursor(screen, input);
+}
+
+function delayStudioStream(): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, STUDIO_STREAM_CHAR_DELAY_MS);
+  });
 }
 
 function placeStudioInputCursor(screen: blessed.Widgets.Screen, input: blessed.Widgets.BoxElement): void {

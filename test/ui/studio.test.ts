@@ -10,6 +10,7 @@ import {
   handleTranscriptNavigationKey,
   limitStudioSnippet,
   normalizeStudioStreamChunk,
+  planStudioProgressiveReveal,
   renderPlanningAdviceTranscript,
   renderStudioInputContent,
   resolveStudioInputCursor,
@@ -96,6 +97,17 @@ test("renderStudioTranscript applies the role colors and escapes transcript cont
   assert.match(rendered, /\{#4ade80-fg\}YOU\{\/\}/);
   assert.match(rendered, /\{#60a5fa-fg\}SYSTEM\{\/\}/);
   assert.doesNotMatch(rendered, /\{bold\}user\{\/bold\}/);
+});
+
+test("planStudioProgressiveReveal keeps a streamed prefix and retypes mismatched final content", () => {
+  assert.deepEqual(
+    planStudioProgressiveReveal("Hello", "Hello world"),
+    { visible: "Hello", pending: " world" }
+  );
+  assert.deepEqual(
+    planStudioProgressiveReveal("mcp: starting", "Final clean answer"),
+    { visible: "", pending: "Final clean answer" }
+  );
 });
 
 test("resolveStudioInputCursor keeps the terminal caret inside the visible message box", () => {
