@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildPackWriterPrompt, buildPlanDicePrompt, buildPlannerPrompt, type ChatMessage } from "../../src/core/prompts";
+import { buildContextRefreshPrompt, buildPackWriterPrompt, buildPlanDicePrompt, buildPlannerPrompt, type ChatMessage } from "../../src/core/prompts";
 import type { PlanningPackState } from "../../src/core/planning-pack-state";
 import { createTempWorkspace, writePlanningPack } from "../helpers/workspace";
 
@@ -56,6 +56,30 @@ test("build-pack-writer-prompt references the rebooted prepare pack files", asyn
   assert.match(prompt, /manifest\.json/);
   assert.match(prompt, /tracker\.md must use only these statuses: todo, doing, blocked, done, skipped\./);
   assert.match(prompt, /Type column using research, spike, build, validate, or rollout/);
+});
+
+test("build-context-refresh-prompt focuses on updating the living context doc", async () => {
+  const workspace = await createTempWorkspace("srgical-context-refresh-prompt-");
+  await writePlanningPack(workspace, { planId: "proto" });
+
+  const prompt = await buildContextRefreshPrompt(
+    [{ role: "user", content: "Read this exported planning document and sync it into context.md." }],
+    workspace,
+    [
+      {
+        path: "notes/exported-chat.md",
+        content: "# Exported Notes\n\n- Desired outcome: make context.md stay current.\n- Next: build the draft after sync."
+      }
+    ],
+    { planId: "proto" }
+  );
+
+  assert.match(prompt, /updating the living context document/i);
+  assert.match(prompt, /Update only this file under \.srgical\/:\s+\n\s*- context\.md/i);
+  assert.match(prompt, /Do not claim you are blocked from writing context\.md/i);
+  assert.match(prompt, /Treat context\.md as a living working document/i);
+  assert.match(prompt, /New source material to integrate:/);
+  assert.match(prompt, /notes\/exported-chat\.md/);
 });
 
 test("build-plan-dice-prompt includes requested resolution and optional spike mode", async () => {

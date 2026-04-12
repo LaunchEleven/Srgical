@@ -5,6 +5,7 @@ import type { PlanningAdviceState } from "../core/advice-state";
 import { dicePlanningPack, getPrimaryAgentAdapter, requestPlannerReply, resolvePrimaryAgent, runNextPrompt, writePlanningPack } from "../core/agent";
 import { executeAutoRun, requestAutoRunStop } from "../core/auto-run";
 import { readPackSnapshot } from "../core/change-summary";
+import { syncPlanningContext } from "../core/context-refresh";
 import { appendExecutionLog, saveExecutionState } from "../core/execution-state";
 import { formatExecutionFailureMessage, formatNoQueuedNextStepMessage, hasQueuedNextStep } from "../core/execution-controls";
 import { buildExecutionIterationPrompt } from "../core/handoff";
@@ -52,6 +53,8 @@ type StudioPalette = {
 
 const FILE_LIMIT = 6;
 const SNIPPET_LIMIT = 1600;
+const IMPORT_SOURCE_LIMIT = 24000;
+const GATHER_SOURCE_LIMIT = 6000;
 const STUDIO_STREAM_CHAR_DELAY_MS = 4;
 const STUDIO_THEME = {
   headerFg: "#ecfeff",
@@ -200,6 +203,66 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
   const refresh = async () => { state = await readPlanningPackState(workspace, { planId }); agent = await resolvePrimaryAgent(workspace, { planId }); render(); };
   const push = async (message: ChatMessage) => { messages.push(message); await persistMessages(); render(); };
   const system = async (content: string) => { await push({ role: "system", content }); };
+  const readContextSource = async (rawPath: string, sourceLimit = GATHER_SOURCE_LIMIT) => {
+    const resolvedPath = resolveStudioContextPath(workspace, rawPath);
+    const body = await readText(resolvedPath);
+    const label = toStudioContextLabel(workspace, resolvedPath);
+
+    return {
+      label,
+      body,
+      source: {
+        path: label,
+        content: limitContextSource(body.trim(), sourceLimit)
+      }
+    };
+  };
+  const refreshContext = async (
+    sources: Array<{ path: string; content: string }>,
+    options: {
+      completionLabel: string;
+    }
+  ) => {
+    const liveResult = startLiveMessage("system", `${options.completionLabel} is running...\n\n`);
+    try {
+      const result = await syncPlanningContext(workspace, [...messages], sources, {
+        planId,
+        onOutputChunk: (chunk) => { liveResult.append(chunk); }
+      });
+      await refresh();
+      await liveResult.finalize(
+        `${options.completionLabel} completed.\nVisible change: ${result.headline}\nEvidence: ${result.evidence.join(", ") || "none"}\nUnknowns: ${result.unknowns.join(" | ") || "none"}\nNext action: ${result.nextAction}\n${getPrimaryAgentAdapter().label} summary:\n${result.summary}`
+      );
+      return result;
+    } catch (error) {
+      await liveResult.discard();
+      throw error;
+    }
+  };
+  const importContextFile = async (rawPath: string) => {
+    if (busy) return;
+    const requestedPath = rawPath.trim();
+    if (!requestedPath) {
+      await system("Import needs a file path.\nUsage: `:import <path>`");
+      return;
+    }
+
+    busy = true; render("importing context...");
+    try {
+      const loaded = await readContextSource(requestedPath, IMPORT_SOURCE_LIMIT);
+      await system(
+        `Loaded context file: ${loaded.label}\n\n===== BEGIN FILE ${loaded.label} =====\n${limitStudioSnippet(loaded.body.trim())}\n===== END FILE ${loaded.label} =====`
+      );
+      const result = await refreshContext([loaded.source], {
+        completionLabel: "Context Import"
+      });
+      await system(`Imported context from ${loaded.label}.\nNext action: ${result.nextAction}`);
+    } catch (error) {
+      await system(`Context import failed: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      busy = false; render();
+    }
+  };
   const scrollTranscriptBy = (offset: number) => { transcript.scroll(offset); screen.render(); };
   const scrollTranscriptByPage = (direction: -1 | 1) => { scrollTranscriptBy(direction * getScrollablePageStep(transcript)); };
   const scrollTranscriptTo = (target: "top" | "bottom") => {
@@ -322,31 +385,33 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
       const fingerprint = files.join("|");
       if (origin === "boot" && fingerprint === gatheredFingerprint) { busy = false; render(); return; }
       gatheredFingerprint = fingerprint;
+      const gatheredSources: Array<{ path: string; content: string }> = [];
       for (const relativePath of files) {
-        const body = await readText(path.join(workspace, relativePath)).catch(() => "");
-        await system(`Loaded context file: ${relativePath}\n\n===== BEGIN FILE ${relativePath} =====\n${limitStudioSnippet(body.trim())}\n===== END FILE ${relativePath} =====`);
+        const loaded = await readContextSource(relativePath, GATHER_SOURCE_LIMIT).catch(() => null);
+        if (!loaded) {
+          continue;
+        }
+        gatheredSources.push(loaded.source);
+        await system(`Loaded context file: ${loaded.label}\n\n===== BEGIN FILE ${loaded.label} =====\n${limitStudioSnippet(loaded.body.trim())}\n===== END FILE ${loaded.label} =====`);
       }
-      const adviceContext = [...messages];
-      const liveAdvice = startLiveMessage("assistant");
-      let advice: PlanningAdviceState | null = null;
-      try {
-        advice = await refreshPlanningAdvice(workspace, adviceContext, {
-          planId,
-          onOutputChunk: (chunk) => { liveAdvice.append(chunk); }
+      let contextResult: Awaited<ReturnType<typeof syncPlanningContext>> | null = null;
+      if (gatheredSources.length > 0) {
+        contextResult = await refreshContext(gatheredSources, {
+          completionLabel: origin === "boot" ? "Auto Context Sync" : "Gather Context Sync"
         });
-        await liveAdvice.finalize(renderPlanningAdviceTranscript(advice));
-      } catch {
-        await liveAdvice.discard();
+      } else {
+        await updatePlanManifest(workspace, {
+          stage: "discover",
+          nextAction: "Review the gathered evidence, then build the draft when you have enough context.",
+          evidence: files,
+          unknowns: state.unknowns.length > 0 ? state.unknowns : ["Desired outcome still needs a clean confirmation."],
+          contextReady: false
+        }, { planId });
+        await refresh();
       }
-      await updatePlanManifest(workspace, {
-        stage: "discover",
-        nextAction: advice?.nextAction ?? "Review the gathered evidence, then build the draft when you have enough context.",
-        evidence: files,
-        unknowns: advice?.researchNeeded ?? (state.unknowns.length > 0 ? state.unknowns : ["Desired outcome still needs a clean confirmation."]),
-        contextReady: false
-      }, { planId });
-      await refresh();
-      await system(`Auto-gather ${origin === "boot" ? "completed" : "updated"}.\nEvidence: ${files.join(", ")}\nUnknowns: ${state.unknowns.join(" | ") || "none"}\nNext action: ${state.nextAction}`);
+      await system(
+        `Auto-gather ${origin === "boot" ? "completed" : "updated"}.\nEvidence: ${(contextResult?.evidence ?? files).join(", ") || "none"}\nUnknowns: ${(contextResult?.unknowns ?? state.unknowns).join(" | ") || "none"}\nNext action: ${contextResult?.nextAction ?? state.nextAction}`
+      );
     } catch (error) {
       await system(`Auto-gather failed: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
@@ -541,6 +606,30 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
     if (command === ":prepare") { mode = "prepare"; screen.title = "srgical prepare"; await refresh(); return; }
     if (command === ":operate") { mode = "operate"; screen.title = "srgical operate"; await refresh(); return; }
     if (command === ":gather") { await autoGather("manual"); return; }
+    if (command === ":import" || command === ":read") {
+      await system("Import needs a file path.\nUsage: `:import <path>`");
+      return;
+    }
+    if (command === ":context") {
+      if (busy) return;
+      busy = true; render("syncing context...");
+      try {
+        const result = await refreshContext([], {
+          completionLabel: "Context Sync"
+        });
+        await system(`Context sync completed.\nNext action: ${result.nextAction}`);
+      } catch (error) {
+        await system(`Context sync failed: ${error instanceof Error ? error.message : String(error)}`);
+      } finally {
+        busy = false; render();
+      }
+      return;
+    }
+    if (command.startsWith(":import ") || command.startsWith(":read ")) {
+      const rawPath = command.startsWith(":import ") ? command.slice(":import ".length) : command.slice(":read ".length);
+      await importContextFile(rawPath);
+      return;
+    }
     if (command === ":build") { await buildDraft(); return; }
     if (command.startsWith(":slice")) {
       const intent = parsePlanDiceIntent(command);
@@ -591,6 +680,11 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
     }
     if (text.startsWith("/")) {
       await push({ role: "system", content: `Command: ${text}` });
+      if (mode === "prepare" && (text.startsWith("/read ") || text.startsWith("/import "))) {
+        const rawPath = text.startsWith("/read ") ? text.slice("/read ".length) : text.slice("/import ".length);
+        await importContextFile(rawPath);
+        return;
+      }
       await system("Slash commands were retired in the rebooted studio.\nUse `:` commands now, for example `:help`, `:gather`, `:slice --help`, or `:operate`.\nIf you just want to chat with the planner, type plain text without a prefix.");
       return;
     }
@@ -599,6 +693,13 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
     let liveReply: LiveStudioMessage | null = null;
     try {
       await push({ role: "user", content: text });
+      if (isDirectContextSyncRequest(text)) {
+        const result = await refreshContext([], {
+          completionLabel: "Context Sync"
+        });
+        await system(`Context sync completed from your instruction.\nNext action: ${result.nextAction}`);
+        return;
+      }
       const plannerContext = [...messages];
       const activeLiveReply = liveReply = startLiveMessage("assistant");
       const reply = await requestPlannerReply(workspace, plannerContext, {
@@ -656,7 +757,7 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
   });
 
   await system(mode === "prepare"
-    ? `Prepare mode gathers context, builds the draft, slices it into steps, and gets the plan ready to operate.\nType normal text to chat with the planner.\nUse \`:\` to run a studio command such as \`:help\`, \`:build\`, \`:slice --help\`, or \`:operate\`.\nStage: ${state.mode}\nNext action: ${state.nextAction}`
+    ? `Prepare mode gathers context, keeps \`context.md\` current, builds the draft, slices it into steps, and gets the plan ready to operate.\nType normal text to chat with the planner.\nUse \`:\` to run a studio command such as \`:import <path>\`, \`:context\`, \`:build\`, \`:slice --help\`, or \`:operate\`.\nStage: ${state.mode}\nNext action: ${state.nextAction}`
     : `Operate mode is execution-only.\nUse \`:\` to run studio commands such as \`:run\`, \`:auto 3\`, \`:checkpoint\`, or \`:prepare\`.\nStage: ${state.mode}\nNext action: ${state.nextAction}`);
   render();
   if (mode === "prepare") { await autoGather("boot"); }
@@ -676,6 +777,33 @@ export async function selectAutoGatherFiles(workspaceRoot: string): Promise<stri
     ...(await collect(path.join(workspaceRoot, "test"), workspaceRoot, FILE_LIMIT))
   ];
   return Array.from(new Set(files)).slice(0, FILE_LIMIT);
+}
+
+function resolveStudioContextPath(workspaceRoot: string, rawPath: string): string {
+  const trimmed = rawPath.trim().replace(/^["']|["']$/g, "");
+  return path.isAbsolute(trimmed) ? path.resolve(trimmed) : path.resolve(workspaceRoot, trimmed);
+}
+
+function toStudioContextLabel(workspaceRoot: string, filePath: string): string {
+  const relative = path.relative(workspaceRoot, filePath).replace(/\\/g, "/");
+  return relative && !relative.startsWith("..") ? relative : path.resolve(filePath).replace(/\\/g, "/");
+}
+
+function limitContextSource(value: string, maxChars: number): string {
+  if (value.length <= maxChars) {
+    return value;
+  }
+
+  return `${value.slice(0, maxChars).trimEnd()}\n... [truncated after ${maxChars} chars]`;
+}
+
+function isDirectContextSyncRequest(text: string): boolean {
+  const normalized = text.toLowerCase();
+
+  return (
+    /(update|refresh|sync|capture|move|transfer|fold|put|write).{0,60}(context\.md|context doc|context document|living doc)/.test(normalized) ||
+    /(context\.md|context doc|context document|living doc).{0,60}(update|refresh|sync|capture|write)/.test(normalized)
+  );
 }
 
 async function collect(dir: string, root: string, limit: number): Promise<string[]> {
@@ -913,13 +1041,17 @@ export function renderPrepareHelpText(): string {
   return [
     "Prepare commands:",
     "- Plain text without a prefix is normal planning chat.",
-    "- Commands start with `:`. Example: `:help`, `:build`, `:slice high spike`, `:operate`.",
-    "- `:gather`: run another evidence pass and refresh the known unknowns.",
+    "- Commands start with `:`. Example: `:help`, `:import notes.md`, `:build`, `:slice high spike`, `:operate`.",
+    "- `:gather`: run another evidence pass and sync the gathered material into `context.md`.",
+    "- `:import <path>`: read a specific document and sync it into `context.md` right away.",
+    "- `:read <path>`: compatibility alias for `:import <path>`.",
+    "- `:context`: refresh `context.md` from the current transcript and gathered evidence.",
     "- `:build`: write or refresh the current draft from transcript context and repo evidence.",
     "- `:slice`: slice the current draft using the recommended preset (`high + spike`).",
     "- `:slice [low|medium|high] [spike]`: override slice settings for this run.",
     "- `:slice --help`: show the slice arguments, defaults, and examples.",
     "- `/dice ...`: legacy compatibility alias for slicing; `/dice --help` shows the same option guide with legacy defaults.",
+    "- `/read <path>` and `/import <path>` still work as compatibility aliases during prepare.",
     "- `:help commands`: explain the `:` command syntax quickly.",
     "- `:review`: show the current changes log and manifest snapshot.",
     "- `:approve`: mark the current draft ready for operate.",
@@ -954,7 +1086,7 @@ export function renderCommandSyntaxHelpText(mode: StudioMode): string {
     mode === "prepare"
       ? "- In prepare, plain text is normal chat with the planner."
       : "- In operate, plain text chat is disabled so commands stay explicit.",
-    "- Examples: `:help`, `:slice --help`, `:build`, `:run`, `:auto 3`.",
-    "- Old slash commands are retired. Use `:` commands instead. `/dice` and `/help` still work as compatibility shortcuts."
+    "- Examples: `:help`, `:import notes.md`, `:context`, `:slice --help`, `:build`, `:run`, `:auto 3`.",
+    "- Old slash commands are retired. Use `:` commands instead. `/dice`, `/help`, `/read <path>`, and `/import <path>` still work as compatibility shortcuts."
   ].join("\n");
 }

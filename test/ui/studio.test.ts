@@ -222,6 +222,8 @@ test("prepare help explains slice options and compatibility aliases", () => {
 
   assert.match(help, /Plain text without a prefix is normal planning chat/);
   assert.match(help, /Commands start with `:`/);
+  assert.match(help, /`:import <path>`: read a specific document and sync it into `context\.md` right away/);
+  assert.match(help, /`:context`: refresh `context\.md` from the current transcript and gathered evidence/);
   assert.match(help, /`:slice`: slice the current draft using the recommended preset \(`high \+ spike`\)/);
   assert.match(help, /`:slice \[low\|medium\|high\] \[spike\]`: override slice settings for this run/);
   assert.match(help, /`:slice --help`: show the slice arguments, defaults, and examples/);
@@ -246,7 +248,7 @@ test("command syntax help explains that :command is not literal in prepare mode"
 
   assert.match(help, /There is no literal `:command` command/);
   assert.match(help, /In prepare, plain text is normal chat with the planner/);
-  assert.match(help, /Examples: `:help`, `:slice --help`, `:build`, `:run`, `:auto 3`/);
+  assert.match(help, /Examples: `:help`, `:import notes\.md`, `:context`, `:slice --help`, `:build`, `:run`, `:auto 3`/);
   assert.match(help, /Old slash commands are retired/);
 });
 

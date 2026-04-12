@@ -10,22 +10,25 @@ This guide is for the moment when `srgical studio plan` feels fuzzy:
 The short version is:
 
 1. explore until the deterministic readiness checks are satisfied
-2. use `/write` to sync the transcript into the planning pack
-3. inspect the written files with `/review` or `/open all`
-4. optionally use `/dice` to break the plan into smaller execution slices
-5. run `/confirm-plan` only when the current written or diced draft should become the approved execution baseline
+2. sync the living `context.md` when you gather or import new material
+3. use `/write` to turn the current context into the broader planning pack
+4. inspect the written files with `/review` or `/open all`
+5. optionally use `/dice` to break the plan into smaller execution slices
+6. run `/confirm-plan` only when the current written or diced draft should become the approved execution baseline
 
 ## The Mental Model
 
-`studio plan` is not writing files continuously while you chat.
+`studio plan` is not rewriting the whole planning pack continuously while you chat.
 
 The conversation transcript is one thing.
 The `.srgical/plans/<id>/` markdown files are another thing.
 
-The files update only when you explicitly run a write action:
+The full plan files update when you explicitly run a draft action:
 
 - `/write`: turn the current planning transcript into the first grounded draft, or refresh an existing draft
 - `/dice [low|medium|high] [spike]`: rewrite the current draft into more explicit execution slices
+
+`context.md` is different: gather/import/context-sync actions can refresh it earlier so imported evidence does not stay stranded in the transcript.
 
 ### What The `/dice` Args Mean
 
@@ -57,11 +60,12 @@ Inside `studio plan`, use this sequence:
 1. describe the goal, constraints, repo truth, and what V1 should include
 2. run `/readiness`
 3. if readiness is not enough, keep talking or use `/read <path>` to ground the conversation in repo files
-4. when readiness says draft write is ready, run `/write`
-5. run `/review`
-6. run `/open all` if you want to inspect the actual markdown files in your editor
-7. if you want smaller implementation slices, run `/dice high`
-8. once the current draft is the baseline you want execution to use, run `/confirm-plan`
+4. if you import a longer external note or export, let `context.md` sync first
+5. when readiness says draft write is ready, run `/write`
+6. run `/review`
+7. run `/open all` if you want to inspect the actual markdown files in your editor
+8. if you want smaller implementation slices, run `/dice high`
+9. once the current draft is the baseline you want execution to use, run `/confirm-plan`
 
 The common command loop is:
 
@@ -266,7 +270,9 @@ Use this when `srgical` seems unsure about the repo.
 
 ### "I have been chatting for a while and nothing changed on disk."
 
-That is expected until you run `/write` or `/dice`.
+That is expected for `plan.md` and `tracker.md` until you run `/write` or `/dice`.
+
+`context.md` may still update earlier when you gather/import material.
 
 ### "`/write` is blocked."
 

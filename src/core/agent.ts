@@ -1,6 +1,7 @@
 import {
   detectAugment,
   dicePlanningPack as diceAugmentPlanningPack,
+  refreshContextDocument as refreshAugmentContextDocument,
   requestPlanningAdvice as requestAugmentPlanningAdvice,
   requestPlannerReply as requestAugmentPlannerReply,
   runNextPrompt as runAugmentNextPrompt,
@@ -9,6 +10,7 @@ import {
 import {
   detectClaude,
   dicePlanningPack as diceClaudePlanningPack,
+  refreshContextDocument as refreshClaudeContextDocument,
   requestPlanningAdvice as requestClaudePlanningAdvice,
   requestPlannerReply as requestClaudePlannerReply,
   runNextPrompt as runClaudeNextPrompt,
@@ -17,13 +19,14 @@ import {
 import {
   detectCodex,
   dicePlanningPack as diceCodexPlanningPack,
+  refreshContextDocument as refreshCodexContextDocument,
   requestPlanningAdvice as requestCodexPlanningAdvice,
   requestPlannerReply as requestCodexPlannerReply,
   runNextPrompt as runCodexNextPrompt,
   writePlanningPack as writeCodexPlanningPack
 } from "./codex";
 import type { PlanDiceOptions } from "./plan-dicing";
-import type { ChatMessage } from "./prompts";
+import type { ChatMessage, ContextRefreshSource } from "./prompts";
 import type { PlanningPackState } from "./planning-pack-state";
 import { loadStoredActiveAgentId, saveStoredActiveAgentId } from "./studio-session";
 import type { PlanningPathOptions } from "./workspace";
@@ -46,6 +49,12 @@ export type AgentAdapter = {
     workspaceRoot: string,
     messages: ChatMessage[],
     packState: PlanningPackState,
+    options?: AgentInvocationOptions
+  ): Promise<string>;
+  refreshContextDocument(
+    workspaceRoot: string,
+    messages: ChatMessage[],
+    sources: ContextRefreshSource[],
     options?: AgentInvocationOptions
   ): Promise<string>;
   dicePlanningPack(
@@ -84,6 +93,7 @@ const codexAdapter: AgentAdapter = {
   },
   requestPlannerReply: requestCodexPlannerReply,
   requestPlanningAdvice: requestCodexPlanningAdvice,
+  refreshContextDocument: refreshCodexContextDocument,
   dicePlanningPack: diceCodexPlanningPack,
   writePlanningPack: writeCodexPlanningPack,
   runNextPrompt: runCodexNextPrompt
@@ -105,6 +115,7 @@ const claudeAdapter: AgentAdapter = {
   },
   requestPlannerReply: requestClaudePlannerReply,
   requestPlanningAdvice: requestClaudePlanningAdvice,
+  refreshContextDocument: refreshClaudeContextDocument,
   dicePlanningPack: diceClaudePlanningPack,
   writePlanningPack: writeClaudePlanningPack,
   runNextPrompt: runClaudeNextPrompt
@@ -126,6 +137,7 @@ const augmentAdapter: AgentAdapter = {
   },
   requestPlannerReply: requestAugmentPlannerReply,
   requestPlanningAdvice: requestAugmentPlanningAdvice,
+  refreshContextDocument: refreshAugmentContextDocument,
   dicePlanningPack: diceAugmentPlanningPack,
   writePlanningPack: writeAugmentPlanningPack,
   runNextPrompt: runAugmentNextPrompt
@@ -218,6 +230,16 @@ export async function writePlanningPack(
 ): Promise<string> {
   const { adapter } = await resolvePrimaryAgent(workspaceRoot, options);
   return adapter.writePlanningPack(workspaceRoot, messages, options);
+}
+
+export async function refreshContextDocument(
+  workspaceRoot: string,
+  messages: ChatMessage[],
+  sources: ContextRefreshSource[],
+  options: AgentInvocationOptions = {}
+): Promise<string> {
+  const { adapter } = await resolvePrimaryAgent(workspaceRoot, options);
+  return adapter.refreshContextDocument(workspaceRoot, messages, sources, options);
 }
 
 export async function dicePlanningPack(

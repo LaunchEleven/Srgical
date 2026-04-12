@@ -40,6 +40,8 @@ Inside `prepare`:
 
 - Type normal text to talk to the planner
 - Press `F2` to gather more context
+- Use `:import <path>` to read a specific document and sync it into `context.md`
+- Use `:context` to refresh `context.md` from the current transcript and gathered evidence
 - Press `F3` to build the draft
 - Press `F4` to slice the plan into steps
 - Press `F6` to approve the current draft
@@ -80,6 +82,8 @@ srgical completion powershell
 ## What Gets Written
 
 `srgical` keeps its working state in `.srgical/` inside your repo so the plan, progress, and execution handoff stay visible to both humans and agents.
+
+Inside prepare, `context.md` is treated as a living document. Gather/import actions can refresh it directly before you build the full draft.
 
 ## Notes
 

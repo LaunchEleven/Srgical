@@ -44,6 +44,21 @@ export async function applyPlanningPackDocumentState(
   );
 }
 
+export async function applyPlanningDocumentState(
+  paths: PlanningPackPaths,
+  docKey: PlanningDocumentKey,
+  state: PlanningDocumentState
+): Promise<void> {
+  const filePath = paths[docKey];
+
+  if (!(await fileExists(filePath))) {
+    return;
+  }
+
+  const content = await readText(filePath);
+  await writeText(filePath, stampPlanningDocumentState(content, docKey, state));
+}
+
 export async function readPlanningPackDocumentSummary(
   paths: PlanningPackPaths,
   fallbackState: PlanningDocumentState = "boilerplate"

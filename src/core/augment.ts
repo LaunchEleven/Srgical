@@ -4,13 +4,21 @@ import os from "node:os";
 import path from "node:path";
 import type { AgentInvocationOptions } from "./agent";
 import type { PlanDiceOptions } from "./plan-dicing";
-import { writePlanningPackFallback } from "./local-pack";
+import { refreshContextDocumentFallback, writePlanningPackFallback } from "./local-pack";
 import {
   formatPlanningEpochSummary,
   preparePlanningPackForWrite,
   type PlanningEpochPreparation
 } from "./planning-epochs";
-import { buildAdvicePrompt, buildPackWriterPrompt, buildPlanDicePrompt, buildPlannerPrompt, type ChatMessage } from "./prompts";
+import {
+  buildAdvicePrompt,
+  buildContextRefreshPrompt,
+  buildPackWriterPrompt,
+  buildPlanDicePrompt,
+  buildPlannerPrompt,
+  type ChatMessage,
+  type ContextRefreshSource
+} from "./prompts";
 import { readPlanningPackState, type PlanningPackState } from "./planning-pack-state";
 
 export type AugmentStatus = {
@@ -162,6 +170,44 @@ export async function writePlanningPack(
 
     if (epochSummary) {
       throw new Error(`${epochSummary}\n${message}`);
+    }
+
+    throw error;
+  }
+}
+
+export async function refreshContextDocument(
+  workspaceRoot: string,
+  messages: ChatMessage[],
+  sources: ContextRefreshSource[],
+  options: AgentInvocationOptions = {}
+): Promise<string> {
+  const augmentStatus = await detectAugment();
+
+  if (!augmentStatus.available) {
+    return refreshContextDocumentFallback(
+      workspaceRoot,
+      messages,
+      sources,
+      augmentStatus.error ?? "Augment CLI is unavailable",
+      "Augment CLI",
+      options
+    );
+  }
+
+  try {
+    const result = await runAugmentExec({
+      cwd: workspaceRoot,
+      prompt: await buildContextRefreshPrompt(messages, workspaceRoot, sources, options),
+      maxTurns: 16,
+      onOutputChunk: options.onOutputChunk
+    });
+
+    return result.lastMessage.trim();
+  } catch (error) {
+    if (isAugmentUnavailableError(error)) {
+      const message = error instanceof Error ? error.message : "Augment CLI is unavailable";
+      return refreshContextDocumentFallback(workspaceRoot, messages, sources, message, "Augment CLI", options);
     }
 
     throw error;

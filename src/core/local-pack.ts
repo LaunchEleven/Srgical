@@ -1,4 +1,4 @@
-import type { ChatMessage } from "./prompts";
+import type { ChatMessage, ContextRefreshSource } from "./prompts";
 import { ensurePlanningPackState } from "./planning-state";
 import { getInitialTemplates } from "./templates";
 import { ensurePlanningDir, fileExists, getPlanningPackPaths, readText, writeText, type PlanningPathOptions } from "./workspace";
@@ -50,6 +50,45 @@ export async function writePlanningPackFallback(
   return summary.join("\n");
 }
 
+export async function refreshContextDocumentFallback(
+  workspaceRoot: string,
+  messages: ChatMessage[],
+  sources: ContextRefreshSource[],
+  reason: string,
+  agentLabel = "Codex",
+  options: PlanningPathOptions = {}
+): Promise<string> {
+  const paths = await ensurePlanningDir(workspaceRoot, options);
+  const templates = getInitialTemplates(paths);
+  const createdFiles: string[] = [];
+
+  for (const [filePath, content] of Object.entries(templates)) {
+    if (await fileExists(filePath)) {
+      continue;
+    }
+
+    await writeText(filePath, content);
+    createdFiles.push(toPackLabel(paths, filePath));
+  }
+
+  const existingContext = await readText(paths.context);
+  const updatedContext = appendFallbackEntry(
+    existingContext,
+    buildContextRefreshFallbackEntry(messages, sources, reason, createdFiles, agentLabel)
+  );
+  await writeText(paths.context, updatedContext);
+  await ensurePlanningPackState(workspaceRoot, "scaffolded", options);
+
+  const sourceList = sources.map((source) => source.path).filter(Boolean);
+  return [
+    `Local fallback context refresh completed because ${agentLabel} was unavailable.`,
+    `Reason: ${reason}`,
+    createdFiles.length > 0 ? `Created: ${createdFiles.join(", ")}` : "Created: none",
+    sourceList.length > 0 ? `Sources: ${sourceList.join(", ")}` : "Sources: transcript only",
+    `Updated: ${paths.relativeDir}/context.md`
+  ].join("\n");
+}
+
 function buildFallbackEntry(
   messages: ChatMessage[],
   reason: string,
@@ -82,6 +121,36 @@ function buildFallbackEntry(
     `- Validation: local fallback pack refresh completed without invoking ${agentLabel}.`,
     `- Blockers: live planner and live pack-authoring behavior remain unavailable until ${agentLabel} is restored.`,
     `- Next step: \`${nextStepId}\`.`
+  ].join("\n");
+}
+
+function buildContextRefreshFallbackEntry(
+  messages: ChatMessage[],
+  sources: ContextRefreshSource[],
+  reason: string,
+  createdFiles: string[],
+  agentLabel: string
+): string {
+  const now = new Date();
+  const transcriptSummary = summarizeRecentUserMessages(messages);
+  const sourceSummary = summarizeContextSources(sources);
+
+  return [
+    `### ${now.toISOString().slice(0, 10)} - CONTEXT-LOCAL - srgical`,
+    "",
+    `- Triggered an explicit local context refresh because ${agentLabel} was unavailable.`,
+    `- Reason: ${reason}.`,
+    createdFiles.length > 0
+      ? `- Created missing planning-pack files: ${createdFiles.join(", ")}.`
+      : "- Created missing planning-pack files: none.",
+    sourceSummary
+      ? `- Imported evidence: ${sourceSummary}.`
+      : "- Imported evidence: transcript-driven context refresh with no direct source files.",
+    transcriptSummary
+      ? `- Recent user direction: ${transcriptSummary}.`
+      : "- Recent user direction: no user transcript was available for summarization.",
+    `- Validation: local fallback context refresh completed without invoking ${agentLabel}.`,
+    `- Blockers: intelligent context reshaping remains unavailable until ${agentLabel} is restored.`
   ].join("\n");
 }
 
@@ -139,6 +208,22 @@ function sanitizeInlineText(value: string): string {
   }
 
   return `${collapsed.slice(0, 177).trimEnd()}...`;
+}
+
+function summarizeContextSources(sources: ContextRefreshSource[]): string {
+  const summarized = sources
+    .map((source) => {
+      const pathLabel = sanitizeInlineText(source.path);
+      const body = sanitizeInlineText(source.content);
+      return body ? `${pathLabel} -> ${body}` : pathLabel;
+    })
+    .filter(Boolean);
+
+  if (summarized.length === 0) {
+    return "";
+  }
+
+  return summarized.slice(0, 3).join(" | ");
 }
 
 function appendFallbackEntry(context: string, entry: string): string {

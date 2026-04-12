@@ -4,13 +4,21 @@ import os from "node:os";
 import path from "node:path";
 import type { AgentInvocationOptions } from "./agent";
 import type { PlanDiceOptions } from "./plan-dicing";
-import { writePlanningPackFallback } from "./local-pack";
+import { refreshContextDocumentFallback, writePlanningPackFallback } from "./local-pack";
 import {
   formatPlanningEpochSummary,
   preparePlanningPackForWrite,
   type PlanningEpochPreparation
 } from "./planning-epochs";
-import { buildAdvicePrompt, buildPackWriterPrompt, buildPlanDicePrompt, buildPlannerPrompt, type ChatMessage } from "./prompts";
+import {
+  buildAdvicePrompt,
+  buildContextRefreshPrompt,
+  buildPackWriterPrompt,
+  buildPlanDicePrompt,
+  buildPlannerPrompt,
+  type ChatMessage,
+  type ContextRefreshSource
+} from "./prompts";
 import { readPlanningPackState, type PlanningPackState } from "./planning-pack-state";
 
 export type ClaudeStatus = {
@@ -162,6 +170,46 @@ export async function writePlanningPack(
 
     if (epochSummary) {
       throw new Error(`${epochSummary}\n${message}`);
+    }
+
+    throw error;
+  }
+}
+
+export async function refreshContextDocument(
+  workspaceRoot: string,
+  messages: ChatMessage[],
+  sources: ContextRefreshSource[],
+  options: AgentInvocationOptions = {}
+): Promise<string> {
+  const claudeStatus = await detectClaude();
+
+  if (!claudeStatus.available) {
+    return refreshContextDocumentFallback(
+      workspaceRoot,
+      messages,
+      sources,
+      claudeStatus.error ?? "Claude Code CLI is unavailable",
+      "Claude Code",
+      options
+    );
+  }
+
+  try {
+    const result = await runClaudeExec({
+      cwd: workspaceRoot,
+      prompt: await buildContextRefreshPrompt(messages, workspaceRoot, sources, options),
+      permissionMode: "acceptEdits",
+      allowedTools: CLAUDE_WRITE_ALLOW_TOOLS,
+      maxTurns: 16,
+      onOutputChunk: options.onOutputChunk
+    });
+
+    return result.lastMessage.trim();
+  } catch (error) {
+    if (isClaudeUnavailableError(error)) {
+      const message = error instanceof Error ? error.message : "Claude Code CLI is unavailable";
+      return refreshContextDocumentFallback(workspaceRoot, messages, sources, message, "Claude Code", options);
     }
 
     throw error;

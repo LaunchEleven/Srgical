@@ -4,13 +4,21 @@ import os from "node:os";
 import path from "node:path";
 import type { AgentInvocationOptions } from "./agent";
 import type { PlanDiceOptions } from "./plan-dicing";
-import { writePlanningPackFallback } from "./local-pack";
+import { refreshContextDocumentFallback, writePlanningPackFallback } from "./local-pack";
 import {
   formatPlanningEpochSummary,
   preparePlanningPackForWrite,
   type PlanningEpochPreparation
 } from "./planning-epochs";
-import { buildAdvicePrompt, buildPackWriterPrompt, buildPlanDicePrompt, buildPlannerPrompt, type ChatMessage } from "./prompts";
+import {
+  buildAdvicePrompt,
+  buildContextRefreshPrompt,
+  buildPackWriterPrompt,
+  buildPlanDicePrompt,
+  buildPlannerPrompt,
+  type ChatMessage,
+  type ContextRefreshSource
+} from "./prompts";
 import { readPlanningPackState, type PlanningPackState } from "./planning-pack-state";
 
 export type CodexStatus = {
@@ -145,6 +153,46 @@ export async function writePlanningPack(
 
     if (epochSummary) {
       throw new Error(`${epochSummary}\n${message}`);
+    }
+
+    throw error;
+  }
+}
+
+export async function refreshContextDocument(
+  workspaceRoot: string,
+  messages: ChatMessage[],
+  sources: ContextRefreshSource[],
+  options: AgentInvocationOptions = {}
+): Promise<string> {
+  const codexStatus = await detectCodex();
+
+  if (!codexStatus.available) {
+    return refreshContextDocumentFallback(
+      workspaceRoot,
+      messages,
+      sources,
+      codexStatus.error ?? "Codex is unavailable",
+      "Codex",
+      options
+    );
+  }
+
+  try {
+    const result = await runCodexExec({
+      cwd: workspaceRoot,
+      prompt: await buildContextRefreshPrompt(messages, workspaceRoot, sources, options),
+      allowWrite: true,
+      skipGitRepoCheck: true,
+      ephemeral: false,
+      onOutputChunk: options.onOutputChunk
+    });
+
+    return result.lastMessage.trim();
+  } catch (error) {
+    if (isCodexUnavailableError(error)) {
+      const message = error instanceof Error ? error.message : "Codex is unavailable";
+      return refreshContextDocumentFallback(workspaceRoot, messages, sources, message, "Codex", options);
     }
 
     throw error;

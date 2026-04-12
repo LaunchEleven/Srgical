@@ -9,8 +9,14 @@ export type ChatMessage = {
   content: string;
 };
 
+export type ContextRefreshSource = {
+  path: string;
+  content: string;
+};
+
 const REPO_FILE_LIST_LIMIT = 24;
 const FILE_SNIPPET_LIMIT = 2200;
+const CONTEXT_REFRESH_SOURCE_LIMIT = 12000;
 const PLANNER_BLOCKER_QUESTION_BUDGET = 3;
 export const PLANNING_FRAMEWORK_WRAPPER = [
   "Planning framework wrapper:",
@@ -58,6 +64,8 @@ Rules:
 - Optimize for shipping a concrete first version.
 - Target practical sufficiency for execution handoff quality, not theoretical completeness.
 - Keep tone confident and clear, with zero fluff.
+- The prepare framework also has a direct context-sync path for updating context.md when the user imports material or explicitly asks to capture new context.
+- Never frame context.md updates as impossible in principle; they are a supported action even though this conversation-only mode does not perform the write itself.
 - The current workspace is: ${workspaceRoot}
 
 ${PLANNING_FRAMEWORK_WRAPPER}
@@ -168,6 +176,69 @@ Quality bar:
 Repo truth snapshot:
 
 ${repoTruth}
+
+Conversation transcript:
+
+${renderTranscript(messages)}
+`;
+}
+
+export async function buildContextRefreshPrompt(
+  messages: ChatMessage[],
+  workspaceRoot: string,
+  sources: ContextRefreshSource[],
+  options: PlanningPathOptions = {}
+): Promise<string> {
+  const paths = getPlanningPackPaths(workspaceRoot, options);
+  const repoTruth = await buildRepoTruthSnapshot(workspaceRoot, options);
+  const existingContext = await readOptionalAbsoluteSnippet(paths.context, workspaceRoot, FILE_SNIPPET_LIMIT);
+  const renderedSources = sources.length > 0
+    ? sources
+      .map((source) =>
+        renderNamedSnippet(
+          source.path,
+          limitText(source.content.trim(), CONTEXT_REFRESH_SOURCE_LIMIT)
+        )
+      )
+      .join("\n\n")
+    : "- none";
+
+  return `You are updating the living context document for the active srgical prepare pack.
+
+Update only this file under .srgical/:
+
+- context.md
+
+This action exists specifically so newly gathered evidence, imported planning notes, and explicit user direction can be folded into context.md without waiting for the full draft-build step.
+
+Operating rules:
+- Do not claim you are blocked from writing context.md. This workflow is the direct context-sync path.
+- Treat context.md as a living working document that should be refined in place as the team's understanding improves.
+- Preserve the document identity, including the SRGICAL doc-state marker, title, Updated fields, and SRGICAL META section.
+- Keep the main sections recognizable: Repo Truth, Evidence Gathered, Unknowns To Resolve, and Working Agreements.
+- Integrate the new source material thoughtfully instead of blindly pasting it. Carry forward confirmed facts, constraints, decisions, and useful open questions.
+- If imported material already contains a fleshed-out plan, capture that content as evidence, working agreements, or clarified unknowns unless it is already confirmed in the repo or transcript.
+- Prefer precise repo truth and transcript facts over generic advice.
+- Remove or reshape stale context when the new evidence supersedes it.
+- Do not edit plan.md, tracker.md, changes.md, or manifest.json in this action.
+
+Quality bar for context.md:
+- Repo Truth should explain what is already true in the repo or workflow today.
+- Evidence Gathered should summarize the important imported or discovered material clearly enough that later draft generation can rely on it.
+- Unknowns To Resolve should stay honest and current.
+- Working Agreements should reflect the latest confirmed operating expectations.
+
+Repo truth snapshot:
+
+${repoTruth}
+
+Current context.md:
+
+${renderNamedSnippet(".srgical/plans/<id>/context.md", existingContext)}
+
+New source material to integrate:
+
+${renderedSources}
 
 Conversation transcript:
 
