@@ -16,7 +16,8 @@ export type ContextRefreshSource = {
 
 const REPO_FILE_LIST_LIMIT = 24;
 const FILE_SNIPPET_LIMIT = 2200;
-const CONTEXT_REFRESH_SOURCE_LIMIT = 12000;
+const CONTEXT_DOC_SNIPPET_LIMIT = 80000;
+const CONTEXT_REFRESH_SOURCE_LIMIT = 80000;
 const PLANNER_BLOCKER_QUESTION_BUDGET = 3;
 export const PLANNING_FRAMEWORK_WRAPPER = [
   "Planning framework wrapper:",
@@ -191,7 +192,7 @@ export async function buildContextRefreshPrompt(
 ): Promise<string> {
   const paths = getPlanningPackPaths(workspaceRoot, options);
   const repoTruth = await buildRepoTruthSnapshot(workspaceRoot, options);
-  const existingContext = await readOptionalAbsoluteSnippet(paths.context, workspaceRoot, FILE_SNIPPET_LIMIT);
+  const existingContext = await readOptionalAbsoluteSnippet(paths.context, workspaceRoot, CONTEXT_DOC_SNIPPET_LIMIT);
   const renderedSources = sources.length > 0
     ? sources
       .map((source) =>
@@ -217,6 +218,7 @@ Operating rules:
 - Preserve the document identity, including the SRGICAL doc-state marker, title, Updated fields, and SRGICAL META section.
 - Keep the main sections recognizable: Repo Truth, Evidence Gathered, Unknowns To Resolve, and Working Agreements.
 - Integrate the new source material thoughtfully instead of blindly pasting it. Carry forward confirmed facts, constraints, decisions, and useful open questions.
+- When the user imported an implementation spec or long plan document, preserve that material with high fidelity so the full source intent remains available in context.md.
 - If imported material already contains a fleshed-out plan, capture that content as evidence, working agreements, or clarified unknowns unless it is already confirmed in the repo or transcript.
 - Prefer precise repo truth and transcript facts over generic advice.
 - Remove or reshape stale context when the new evidence supersedes it.
@@ -383,7 +385,7 @@ async function buildRepoTruthSnapshot(workspaceRoot: string, options: PlanningPa
     readSnippet(workspaceRoot, "docs/product-foundation.md", FILE_SNIPPET_LIMIT),
     readSnippet(workspaceRoot, "docs/adr/0001-tech-stack.md", FILE_SNIPPET_LIMIT),
     readOptionalAbsoluteSnippet(paths.plan, workspaceRoot, FILE_SNIPPET_LIMIT),
-    readOptionalAbsoluteSnippet(paths.context, workspaceRoot, FILE_SNIPPET_LIMIT),
+    readOptionalAbsoluteSnippet(paths.context, workspaceRoot, CONTEXT_DOC_SNIPPET_LIMIT),
     readOptionalAbsoluteSnippet(paths.tracker, workspaceRoot, FILE_SNIPPET_LIMIT),
     readOptionalAbsoluteSnippet(paths.changes, workspaceRoot, FILE_SNIPPET_LIMIT),
     readOptionalAbsoluteSnippet(paths.manifest, workspaceRoot, FILE_SNIPPET_LIMIT)

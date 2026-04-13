@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { writeFile } from "node:fs/promises";
 import { buildContextRefreshPrompt, buildPackWriterPrompt, buildPlanDicePrompt, buildPlannerPrompt, type ChatMessage } from "../../src/core/prompts";
 import type { PlanningPackState } from "../../src/core/planning-pack-state";
 import { createTempWorkspace, writePlanningPack } from "../helpers/workspace";
@@ -56,6 +57,27 @@ test("build-pack-writer-prompt references the rebooted prepare pack files", asyn
   assert.match(prompt, /manifest\.json/);
   assert.match(prompt, /tracker\.md must use only these statuses: todo, doing, blocked, done, skipped\./);
   assert.match(prompt, /Type column using research, spike, build, validate, or rollout/);
+});
+
+test("build-pack-writer-prompt includes deep context evidence beyond the old short snippet window", async () => {
+  const workspace = await createTempWorkspace("srgical-pack-writer-context-window-");
+  const paths = await writePlanningPack(workspace, { planId: "proto" });
+  const deepAnchor = "DEEP_CONTEXT_ANCHOR";
+  const expandedContext = [
+    "<!-- SRGICAL:DOC_STATE {\"version\":1,\"docKey\":\"context\",\"state\":\"grounded\"} -->",
+    "",
+    "# Context",
+    "",
+    "## Evidence Gathered",
+    "",
+    `${"x".repeat(7000)}${deepAnchor}`
+  ].join("\n");
+
+  await writeFile(paths.context, expandedContext, "utf8");
+
+  const prompt = await buildPackWriterPrompt([{ role: "user", content: "Refresh the draft." }], workspace, { planId: "proto" });
+
+  assert.match(prompt, new RegExp(deepAnchor));
 });
 
 test("build-context-refresh-prompt focuses on updating the living context doc", async () => {

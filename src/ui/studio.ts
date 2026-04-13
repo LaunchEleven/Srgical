@@ -53,7 +53,6 @@ type StudioPalette = {
 
 const FILE_LIMIT = 6;
 const SNIPPET_LIMIT = 1600;
-const IMPORT_SOURCE_LIMIT = 24000;
 const GATHER_SOURCE_LIMIT = 6000;
 const STUDIO_STREAM_CHAR_DELAY_MS = 4;
 const STUDIO_THEME = {
@@ -203,7 +202,7 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
   const refresh = async () => { state = await readPlanningPackState(workspace, { planId }); agent = await resolvePrimaryAgent(workspace, { planId }); render(); };
   const push = async (message: ChatMessage) => { messages.push(message); await persistMessages(); render(); };
   const system = async (content: string) => { await push({ role: "system", content }); };
-  const readContextSource = async (rawPath: string, sourceLimit = GATHER_SOURCE_LIMIT) => {
+  const readContextSource = async (rawPath: string, sourceLimit: number | null = GATHER_SOURCE_LIMIT) => {
     const resolvedPath = resolveStudioContextPath(workspace, rawPath);
     const body = await readText(resolvedPath);
     const label = toStudioContextLabel(workspace, resolvedPath);
@@ -221,12 +220,14 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
     sources: Array<{ path: string; content: string }>,
     options: {
       completionLabel: string;
+      preserveSourcesVerbatim?: boolean;
     }
   ) => {
     const liveResult = startLiveMessage("system", `${options.completionLabel} is running...\n\n`);
     try {
       const result = await syncPlanningContext(workspace, [...messages], sources, {
         planId,
+        preserveSourcesVerbatim: options.preserveSourcesVerbatim,
         onOutputChunk: (chunk) => { liveResult.append(chunk); }
       });
       await refresh();
@@ -249,12 +250,13 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
 
     busy = true; render("importing context...");
     try {
-      const loaded = await readContextSource(requestedPath, IMPORT_SOURCE_LIMIT);
+      const loaded = await readContextSource(requestedPath, null);
       await system(
         `Loaded context file: ${loaded.label}\n\n===== BEGIN FILE ${loaded.label} =====\n${limitStudioSnippet(loaded.body.trim())}\n===== END FILE ${loaded.label} =====`
       );
       const result = await refreshContext([loaded.source], {
-        completionLabel: "Context Import"
+        completionLabel: "Context Import",
+        preserveSourcesVerbatim: true
       });
       await system(`Imported context from ${loaded.label}.\nNext action: ${result.nextAction}`);
     } catch (error) {
@@ -789,8 +791,8 @@ function toStudioContextLabel(workspaceRoot: string, filePath: string): string {
   return relative && !relative.startsWith("..") ? relative : path.resolve(filePath).replace(/\\/g, "/");
 }
 
-function limitContextSource(value: string, maxChars: number): string {
-  if (value.length <= maxChars) {
+function limitContextSource(value: string, maxChars: number | null): string {
+  if (!maxChars || maxChars <= 0 || value.length <= maxChars) {
     return value;
   }
 
