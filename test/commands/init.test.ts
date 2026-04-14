@@ -8,6 +8,7 @@ import { pathToFileURL } from "node:url";
 import { runInitCommand } from "../../src/commands/init";
 import { ensurePreparePack } from "../../src/core/prepare-pack";
 import { readPlanningPackState } from "../../src/core/planning-pack-state";
+import { loadStudioUiConfig } from "../../src/core/studio-ui-config";
 import { ensurePlanningDir, readActivePlanId, readText, writeText } from "../../src/core/workspace";
 import { createTempWorkspace } from "../helpers/workspace";
 
@@ -24,6 +25,8 @@ test("ensurePreparePack creates the new prepare pack files and activates the pla
   assert.match(await readText(paths.context), /## Repo Truth/);
   assert.match(await readText(paths.tracker), /- Next step: `DISCOVER-001`/);
   assert.match(await readText(paths.changes), /Created the initial prepare pack\./);
+  assert.equal((await loadStudioUiConfig(workspace, { planId: "release-readiness" })).wheelSensitivity, 2);
+  assert.match(await readText(paths.studioUiConfig), /"wheelSensitivity":\s*2/);
   assert.equal(manifest.stage, "discover");
   assert.match(manifest.nextAction, /Gather more evidence/i);
   assert.equal(state.mode, "Discover");
@@ -43,6 +46,29 @@ test("ensurePreparePack rejects legacy-only packs in the rebooted release", asyn
     () => ensurePreparePack(workspace, { planId: "proto" }),
     /Legacy plan packs using `01-product-plan\.md` \/ `HandoffDoc\.md` are intentionally unsupported in this release\./
   );
+});
+
+test("ensurePreparePack preserves an existing studio ui config instead of resetting it", async () => {
+  const workspace = await createTempWorkspace("srgical-prepare-pack-preserve-ui-config-");
+  const first = await ensurePreparePack(workspace, { planId: "release-readiness" });
+
+  await writeText(
+    first.studioUiConfig,
+    JSON.stringify(
+      {
+        version: 1,
+        updatedAt: "2026-04-14T00:00:00.000Z",
+        wheelSensitivity: 9
+      },
+      null,
+      2
+    )
+  );
+
+  await ensurePreparePack(workspace, { planId: "release-readiness" });
+
+  const persisted = await loadStudioUiConfig(workspace, { planId: "release-readiness" });
+  assert.equal(persisted.wheelSensitivity, 9);
 });
 
 test("init is kept only to explain the rebooted workflow", async () => {

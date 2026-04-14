@@ -25,6 +25,7 @@ export type PlanningPackPaths = {
   manifest: string;
   studioSession: string;
   studioOperateConfig: string;
+  studioUiConfig: string;
   executionState: string;
   executionLog: string;
   planningState: string;
@@ -74,6 +75,7 @@ export function getPlanningPackPaths(root: string, options: PlanningPathOptions 
     manifest: path.join(dir, "manifest.json"),
     studioSession: path.join(dir, "studio-session.json"),
     studioOperateConfig: path.join(dir, "studio-operate-config.json"),
+    studioUiConfig: path.join(dir, "studio-ui-config.json"),
     executionState: path.join(dir, "execution-state.json"),
     executionLog: path.join(dir, "execution-log.md"),
     planningState: path.join(dir, "planning-state.json"),

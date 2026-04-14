@@ -4,6 +4,7 @@ import { appendChangeSummary, buildChangeSummary, formatChangeSummaryHeadline, r
 import { ensurePlanManifest, updatePlanManifest, buildStepCountsFromRows } from "./plan-manifest";
 import { readPlanningPackState, parseTrackerRows, type PlanningMode } from "./planning-pack-state";
 import { savePlanningState } from "./planning-state";
+import { ensureStudioUiConfig } from "./studio-ui-config";
 import { getInitialTemplates } from "./templates";
 import {
   buildLegacyWorkflowError,
@@ -36,6 +37,8 @@ export async function ensurePreparePack(
     await savePlanningState(workspaceRoot, "scaffolded", { planId: paths.planId });
     await ensurePlanManifest(workspaceRoot, { planId: paths.planId });
   }
+
+  await ensureStudioUiConfig(workspaceRoot, { planId: paths.planId });
 
   await saveActivePlanId(workspaceRoot, paths.planId);
   return paths;

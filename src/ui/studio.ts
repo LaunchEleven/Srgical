@@ -23,6 +23,7 @@ import { ensurePreparePack, recordVisibleChange, snapshotRevisionIfNeeded } from
 import { recordPlanningPackWrite, setHumanWriteConfirmation } from "../core/planning-state";
 import { loadStudioSession, saveStudioSession } from "../core/studio-session";
 import { loadStudioOperateConfig, saveStudioOperateConfig } from "../core/studio-operate-config";
+import { loadStudioUiConfig, saveStudioUiConfig, MAX_WHEEL_SENSITIVITY, MIN_WHEEL_SENSITIVITY, wheelSensitivityToScrollStep } from "../core/studio-ui-config";
 import { unblockTrackerStep } from "../core/tracker-unblock";
 import { fileExists, getPlanningPackPaths, readText, resolvePlanId, resolveWorkspace, saveActivePlanId } from "../core/workspace";
 
@@ -83,6 +84,7 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
   let messages = await loadStudioSession(workspace, { planId });
   let state = await readPlanningPackState(workspace, { planId });
   let agent = await resolvePrimaryAgent(workspace, { planId });
+  let uiConfig = await loadStudioUiConfig(workspace, { planId });
   let inputValue = "";
   let busy = false;
   let gatheredFingerprint = "";
@@ -176,6 +178,7 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
       "",
       "{bold}Runtime{/bold}",
       `agent: ${agent.status.label}`,
+      `wheel: ${uiConfig.wheelSensitivity}/10 (${getScrollableWheelStep(uiConfig.wheelSensitivity)} line${getScrollableWheelStep(uiConfig.wheelSensitivity) === 1 ? "" : "s"}/notch)`,
       `status: ${status}`,
       "",
       "{bold}Actions{/bold}",
@@ -199,7 +202,12 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
   };
 
   const persistMessages = async () => { await saveStudioSession(workspace, messages, { planId }); };
-  const refresh = async () => { state = await readPlanningPackState(workspace, { planId }); agent = await resolvePrimaryAgent(workspace, { planId }); render(); };
+  const refresh = async () => {
+    state = await readPlanningPackState(workspace, { planId });
+    agent = await resolvePrimaryAgent(workspace, { planId });
+    uiConfig = await loadStudioUiConfig(workspace, { planId });
+    render();
+  };
   const push = async (message: ChatMessage) => { messages.push(message); await persistMessages(); render(); };
   const system = async (content: string) => { await push({ role: "system", content }); };
   const readContextSource = async (rawPath: string, sourceLimit: number | null = GATHER_SOURCE_LIMIT) => {
@@ -409,10 +417,13 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
           unknowns: state.unknowns.length > 0 ? state.unknowns : ["Desired outcome still needs a clean confirmation."],
           contextReady: false
         }, { planId });
+        await refreshPlanningAdvice(workspace, messages, { planId }).catch(() => null);
         await refresh();
       }
       await system(
-        `Auto-gather ${origin === "boot" ? "completed" : "updated"}.\nEvidence: ${(contextResult?.evidence ?? files).join(", ") || "none"}\nUnknowns: ${(contextResult?.unknowns ?? state.unknowns).join(" | ") || "none"}\nNext action: ${contextResult?.nextAction ?? state.nextAction}`
+        renderGatherFollowUp(state, state.advice, {
+          evidenceCount: (contextResult?.evidence ?? files).length
+        })
       );
     } catch (error) {
       await system(`Auto-gather failed: ${error instanceof Error ? error.message : String(error)}`);
@@ -576,6 +587,40 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
     await refresh(); await system(`Checkpoint mode ${updated.pauseForPr ? "enabled" : "disabled"}.`);
   };
 
+  const setWheelSensitivity = async (rawValue?: string) => {
+    const value = rawValue?.trim();
+    const paths = getPlanningPackPaths(workspace, { planId });
+
+    if (!value) {
+      await system(
+        [
+          `Wheel sensitivity: ${uiConfig.wheelSensitivity}/10 (${getScrollableWheelStep(uiConfig.wheelSensitivity)} line${getScrollableWheelStep(uiConfig.wheelSensitivity) === 1 ? "" : "s"}/notch).`,
+          `Config file: ${paths.relativeDir}/studio-ui-config.json`,
+          `Usage: :wheel <${MIN_WHEEL_SENSITIVITY}-${MAX_WHEEL_SENSITIVITY}>`
+        ].join("\n")
+      );
+      return;
+    }
+
+    const parsed = Number(value);
+
+    if (!Number.isFinite(parsed)) {
+      await system(`Wheel sensitivity must be a number between ${MIN_WHEEL_SENSITIVITY} and ${MAX_WHEEL_SENSITIVITY}.`);
+      return;
+    }
+
+    const updated = await saveStudioUiConfig(workspace, { wheelSensitivity: parsed }, { planId });
+    uiConfig = updated;
+    render();
+    await system(
+      [
+        `Wheel sensitivity set to ${updated.wheelSensitivity}/10.`,
+        `Applied wheel step: ${getScrollableWheelStep(updated.wheelSensitivity)} line${getScrollableWheelStep(updated.wheelSensitivity) === 1 ? "" : "s"} per notch.`,
+        `Saved: ${paths.relativeDir}/studio-ui-config.json`
+      ].join("\n")
+    );
+  };
+
   const resolveBlocker = async () => {
     const before = await readPackSnapshot(workspace, { planId });
     try {
@@ -648,6 +693,8 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
     if (command === ":run") { await runStep(); return; }
     if (command.startsWith(":auto")) { const raw = command.slice(":auto".length).trim(); const max = raw ? Number(raw) : undefined; await autoContinue(Number.isFinite(max) ? max : undefined); return; }
     if (command === ":checkpoint") { await toggleCheckpoint(); return; }
+    if (command === ":wheel") { await setWheelSensitivity(); return; }
+    if (command.startsWith(":wheel ")) { await setWheelSensitivity(command.slice(":wheel ".length)); return; }
     if (command === ":unblock") { await resolveBlocker(); return; }
     if (command === ":stop") { const result = await requestAutoRunStop(workspace, { planId }); await system(result.stopReason ?? "Stop requested."); await refresh(); return; }
     await system(`Unknown command: ${command}\nTry \`:help\` to list commands or \`:help commands\` for the quick command syntax explanation.`);
@@ -735,7 +782,7 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
       transcriptWheelHandled = false;
       return;
     }
-    scrollTranscriptBy(-3);
+    scrollTranscriptBy(-getScrollableWheelStep(uiConfig.wheelSensitivity));
   });
   screen.on("wheeldown", (data) => {
     if (!isMouseWithinElement(transcript, data)) return;
@@ -743,7 +790,7 @@ export async function launchStudio(options: StudioOptions = {}): Promise<void> {
       transcriptWheelHandled = false;
       return;
     }
-    scrollTranscriptBy(3);
+    scrollTranscriptBy(getScrollableWheelStep(uiConfig.wheelSensitivity));
   });
   transcript.on("click", () => { focusStudioInput(screen, input); });
   input.on("click", () => { focusStudioInput(screen, input); });
@@ -890,6 +937,67 @@ export function renderPlanningAdviceTranscript(advice: Pick<PlanningAdviceState,
   ].join("\n");
 }
 
+export function renderGatherFollowUp(
+  state: Pick<PlanningPackState, "readiness" | "nextAction">,
+  advice: Pick<PlanningAdviceState, "researchNeeded" | "nextAction"> | null | undefined,
+  options: { evidenceCount?: number } = {}
+): string {
+  const missing = new Set(state.readiness.missingLabels);
+  const evidenceCount = options.evidenceCount ?? 0;
+  const nextAction = advice?.nextAction || state.nextAction;
+  const firstResearchNeed = advice?.researchNeeded.find((item) => item.trim().length > 0) ?? "";
+
+  if (state.readiness.readyToWrite) {
+    return [
+      "Context is gathered and `context.md` is refreshed.",
+      "Next: press `F3` to build the draft."
+    ].join("\n");
+  }
+
+  if (missing.has("Desired outcome captured")) {
+    return [
+      "I refreshed `context.md`, but I still need one thing from you.",
+      "Need from you: say exactly what the first version should do."
+    ].join("\n");
+  }
+
+  if (missing.has("Repo context captured") && evidenceCount === 0) {
+    return [
+      "I did not find much repo truth automatically this pass.",
+      "Next: use `:import <path>` for the file that matters most, or tell me what part of the repo this plan should target."
+    ].join("\n");
+  }
+
+  if (missing.has("Constraints or decisions captured")) {
+    return [
+      "I refreshed `context.md`, but the plan still needs a few hard edges.",
+      "Need from you: name any must-haves, must-not-haves, or fixed tool choices."
+    ].join("\n");
+  }
+
+  if (missing.has("First safe slice captured")) {
+    return [
+      "I refreshed `context.md`, but the first execution slice is still fuzzy.",
+      "Need from you: name the first safe step you want us to plan around."
+    ].join("\n");
+  }
+
+  if (firstResearchNeed) {
+    return [
+      "I refreshed `context.md` and pulled together what I could.",
+      `Still missing: ${firstResearchNeed}`,
+      `Next: ${nextAction}`
+    ].join("\n");
+  }
+
+  return [
+    evidenceCount > 0
+      ? "I refreshed `context.md` with the latest gathered context."
+      : "I refreshed `context.md`, but this pass did not surface much new evidence.",
+    `Next: ${nextAction}`
+  ].join("\n");
+}
+
 export function shouldStickScrollableToBottom(element: Pick<ScrollableElement, "height" | "iheight" | "getScrollHeight" | "getScrollPerc">): boolean {
   const viewportHeight = getScrollableViewportHeight(element);
   if (viewportHeight <= 0) return true;
@@ -899,6 +1007,10 @@ export function shouldStickScrollableToBottom(element: Pick<ScrollableElement, "
 
 export function getScrollablePageStep(element: Pick<ScrollableElement, "height" | "iheight">): number {
   return Math.max(getScrollableViewportHeight(element) - 1, 1);
+}
+
+export function getScrollableWheelStep(wheelSensitivity = MIN_WHEEL_SENSITIVITY): number {
+  return wheelSensitivityToScrollStep(wheelSensitivity);
 }
 
 export function getPreferredStudioMouseOptions(): StudioMouseOptions {
@@ -1052,6 +1164,7 @@ export function renderPrepareHelpText(): string {
     "- `:slice`: slice the current draft using the recommended preset (`high + spike`).",
     "- `:slice [low|medium|high] [spike]`: override slice settings for this run.",
     "- `:slice --help`: show the slice arguments, defaults, and examples.",
+    "- `:wheel [1-10]`: show or set transcript mouse-wheel sensitivity (saved in `.srgical/plans/<id>/studio-ui-config.json`).",
     "- `/dice ...`: legacy compatibility alias for slicing; `/dice --help` shows the same option guide with legacy defaults.",
     "- `/read <path>` and `/import <path>` still work as compatibility aliases during prepare.",
     "- `:help commands`: explain the `:` command syntax quickly.",
@@ -1071,6 +1184,7 @@ export function renderOperateHelpText(): string {
     "- `:run`: execute the next queued step once.",
     "- `:auto [n]`: continue automatically for up to `n` steps, or the remaining queue when `n` is omitted.",
     "- `:checkpoint`: toggle PR checkpoint mode on or off.",
+    "- `:wheel [1-10]`: show or set transcript mouse-wheel sensitivity for this plan.",
     "- `:review`: show the latest visible change summary and manifest snapshot.",
     "- `:unblock`: move the current blocked step back to `todo` with retry notes.",
     "- `:help commands`: explain the `:` command syntax quickly.",
@@ -1088,7 +1202,7 @@ export function renderCommandSyntaxHelpText(mode: StudioMode): string {
     mode === "prepare"
       ? "- In prepare, plain text is normal chat with the planner."
       : "- In operate, plain text chat is disabled so commands stay explicit.",
-    "- Examples: `:help`, `:import notes.md`, `:context`, `:slice --help`, `:build`, `:run`, `:auto 3`.",
+    "- Examples: `:help`, `:import notes.md`, `:context`, `:slice --help`, `:wheel 3`, `:build`, `:run`, `:auto 3`.",
     "- Old slash commands are retired. Use `:` commands instead. `/dice`, `/help`, `/read <path>`, and `/import <path>` still work as compatibility shortcuts."
   ].join("\n");
 }

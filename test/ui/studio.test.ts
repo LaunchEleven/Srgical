@@ -5,12 +5,14 @@ import { mkdir, writeFile } from "node:fs/promises";
 import {
   clampScrollableScrollPosition,
   getScrollablePageStep,
+  getScrollableWheelStep,
   getPreferredStudioMouseOptions,
   getStudioPalette,
   handleTranscriptNavigationKey,
   limitStudioSnippet,
   normalizeStudioStreamChunk,
   planStudioProgressiveReveal,
+  renderGatherFollowUp,
   renderPlanningAdviceTranscript,
   renderStudioInputContent,
   resolveStudioInputCursor,
@@ -84,6 +86,82 @@ test("renderPlanningAdviceTranscript turns parsed advice into a readable transcr
   assert.match(rendered, /Clarity: mostly clear/);
   assert.match(rendered, /Research needed:/);
   assert.match(rendered, /Next action: Confirm the integration target\./);
+});
+
+test("renderGatherFollowUp points straight at build draft once gather has enough context", () => {
+  const rendered = renderGatherFollowUp(
+    {
+      readiness: {
+        checks: [],
+        score: 4,
+        total: 5,
+        approvalCaptured: false,
+        readyForFirstDraft: true,
+        readyToWrite: true,
+        readyToDice: false,
+        readyToApprove: false,
+        missingLabels: []
+      },
+      nextAction: "Build the draft."
+    },
+    {
+      researchNeeded: [],
+      nextAction: "Build the draft."
+    }
+  );
+
+  assert.match(rendered, /Context is gathered and `context\.md` is refreshed\./);
+  assert.match(rendered, /press `F3` to build the draft/);
+});
+
+test("renderGatherFollowUp asks for one concrete clarification when the outcome is still vague", () => {
+  const rendered = renderGatherFollowUp(
+    {
+      readiness: {
+        checks: [],
+        score: 2,
+        total: 5,
+        approvalCaptured: false,
+        readyForFirstDraft: false,
+        readyToWrite: false,
+        readyToDice: false,
+        readyToApprove: false,
+        missingLabels: ["Desired outcome captured"]
+      },
+      nextAction: "Clarify the desired outcome."
+    },
+    {
+      researchNeeded: ["Confirm the exact first-version outcome."],
+      nextAction: "Clarify the desired outcome."
+    }
+  );
+
+  assert.match(rendered, /I refreshed `context\.md`, but I still need one thing from you\./);
+  assert.match(rendered, /Need from you: say exactly what the first version should do\./);
+});
+
+test("renderGatherFollowUp explains when auto-gather could not find repo evidence", () => {
+  const rendered = renderGatherFollowUp(
+    {
+      readiness: {
+        checks: [],
+        score: 1,
+        total: 5,
+        approvalCaptured: false,
+        readyForFirstDraft: false,
+        readyToWrite: false,
+        readyToDice: false,
+        readyToApprove: false,
+        missingLabels: ["Repo context captured"]
+      },
+      nextAction: "Import a key repo file."
+    },
+    null,
+    { evidenceCount: 0 }
+  );
+
+  assert.match(rendered, /I did not find much repo truth automatically this pass\./);
+  assert.match(rendered, /use `:import <path>`/);
 });
 
 test("renderStudioTranscript applies the role colors and escapes transcript content", () => {
@@ -164,6 +242,13 @@ test("getScrollablePageStep uses the visible transcript height and never drops b
     height: "100%-10",
     iheight: 4
   }), 1);
+});
+
+test("getScrollableWheelStep keeps wheel scrolling smooth and incremental", () => {
+  assert.equal(getScrollableWheelStep(), 1);
+  assert.equal(getScrollableWheelStep(2), 1);
+  assert.equal(getScrollableWheelStep(3), 2);
+  assert.equal(getScrollableWheelStep(10), 5);
 });
 
 test("getPreferredStudioMouseOptions opts into modern mouse reporting", () => {
@@ -248,7 +333,7 @@ test("command syntax help explains that :command is not literal in prepare mode"
 
   assert.match(help, /There is no literal `:command` command/);
   assert.match(help, /In prepare, plain text is normal chat with the planner/);
-  assert.match(help, /Examples: `:help`, `:import notes\.md`, `:context`, `:slice --help`, `:build`, `:run`, `:auto 3`/);
+  assert.match(help, /Examples: `:help`, `:import notes\.md`, `:context`, `:slice --help`, `:wheel 3`, `:build`, `:run`, `:auto 3`/);
   assert.match(help, /Old slash commands are retired/);
 });
 
