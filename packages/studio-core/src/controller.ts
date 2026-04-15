@@ -37,6 +37,7 @@ import {
 } from "../../../apps/cli/src/core/studio-ui-config";
 import { unblockTrackerStep } from "../../../apps/cli/src/core/tracker-unblock";
 import { getPlanningPackPaths, readText, resolvePlanId, resolveWorkspace, saveActivePlanId } from "../../../apps/cli/src/core/workspace";
+import { getWorkspaceBranchName } from "../../../apps/cli/src/core/worktree-lanes";
 import { getStudioTheme, type StudioMode } from "@srgical/studio-shared";
 import {
   delayStudioStream,
@@ -68,6 +69,8 @@ type StudioControllerOptions = {
   workspace?: string;
   planId?: string | null;
   mode?: StudioMode;
+  repoRoot?: string;
+  laneId?: string;
 };
 
 export async function createStudioController(options: StudioControllerOptions = {}): Promise<StudioController> {
@@ -90,6 +93,7 @@ export async function createStudioController(options: StudioControllerOptions = 
   let agent = await resolvePrimaryAgent(workspace, { planId });
   let uiConfig = await loadStudioUiConfig(workspace, { planId });
   let settings = await loadStudioSettings();
+  let branchName = await getWorkspaceBranchName(workspace).catch(() => null);
   let busy = false;
   let busyStatus = "ready";
   let gatheredFingerprint = "";
@@ -100,7 +104,10 @@ export async function createStudioController(options: StudioControllerOptions = 
     mode,
     workspace,
     workspaceLabel: path.basename(workspace) || workspace,
+    repoRoot: options.repoRoot ?? workspace,
     planId,
+    laneId: options.laneId ?? "current",
+    branchName,
     messages: messages.map((message) => ({ role: message.role, content: message.content })),
     state,
     busy,
@@ -136,6 +143,7 @@ export async function createStudioController(options: StudioControllerOptions = 
     agent = await resolvePrimaryAgent(workspace, { planId });
     uiConfig = await loadStudioUiConfig(workspace, { planId });
     settings = await loadStudioSettings();
+    branchName = await getWorkspaceBranchName(workspace).catch(() => branchName);
     publishSnapshot();
   };
 

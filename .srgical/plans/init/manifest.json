@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "planId": "init",
+  "updatedAt": "2026-04-15T13:51:58.568Z",
+  "stage": "discover",
+  "nextAction": "Ask the user for the exact outcome this `init` plan should achieve, then gather the matching `apps/` or `packages/` implementation area.",
+  "nextStepId": "DISCOVER-001",
+  "revision": 0,
+  "stepCounts": {
+    "todo": 1,
+    "doing": 0,
+    "blocked": 0,
+    "done": 1,
+    "skipped": 0,
+    "total": 2
+  },
+  "executionMode": "step",
+  "lastPreparedAt": null,
+  "lastOperatedAt": null,
+  "lastRefinedAt": "2026-04-15T13:51:58.568Z",
+  "lastChangeSummary": "Refreshed the living context doc. | docs 3 | added 0 | edited 0 | done 0",
+  "evidence": [
+    "package.json",
+    "README.md",
+    "docs/product-foundation.md"
+  ],
+  "unknowns": [
+    "Confirm the exact deliverable, change, or decision this `init` plan is meant to produce.",
+    "Inspect the relevant `apps/` or `packages/` area to map existing seams before drafting execution steps."
+  ],
+  "contextReady": false,
+  "approvedAt": null
+}

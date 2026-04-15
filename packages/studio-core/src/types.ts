@@ -39,11 +39,53 @@ export type StudioActionState = {
   blockedReason: string | null;
 };
 
+export type LaneSummary = {
+  laneId: string;
+  planId: string | null;
+  branchName: string | null;
+  worktreePath: string;
+  workspaceLabel: string;
+  dirty: boolean;
+  archived: boolean;
+  removed: boolean;
+  isCurrentCheckout: boolean;
+  canRemove: boolean;
+  deleteLocked: boolean;
+  lastMode: StudioMode | null;
+  createdAt: string | null;
+  openedAt: string | null;
+  unlockedAt: string | null;
+  source: "current" | "managed" | "detected";
+};
+
+export type RepoSnapshot = {
+  repoRoot: string;
+  repoLabel: string;
+  currentWorkspace: string;
+  requestedPlanId: string | null;
+  requestedMode: StudioMode | null;
+  lanes: LaneSummary[];
+};
+
+export type LaneCreateRequest = {
+  planId: string;
+  mode: StudioMode;
+};
+
+export type LaneOpenResponse = {
+  laneId: string;
+  studioToken: string;
+  url: string;
+};
+
 export type StudioSnapshot = {
   mode: StudioMode;
   workspace: string;
   workspaceLabel: string;
+  repoRoot: string;
   planId: string;
+  laneId: string;
+  branchName: string | null;
   messages: ChatMessage[];
   state: PlanningPackState;
   busy: boolean;

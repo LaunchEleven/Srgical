@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "updatedAt": "2026-04-15T14:46:46.755Z",
+  "lanes": [
+    {
+      "laneId": "init",
+      "planId": "init",
+      "branchName": "srgical/init",
+      "worktreePath": "G:\\code\\Launch11Projects\\.srgical-worktrees\\srgical\\init",
+      "createdAt": "2026-04-15T13:39:13.929Z",
+      "openedAt": "2026-04-15T13:49:09.383Z",
+      "archivedAt": null,
+      "removedAt": "2026-04-15T14:46:46.754Z",
+      "lastMode": "prepare",
+      "deleteLocked": false,
+      "unlockedAt": "2026-04-15T14:46:43.832Z"
+    },
+    {
+      "laneId": "init-2",
+      "planId": "init",
+      "branchName": "srgical/init-2",
+      "worktreePath": "G:\\code\\Launch11Projects\\.srgical-worktrees\\srgical\\init-2",
+      "createdAt": "2026-04-15T13:41:26.173Z",
+      "openedAt": "2026-04-15T14:36:41.813Z",
+      "archivedAt": null,
+      "removedAt": "2026-04-15T14:46:38.298Z",
+      "lastMode": "prepare",
+      "deleteLocked": false,
+      "unlockedAt": "2026-04-15T14:46:31.944Z"
+    }
+  ]
+}
