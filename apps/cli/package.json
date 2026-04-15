@@ -1,0 +1,59 @@
+{
+  "name": "@launcheleven/srgical",
+  "version": "0.0.0",
+  "description": "A polished local-first CLI for planning and executing long AI-driven delivery sequences.",
+  "files": [
+    "dist",
+    "README.md",
+    "CHANGELOG.md",
+    "postinstall.js",
+    "LICENSE"
+  ],
+  "bin": {
+    "srgical": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json && node scripts/sync-web-dist.mjs",
+    "dev": "tsx src/index.ts",
+    "start": "node dist/index.js",
+    "postinstall": "node postinstall.js",
+    "status": "tsx src/index.ts status",
+    "test": "tsx --test test/**/*.test.ts",
+    "test:coverage": "tsx --test --experimental-test-coverage test/**/*.test.ts"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/LaunchEleven/Srgical.git"
+  },
+  "homepage": "https://github.com/LaunchEleven/Srgical#readme",
+  "bugs": {
+    "url": "https://github.com/LaunchEleven/Srgical/issues"
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
+  },
+  "keywords": [
+    "ai",
+    "cli",
+    "codex",
+    "agent",
+    "orchestration",
+    "planning"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "@srgical/studio-core": "0.0.0",
+    "@srgical/studio-shared": "0.0.0",
+    "blessed": "^0.1.81",
+    "commander": "^14.0.3"
+  },
+  "devDependencies": {
+    "@types/blessed": "^0.1.27",
+    "@types/node": "^25.5.0",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3"
+  }
+}

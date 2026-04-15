@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import {
+  cliRoot,
   npmCommand,
   packStagedPackage,
   prepareStagedPackage,
@@ -23,7 +24,7 @@ await rm(releaseDir, { recursive: true, force: true });
 await mkdir(releaseDir, { recursive: true });
 
 runChecked(npmCommand, ["run", "build"], { cwd: root });
-runChecked(process.execPath, ["dist/index.js", "status", "--plan", releaseValidationPlanId], { cwd: root });
+runChecked(process.execPath, ["apps/cli/dist/index.js", "status", "--plan", releaseValidationPlanId], { cwd: root });
 
 await prepareStagedPackage({
   stagingDir: githubStagingDir,
@@ -64,7 +65,7 @@ const manifest = {
   },
   validation: [
     "npm run build",
-    `node dist/index.js status --plan ${releaseValidationPlanId}`,
+    `node apps/cli/dist/index.js status --plan ${releaseValidationPlanId}`,
     "npm pack --pack-destination .artifacts/release (staged package copies)"
   ],
   artifacts: [githubArtifact, npmArtifact],

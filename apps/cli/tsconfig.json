@@ -1,0 +1,15 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@srgical/studio-core": ["../../packages/studio-core/dist/packages/studio-core/src/index.d.ts"],
+      "@srgical/studio-shared": ["../../packages/studio-shared/dist/index.d.ts"]
+    },
+    "rootDir": "src",
+    "outDir": "dist"
+  },
+  "include": [
+    "src/**/*.ts"
+  ]
+}

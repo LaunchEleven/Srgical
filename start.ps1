@@ -33,5 +33,5 @@ if (-not $SkipBuild) {
 }
 
 Write-Host ("Starting srgical " + ($resolvedArgs -join " ") + "...")
-& node dist/index.js $resolvedArgs
+& node apps/cli/dist/index.js $resolvedArgs
 exit $LASTEXITCODE

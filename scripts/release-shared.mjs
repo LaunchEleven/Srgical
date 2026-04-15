@@ -5,10 +5,11 @@ import { fileURLToPath } from "node:url";
 
 export const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 export const root = path.resolve(scriptDir, "..");
+export const cliRoot = path.join(root, "apps", "cli");
 export const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
 
 export async function readBasePackageJson() {
-  return JSON.parse(await readFile(path.join(root, "package.json"), "utf8"));
+  return JSON.parse(await readFile(path.join(cliRoot, "package.json"), "utf8"));
 }
 
 export async function resolveReleaseState() {
@@ -106,7 +107,7 @@ export async function packStagedPackage(stagingDir, releaseDir) {
 
 export function versionExists(name, version, registry, env = process.env) {
   const result = spawnSync(npmCommand, ["view", `${name}@${version}`, "version", "--registry", registry], {
-    cwd: root,
+    cwd: cliRoot,
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
     env
@@ -214,7 +215,7 @@ function compareSemverDesc(left, right) {
 }
 
 async function copyFromRoot(relativePath, stagingDir) {
-  const sourcePath = path.join(root, relativePath);
+  const sourcePath = path.join(cliRoot, relativePath);
   const destinationPath = path.join(stagingDir, relativePath);
   await mkdir(path.dirname(destinationPath), { recursive: true });
   await cp(sourcePath, destinationPath, { recursive: true });

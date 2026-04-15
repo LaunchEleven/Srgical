@@ -1,26 +1,17 @@
 {
-  "name": "@launcheleven/srgical",
-  "version": "0.0.0",
-  "description": "A polished local-first CLI for planning and executing long AI-driven delivery sequences.",
-  "files": [
-    "dist",
-    "README.md",
-    "CHANGELOG.md",
-    "postinstall.js",
-    "docs",
-    "LICENSE"
+  "name": "srgical-monorepo",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
   ],
-  "bin": {
-    "srgical": "dist/index.js"
-  },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "dev": "tsx src/index.ts",
-    "start": "node dist/index.js",
-    "postinstall": "node postinstall.js",
-    "status": "tsx src/index.ts status",
-    "test": "tsx --test test/**/*.test.ts",
-    "test:coverage": "tsx --test --experimental-test-coverage test/**/*.test.ts",
+    "build": "npm run build -w @srgical/studio-shared && npm run build -w @srgical/studio-core && npm run build -w @srgical/studio-web && npm run build -w @launcheleven/srgical",
+    "dev": "npm run dev -w @launcheleven/srgical --",
+    "start": "npm run start -w @launcheleven/srgical --",
+    "status": "npm run status -w @launcheleven/srgical --",
+    "test": "npm run test -w @launcheleven/srgical",
+    "test:coverage": "npm run test:coverage -w @launcheleven/srgical",
     "prepack": "npm run build",
     "release:pack": "node scripts/release-pack.mjs",
     "publish:github": "node scripts/publish-github.mjs",
@@ -30,35 +21,5 @@
   },
   "engines": {
     "node": ">=20"
-  },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/LaunchEleven/Srgical.git"
-  },
-  "homepage": "https://github.com/LaunchEleven/Srgical#readme",
-  "bugs": {
-    "url": "https://github.com/LaunchEleven/Srgical/issues"
-  },
-  "publishConfig": {
-    "registry": "https://npm.pkg.github.com"
-  },
-  "keywords": [
-    "ai",
-    "cli",
-    "codex",
-    "agent",
-    "orchestration",
-    "planning"
-  ],
-  "license": "MIT",
-  "dependencies": {
-    "blessed": "^0.1.81",
-    "commander": "^14.0.3"
-  },
-  "devDependencies": {
-    "@types/blessed": "^0.1.27",
-    "@types/node": "^25.5.0",
-    "tsx": "^4.21.0",
-    "typescript": "^5.9.3"
   }
 }
