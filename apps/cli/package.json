@@ -12,6 +12,10 @@
   "bin": {
     "srgical": "dist/index.js"
   },
+  "bundleDependencies": [
+    "@srgical/studio-core",
+    "@srgical/studio-shared"
+  ],
   "scripts": {
     "prebuild": "npm --prefix ../.. run build -w @srgical/studio-shared && npm --prefix ../.. run build -w @srgical/studio-core && npm --prefix ../.. run build -w @srgical/studio-web",
     "build": "tsc -p tsconfig.json && node scripts/sync-web-dist.mjs",

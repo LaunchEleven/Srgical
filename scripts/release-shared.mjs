@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { access, cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -65,6 +65,8 @@ export async function prepareStagedPackage({
       await copyFromRoot(requiredPath, stagingDir);
     }
   }
+
+  await bundleWorkspaceDependencies(packageJson, stagingDir);
 
   const stagedPackageJson = {
     ...packageJson,
@@ -219,6 +221,61 @@ async function copyFromRoot(relativePath, stagingDir) {
   const destinationPath = path.join(stagingDir, relativePath);
   await mkdir(path.dirname(destinationPath), { recursive: true });
   await cp(sourcePath, destinationPath, { recursive: true });
+}
+
+async function bundleWorkspaceDependencies(packageJson, stagingDir) {
+  const dependencyNames = Object.keys(packageJson.dependencies ?? {}).filter((name) => name.startsWith("@srgical/"));
+
+  for (const dependencyName of dependencyNames) {
+    const workspaceDir = resolveWorkspacePackageDir(dependencyName);
+    const dependencyPackageJson = JSON.parse(await readFile(path.join(workspaceDir, "package.json"), "utf8"));
+
+    runChecked(npmCommand, ["run", "build", "-w", dependencyName], { cwd: root });
+
+    const dependencyStagingDir = path.join(stagingDir, "node_modules", ...dependencyName.split("/"));
+    await rm(dependencyStagingDir, { recursive: true, force: true });
+    await mkdir(dependencyStagingDir, { recursive: true });
+
+    if (await pathExists(path.join(workspaceDir, "dist"))) {
+      await cp(path.join(workspaceDir, "dist"), path.join(dependencyStagingDir, "dist"), { recursive: true });
+    }
+
+    for (const maybeFile of ["README.md", "CHANGELOG.md", "LICENSE"]) {
+      if (await pathExists(path.join(workspaceDir, maybeFile))) {
+        await cp(path.join(workspaceDir, maybeFile), path.join(dependencyStagingDir, maybeFile), { recursive: true });
+      }
+    }
+
+    const stagedDependencyPackageJson = {
+      ...dependencyPackageJson,
+      private: false,
+      scripts: omitLifecycleScripts(dependencyPackageJson.scripts)
+    };
+
+    await writeFile(
+      path.join(dependencyStagingDir, "package.json"),
+      `${JSON.stringify(stagedDependencyPackageJson, null, 2)}\n`,
+      "utf8"
+    );
+  }
+}
+
+function resolveWorkspacePackageDir(packageName) {
+  const unscopedName = packageName.split("/").at(-1);
+  if (!unscopedName) {
+    throw new Error(`Could not resolve workspace package name for ${packageName}.`);
+  }
+
+  return path.join(root, "packages", unscopedName);
+}
+
+async function pathExists(targetPath) {
+  try {
+    await access(targetPath);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function omitLifecycleScripts(scripts = {}) {
