@@ -13,12 +13,15 @@
     "srgical": "dist/index.js"
   },
   "scripts": {
+    "prebuild": "npm --prefix ../.. run build -w @srgical/studio-shared && npm --prefix ../.. run build -w @srgical/studio-core && npm --prefix ../.. run build -w @srgical/studio-web",
     "build": "tsc -p tsconfig.json && node scripts/sync-web-dist.mjs",
     "dev": "tsx src/index.ts",
     "start": "node dist/index.js",
     "postinstall": "node postinstall.js",
     "status": "tsx src/index.ts status",
+    "pretest": "npm --prefix ../.. run build -w @srgical/studio-shared && npm --prefix ../.. run build -w @srgical/studio-core",
     "test": "tsx --test test/**/*.test.ts",
+    "pretest:coverage": "npm --prefix ../.. run build -w @srgical/studio-shared && npm --prefix ../.. run build -w @srgical/studio-core",
     "test:coverage": "tsx --test --experimental-test-coverage test/**/*.test.ts"
   },
   "engines": {
