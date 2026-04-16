@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { writeFile } from "node:fs/promises";
+import path from "node:path";
 import {
   addReferenceRoot,
   listReferenceDirectoryOptions,
@@ -47,7 +48,7 @@ test("loadSelectedReferenceDocuments returns selected guidance snippets", async 
   const workspace = await createTempWorkspace("srgical-reference-library-");
   await writePlanningPack(workspace, { planId: "proto" });
   await writeFile(
-    `${workspace}\\README.md`,
+    path.join(workspace, "README.md"),
     "# Repo Playbook\n\nUse this guidance for architecture and testing decisions.",
     "utf8"
   );
@@ -65,10 +66,10 @@ test("loadSelectedReferenceDocuments returns selected guidance snippets", async 
 test("custom reference roots are stored and scanned for additional docs", async () => {
   const workspace = await createTempWorkspace("srgical-reference-roots-");
   await writePlanningPack(workspace, { planId: "proto" });
-  await writeFile(`${workspace}\\playbooks\\release.md`, "# Release Guide\n\nUse this during rollout.", "utf8").catch(async () => {
+  await writeFile(path.join(workspace, "playbooks", "release.md"), "# Release Guide\n\nUse this during rollout.", "utf8").catch(async () => {
     const { mkdir } = await import("node:fs/promises");
-    await mkdir(`${workspace}\\playbooks`, { recursive: true });
-    await writeFile(`${workspace}\\playbooks\\release.md`, "# Release Guide\n\nUse this during rollout.", "utf8");
+    await mkdir(path.join(workspace, "playbooks"), { recursive: true });
+    await writeFile(path.join(workspace, "playbooks", "release.md"), "# Release Guide\n\nUse this during rollout.", "utf8");
   });
 
   await addReferenceRoot(workspace, "playbooks", { planId: "proto" });
@@ -84,8 +85,8 @@ test("custom reference roots are stored and scanned for additional docs", async 
 test("listReferenceDirectoryOptions returns browsable repo directories", async () => {
   const workspace = await createTempWorkspace("srgical-reference-browser-");
   const { mkdir } = await import("node:fs/promises");
-  await mkdir(`${workspace}\\docs\\playbooks`, { recursive: true });
-  await mkdir(`${workspace}\\REFERENCE\\standards`, { recursive: true });
+  await mkdir(path.join(workspace, "docs", "playbooks"), { recursive: true });
+  await mkdir(path.join(workspace, "REFERENCE", "standards"), { recursive: true });
 
   const root = await listReferenceDirectoryOptions(workspace);
   assert.equal(root.directories.some((entry) => entry.path === "docs"), true);
