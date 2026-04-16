@@ -681,14 +681,16 @@ export async function createStudioController(options: StudioControllerOptions = 
     );
   };
 
-  const setTheme = async (themeId?: string) => {
+  const setTheme = async (themeId?: string, announce = true) => {
     if (!themeId) {
       await system(["Themes:", "- neon-command: Neon Command", "- amber-grid: Amber Grid"].join("\n"));
       return;
     }
     settings = await saveStudioSettings({ themeId });
     publishSnapshot();
-    await system(`Theme set to ${getStudioTheme(settings.themeId).label}.`);
+    if (announce) {
+      await system(`Theme set to ${getStudioTheme(settings.themeId).label}.`);
+    }
   };
 
   const resolveBlocker = async () => {
@@ -965,7 +967,7 @@ export async function createStudioController(options: StudioControllerOptions = 
           await setWheelSensitivity(typeof request.wheelSensitivity === "number" ? String(request.wheelSensitivity) : undefined);
           break;
         case "theme":
-          await setTheme(request.themeId);
+          await setTheme(request.themeId, request.announce !== false);
           break;
         case "reference-toggle":
           if (!request.referenceId) {

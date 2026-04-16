@@ -26,6 +26,11 @@ export type SelectedReferenceDocument = {
   contentSnippet: string;
 };
 
+export type ReferenceDirectoryOption = {
+  path: string;
+  name: string;
+};
+
 type StoredReferenceSelections = {
   version: 1;
   updatedAt: string;
@@ -191,6 +196,35 @@ export async function loadSelectedReferenceDocuments(
       contentSnippet: limitText(await readText(path.join(workspaceRoot, entry.path)).catch(() => ""), maxChars)
     }))
   );
+}
+
+export async function listReferenceDirectoryOptions(
+  workspaceRoot: string,
+  relativePath = ""
+): Promise<{
+  currentPath: string;
+  parentPath: string | null;
+  directories: ReferenceDirectoryOption[];
+}> {
+  const normalizedPath = normalizeRootInput(relativePath);
+  const absolutePath = normalizedPath ? path.join(workspaceRoot, normalizedPath) : workspaceRoot;
+  const directories = await readdir(absolutePath, { withFileTypes: true }).catch(() => []);
+  const visibleDirectories = directories
+    .filter((entry) => entry.isDirectory() && !IGNORED_DIRS.has(entry.name))
+    .map((entry) => {
+      const relativeEntryPath = [normalizedPath, entry.name].filter(Boolean).join("/").replace(/\\/g, "/");
+      return {
+        path: relativeEntryPath,
+        name: entry.name
+      };
+    })
+    .sort((left, right) => left.name.localeCompare(right.name));
+
+  return {
+    currentPath: normalizedPath,
+    parentPath: normalizedPath.includes("/") ? normalizedPath.slice(0, normalizedPath.lastIndexOf("/")) : normalizedPath ? "" : null,
+    directories: visibleDirectories
+  };
 }
 
 export function recommendReferences(
@@ -411,10 +445,17 @@ function sanitizeReferenceRoots(roots: string[]): string[] {
   return Array.from(
     new Set(
       roots
-        .map((value) => value.replace(/\\/g, "/").trim())
+        .map((value) => normalizeRootInput(value))
         .filter(Boolean)
     )
   ).sort((left, right) => left.localeCompare(right));
+}
+
+function normalizeRootInput(value: string): string {
+  return value
+    .replace(/\\/g, "/")
+    .replace(/^\/+|\/+$/g, "")
+    .trim();
 }
 
 const STOP_WORDS = new Set([

@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "updatedAt": "2026-04-16T13:53:52.969Z",
+  "updatedAt": "2026-04-16T14:01:42.606Z",
   "messages": [
     {
       "role": "assistant",
@@ -81,6 +81,34 @@
     {
       "role": "system",
       "content": "Auto Context Sync completed.\nVisible change: Refreshed the living context doc. | docs 3 | added 0 | edited 0 | done 0\nEvidence: package.json, README.md, docs/product-foundation.md\nUnknowns: Get the user's exact desired outcome for the `init` plan, including the intended change, decision, or release target. | After that outcome is stated, inspect only the relevant `apps/` or `packages/` seam to identify the first safe executable slice and confirm any command/agent naming mismatch that affects that area.\nNext action: Ask the user for the concrete desired outcome of the `init` plan in one sentence.\nCodex summary:\nUpdated [context.md](/G:/code/Launch11Projects/srgical/.srgical/plans/init/context.md:1) only.\n\nI kept the SRGICAL marker, title, metadata, and core sections intact, then folded in the newer transcript and reference material: repeated auto-sync passes, the explicit “state what the first version should do” prompt, Discover-stage/checkpoint-mode session truth, and the active guidance from ADR, distribution, studio tutorial, and testing docs. I also added a `Selected Guidance In Effect` section and tightened the unknowns around the still-missing concrete outcome and command/agent naming mismatches.\n\nVerification: read the file back after the patch; no other `.srgical` files were changed."
+    },
+    {
+      "role": "system",
+      "content": "I refreshed `context.md`, but I still need one thing from you.\nNeed from you: say exactly what the first version should do."
+    },
+    {
+      "role": "system",
+      "content": "Loaded context file: package.json\n\n===== BEGIN FILE package.json =====\n{\n  \"name\": \"srgical-monorepo\",\n  \"private\": true,\n  \"workspaces\": [\n    \"apps/*\",\n    \"packages/*\"\n  ],\n  \"scripts\": {\n    \"build\": \"npm run build -w @srgical/studio-shared && npm run build -w @srgical/studio-core && npm run build -w @srgical/studio-web && npm run build -w @launcheleven/srgical\",\n    \"dev\": \"npm run dev -w @launcheleven/srgical --\",\n    \"start\": \"npm run start -w @launcheleven/srgical --\",\n    \"status\": \"npm run status -w @launcheleven/srgical --\",\n    \"test\": \"npm run test -w @launcheleven/srgical\",\n    \"test:coverage\": \"npm run test:coverage -w @launcheleven/srgical\",\n    \"prepack\": \"npm run build\",\n    \"release:pack\": \"node scripts/release-pack.mjs\",\n    \"publish:github\": \"node scripts/publish-github.mjs\",\n    \"publish:npm\": \"node scripts/publish-npm.mjs\",\n    \"release:version\": \"node scripts/read-package-version.mjs\",\n    \"release:state\": \"node scripts/read-release-state.mjs\"\n  },\n  \"engines\": {\n    \"node\": \">=20\"\n  }\n}\n===== END FILE package.json ====="
+    },
+    {
+      "role": "system",
+      "content": "Loaded context file: README.md\n\n===== BEGIN FILE README.md =====\n# srgical\n\n`srgical` is a local-first CLI for planning work with an AI, turning that plan into a visible pack inside your repo, and then executing the next step cleanly.\n\nIt is built around a simple loop:\n\n1. `prepare` the plan\n2. approve it\n3. `operate` the next step\n4. repeat\n\n## Install From npm\n\nRequirements:\n\n- Node.js 20 or newer\n- At least one local agent CLI installed and working on your machine: `codex`, `claude`, or `auggie`\n\n```bash\nnpm install -g @launch11/srgical\n```\n\nAfter install:\n\n```bash\nsrgical about\n```\n\n## Quick Start\n\nCreate or reopen a named plan:\n\n```bash\nsrgical prepare release-readiness\n```\n\nThat command creates the plan pack under `.srgical/plans/release-readiness/` if it does not exist, then opens the full-screen prepare studio.\n\nInside `prepare`:\n\n- Type normal text to talk to the planner\n- Press `F2` to gather more context\n- Use `:import <path>` to read a specific document and sync it into `context.md`\n- Use `:context` to refresh `context.md` from the current transcript and gathered evidence\n- Press `F3` to build the draft\n- Press `F4` to slice the plan into steps\n- Press `F6` to approve the current draft\n- Type `:help` to see the command list\n\nCheck the current state at any time:\n\n```bash\nsrgical status release-readiness\n```\n\nWhen the plan is approved, switch to execution:\n\n```bash\nsrgical operate release-readiness\n```\n\nUseful operate variants:\n\n```bash\nsrgical operate release-readiness --dry-run\nsrgical operate release-readiness --auto --max-steps 5\nsrgical operate release-readiness --checkpoint\n```\n\n## Main Commands\n\n```bash\nsrgical prepare <\n... [truncated after 1600 chars]\n===== END FILE README.md ====="
+    },
+    {
+      "role": "system",
+      "content": "Loaded context file: docs/product-foundation.md\n\n===== BEGIN FILE docs/product-foundation.md =====\n# Product Foundation\n\n## Source Pattern\n\nThe system in `Writr\\migrations-part-5` has four durable primitives:\n\n1. `01`: a stable high-level plan\n2. `02`: a current-context kickoff and handoff log\n3. `03`: a detailed step tracker with strict progression rules\n4. `04`: a repeatable next-agent prompt that forces disciplined continuation\n\nThat pattern is the product.\n\n## Product Thesis\n\nTeams should be able to run one command, enter a planning studio, talk with an AI until the approach is ready, write a\ntracker pack into the repo, and then keep executing the next valid chunk without manually reconstructing state each\ntime.\n\n## Non-Negotiables\n\n- Local-first by default\n- Agent actions remain explicit\n- The workflow is markdown-first and repo-visible\n- Execution must be incremental, resumable, and validation-aware\n- The UI cannot feel like a boring debug console\n\n## V1 Scope\n\n- Three launch-scope agent adapters: `codex`, `claude`, and `augment`\n- One planning-pack format under `.srgical/`\n- One full-screen TUI for planning conversation\n- One execution command that runs the current next-step prompt through the active workspace agent\n- Truthful installed-tool detection plus session-scoped active-agent selection\n\n## V1 Success Criteria\n\n- A new repo can be bootstrapped without manual prompt copy-paste\n- The user can plan inside a dedicated interface instead of a raw shell\n- The generated pack is close enough to the existing Writr-style system that it feels familiar\n- The user can trigger the next execution loop with a single command\n- The product reports missing supported agents hon\n... [truncated after 1600 chars]\n===== END FILE docs/product-foundation.md ====="
+    },
+    {
+      "role": "system",
+      "content": "Gather Context Sync completed.\nVisible change: Refreshed the living context doc. | docs 3 | added 0 | edited 0 | done 0\nEvidence: package.json, README.md, docs/product-foundation.md\nUnknowns: Get the user's exact desired outcome for the `init` plan, including the intended change, decision, or release target. | Once that outcome is stated, inspect only the relevant `apps/` or `packages/` seam and confirm the command/agent naming mismatch (`augment` vs `auggie`, legacy vs rebooted commands) only if it affects that seam.\nNext action: Ask the user for the concrete desired outcome of the `init` plan in one sentence.\nCodex summary:\nUpdated [context.md](/G:/code/Launch11Projects/srgical/.srgical/plans/init/context.md:1) only.\n\nI kept the SRGICAL marker, title, metadata, core sections, and selected-guidance block intact. The update folds in the newest transcript evidence: repeated reloads of the same three source files, the explicit “say exactly what the first version should do” prompt as the current blocker, the still-active gather sync, and the fact that no `apps/` or `packages/` seam has been grounded yet. I also tightened `Unknowns To Resolve` and `Working Agreements` so the document stays honest about broad workflow truth versus the still-missing concrete plan outcome.\n\nVerification: I read the file back after patching. A `git diff` check was not available from this workspace because the current directory is not recognized as a git working tree."
+    },
+    {
+      "role": "system",
+      "content": "Theme set to Amber Grid."
+    },
+    {
+      "role": "system",
+      "content": "Theme set to Neon Command."
     },
     {
       "role": "system",

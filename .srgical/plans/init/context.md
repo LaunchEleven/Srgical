@@ -2,7 +2,7 @@
 
 # Context
 
-Updated: 2026-04-16T13:52:26.0037229Z
+Updated: 2026-04-17T00:00:00Z
 Updated By: srgical
 
 ## SRGICAL META
@@ -25,6 +25,7 @@ Updated By: srgical
 - The active prepare pack is `.srgical/plans/init/`, and the existing tracker is still at the initial discover stage with `DISCOVER-001` as the next pending step.
 - The current prepare session remains in Discover stage, and the visible next action is still to ask for the concrete desired outcome for the `init` plan in one sentence before gathering a narrower implementation seam.
 - Checkpoint mode is enabled in the active prepare session, which is relevant session behavior but does not change the plan content on its own.
+- The latest visible gather activity is still loading only `package.json`, `README.md`, and `docs/product-foundation.md`; no narrower `apps/` or `packages/` seam has been grounded yet.
 
 ## Evidence Gathered
 
@@ -50,12 +51,17 @@ Updated By: srgical
 - The planner also surfaced that requirement directly to the user as: the first version still needs to be stated plainly before the draft can move forward.
 - The transcript records theme changes to Amber Grid and later Neon Command; these are session-state changes only and do not affect plan content.
 - The transcript records checkpoint mode being enabled during the session; this affects operate behavior expectations but does not supply missing product or implementation scope.
+- The transcript repeats the same planner ask twice in direct terms: "say exactly what the first version should do," which is the clearest current blocker to moving beyond discovery.
+- The latest gather pass is still reloading the same three context files and shows "Gather Context Sync is running...", so the evidence base remains broad product/workflow grounding rather than code-seam discovery.
 - Selected references now in effect expand the grounded evidence beyond the three imported files to include `docs/adr/0001-tech-stack.md`, `docs/distribution.md`, `docs/studio-plan-tutorial.md`, and `docs/testing-strategy.md`.
 - Those selected references add useful current guidance:
   - ADR 0001 confirms the accepted initial implementation stack is TypeScript on Node with `commander`, `blessed`, and native child-process spawning for Codex orchestration.
   - `docs/distribution.md` sharpens release truth: current production channels are GitHub Packages, public npm, and GitHub Releases; versioning is tag-driven; and the package does not bundle agent CLIs.
   - `docs/studio-plan-tutorial.md` reinforces the prepare mental model that transcript changes and pack-file writes are separate, and that `context.md` is the one document intended to refresh earlier during gather/import flows.
   - `docs/testing-strategy.md` frames current quality priorities around command safety, pack integrity, adapter behavior, and release verification, with an executable baseline already identified for tests around planning-pack state, execution state, `doctor`, and `run-next`.
+- The selected references also preserve a fuller legacy-to-rebooted workflow picture that matters for later drafting:
+  - `docs/studio-plan-tutorial.md` still documents legacy aliases such as `studio plan`, `/write`, `/dice`, and `/confirm-plan`, but it aligns with the same underlying rule that explicit readiness and explicit write/confirm actions gate pack changes.
+  - `docs/testing-strategy.md` makes clear that legacy commands like `doctor`, `init`, `run-next`, and `studio` still matter for regression coverage even if README-facing product language has shifted toward `prepare` and `operate`.
 
 ## Unknowns To Resolve
 
@@ -65,6 +71,7 @@ Updated By: srgical
 - Product-foundation notes say V1 scope includes adapters for `codex`, `claude`, and `augment`, while the README install requirements mention `codex`, `claude`, and `auggie`; that naming mismatch needs confirmation before a draft treats agent support as settled truth.
 - The exact package/workspace mapping for `@launcheleven/srgical` versus the public install name `@launch11/srgical` is implied by docs and scripts but not yet reconciled in this context pack.
 - The selected references introduce legacy and rebooted command language side by side, such as `doctor`, `init`, `studio plan`, `/write`, and `/dice`, while the README foregrounds `prepare`, `operate`, `:build`, and `:slice`; the intended user-facing command canon for this plan still needs to be treated carefully.
+- The current gather loop has not produced any new imported file beyond the same three core docs, so it remains unknown which concrete repo seam should be inspected first once the user states the goal.
 
 ## Working Agreements
 
@@ -75,8 +82,10 @@ Updated By: srgical
 - Prepare can gather heavily, but it should not silently approve the plan.
 - Operate executes one step by default and reports what changed after every run.
 - Follow the explicit prepare guidance from the transcript: get the plan outcome in one sentence first, then inspect only the matching `apps/` or `packages/` area instead of broad repo spelunking.
+- Treat repeated gather passes over the same broad product docs as confirmation of current workflow truth, not as a substitute for the missing implementation target.
 - Until the user states the target outcome for `init`, this pack should remain in discovery mode and avoid pretending the repo-wide product direction is the same thing as the plan goal.
 - Carry forward selected-reference guidance when it sharpens repo truth: treat `context.md` as the early-sync evidence log, reserve broader pack rewrites for explicit draft actions, and keep command/release/testing notes visible when they materially constrain the plan.
+- Keep both rebooted and legacy command language visible where it affects correctness, but do not collapse the distinction into a false claim that the user-facing command canon is already settled.
 
 ## Selected Guidance In Effect
 

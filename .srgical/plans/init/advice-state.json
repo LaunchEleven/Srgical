@@ -1,14 +1,14 @@
 {
   "version": 1,
   "planId": "init",
-  "updatedAt": "2026-04-16T13:53:31.124Z",
-  "problemStatement": "The active `init` prepare pack has repo and product context, but it still does not have the user’s concrete one-sentence desired outcome for what this plan is supposed to achieve.",
+  "updatedAt": "2026-04-16T14:01:16.754Z",
+  "problemStatement": "The `init` planning pack is still in Discover and does not yet have the user's concrete one-sentence desired outcome, so the repo context is grounded only at a broad product/workflow level and not yet tied to a specific implementation target.",
   "clarity": "still fuzzy",
-  "stateAssessment": "Planning is blocked at Discover because the pack is grounded in repo docs but missing the actual target outcome and first executable slice.",
+  "stateAssessment": "The current blocker is not missing repo docs but the missing statement of what the `init` plan is supposed to achieve.",
   "researchNeeded": [
     "Get the user's exact desired outcome for the `init` plan, including the intended change, decision, or release target.",
-    "After that outcome is stated, inspect only the relevant `apps/` or `packages/` seam to identify the first safe executable slice and confirm any command/agent naming mismatch that affects that area."
+    "Once that outcome is stated, inspect only the relevant `apps/` or `packages/` seam and confirm the command/agent naming mismatch (`augment` vs `auggie`, legacy vs rebooted commands) only if it affects that seam."
   ],
-  "advice": "Do not broaden repo research yet. The current context already covers the product, workflow, stack, release, and testing guidance well enough for discovery. The missing piece is not more documentation; it is the user’s explicit goal for this specific `init` plan. Once that is stated, narrow the next pass to the matching implementation seam instead of continuing repo-wide context syncs.",
+  "advice": "Do not broaden repo research yet. The pack already has enough high-level grounding from `package.json`, `README.md`, and the selected docs to avoid guessing about the product shape, but it is still not ready for a draft because the plan goal itself is unstated. The best move is to force specificity now: capture the exact first-version outcome in one sentence, then narrow immediately to the matching workspace boundary and define the first safe executable slice there.",
   "nextAction": "Ask the user for the concrete desired outcome of the `init` plan in one sentence."
 }

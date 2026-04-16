@@ -25,6 +25,7 @@ import {
   removeWorktreeLane,
   setWorktreeLaneDeleteLock
 } from "../core/worktree-lanes";
+import { listReferenceDirectoryOptions } from "../core/reference-library";
 
 type LaunchWebStudioOptions = {
   workspace?: string;
@@ -356,6 +357,17 @@ async function routeRequest(
     return;
   }
 
+  if (request.method === "GET" && url.pathname === "/api/studio/directories") {
+    if (!isStudioAuthorized) {
+      return respondUnauthorized(response);
+    }
+    const requestedPath = url.searchParams.get("path") ?? "";
+    response.statusCode = 200;
+    response.setHeader("content-type", "application/json");
+    response.end(JSON.stringify(await listReferenceDirectoryOptions(activeStudioSession!.workspace, requestedPath)));
+    return;
+  }
+
   if (request.method === "POST" && url.pathname === "/api/studio/input") {
     if (!isStudioAuthorized) {
       return respondUnauthorized(response);
@@ -382,8 +394,8 @@ async function routeRequest(
     if (!isStudioAuthorized) {
       return respondUnauthorized(response);
     }
-    const body = await readJsonBody<{ themeId?: string }>(request);
-    await activeStudioSession!.controller.dispatch({ type: "theme", themeId: body.themeId });
+    const body = await readJsonBody<{ themeId?: string; announce?: boolean }>(request);
+    await activeStudioSession!.controller.dispatch({ type: "theme", themeId: body.themeId, announce: body.announce });
     response.statusCode = 202;
     response.end(JSON.stringify({ ok: true }));
     return;

@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { writeFile } from "node:fs/promises";
 import {
   addReferenceRoot,
+  listReferenceDirectoryOptions,
   loadReferenceCatalog,
   loadReferenceRoots,
   loadSelectedReferenceDocuments,
@@ -78,4 +79,20 @@ test("custom reference roots are stored and scanned for additional docs", async 
 
   await removeReferenceRoot(workspace, "playbooks", { planId: "proto" });
   assert.deepEqual(await loadReferenceRoots(workspace, { planId: "proto" }), []);
+});
+
+test("listReferenceDirectoryOptions returns browsable repo directories", async () => {
+  const workspace = await createTempWorkspace("srgical-reference-browser-");
+  const { mkdir } = await import("node:fs/promises");
+  await mkdir(`${workspace}\\docs\\playbooks`, { recursive: true });
+  await mkdir(`${workspace}\\REFERENCE\\standards`, { recursive: true });
+
+  const root = await listReferenceDirectoryOptions(workspace);
+  assert.equal(root.directories.some((entry) => entry.path === "docs"), true);
+  assert.equal(root.directories.some((entry) => entry.path === "REFERENCE"), true);
+
+  const nested = await listReferenceDirectoryOptions(workspace, "docs");
+  assert.equal(nested.currentPath, "docs");
+  assert.equal(nested.parentPath, "");
+  assert.equal(nested.directories.some((entry) => entry.path === "docs/playbooks"), true);
 });

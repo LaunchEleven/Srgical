@@ -19,6 +19,12 @@ const query = new URLSearchParams(window.location.search);
 const dashboardToken = window.__SRGICAL_TOKEN__ || query.get("token") || "";
 const studioToken = query.get("studioToken") || "";
 
+type DirectoryPickerState = {
+  currentPath: string;
+  parentPath: string | null;
+  directories: Array<{ path: string; name: string }>;
+};
+
 export function App() {
   return studioToken ? <StudioShell token={studioToken} /> : <RepoDashboard token={dashboardToken} />;
 }
@@ -236,6 +242,8 @@ function StudioShell(props: { token: string }) {
   const [lastContentTab, setLastContentTab] = useState("prepare");
   const [drawerOpen, setDrawerOpen] = useState(true);
   const [referenceRootInput, setReferenceRootInput] = useState("");
+  const [directoryPickerOpen, setDirectoryPickerOpen] = useState(false);
+  const [directoryPicker, setDirectoryPicker] = useState<DirectoryPickerState | null>(null);
 
   useEffect(() => {
     void fetchStudioSnapshot(props.token).then(setSnapshot);
@@ -278,6 +286,9 @@ function StudioShell(props: { token: string }) {
   }, [snapshot]);
 
   const sendAction = async (request: StudioActionRequest) => {
+    if (request.type !== "theme" && request.type !== "switch-mode") {
+      setActiveTab("transcript");
+    }
     await postJson("/api/studio/action", props.token, request);
   };
 
@@ -291,7 +302,11 @@ function StudioShell(props: { token: string }) {
   };
 
   const setTheme = async (themeId: string) => {
-    await postJson("/api/studio/settings", props.token, { themeId });
+    await postJson("/api/studio/settings", props.token, { themeId, announce: false });
+  };
+
+  const loadDirectoryPicker = async (targetPath = "") => {
+    setDirectoryPicker(await getJson<DirectoryPickerState>(`/api/studio/directories?token=${encodeURIComponent(props.token)}&path=${encodeURIComponent(targetPath)}`));
   };
 
   if (!snapshot) {
@@ -380,7 +395,17 @@ function StudioShell(props: { token: string }) {
           {activeTab === "docs"
             ? <DocumentationPanel mode={snapshot.mode} returnTab={lastContentTab} onBack={() => setActiveTab(lastContentTab)} />
             : snapshot.mode === "prepare"
-              ? renderPrepareTab(activeTab, snapshot, sendAction, referenceRootInput, setReferenceRootInput)
+              ? renderPrepareTab(
+                  activeTab,
+                  snapshot,
+                  sendAction,
+                  referenceRootInput,
+                  setReferenceRootInput,
+                  async () => {
+                    await loadDirectoryPicker("");
+                    setDirectoryPickerOpen(true);
+                  }
+                )
               : renderOperateTab(activeTab, snapshot)}
         </section>
 
@@ -423,7 +448,13 @@ function StudioShell(props: { token: string }) {
                       { key: "F6", label: "Review", action: { type: "review" as const } },
                       { key: "F7", label: "Unblock", action: { type: "unblock" as const } }
                     ]).map((item) => (
-                  <button className="action-button" key={item.key + item.label} onClick={() => void sendAction(item.action)}>
+                  <button
+                    className="action-button"
+                    key={item.key + item.label}
+                    onClick={() => void sendAction(item.action)}
+                    disabled={snapshot.busy || !snapshot.actions[item.action.type].enabled}
+                    title={snapshot.actions[item.action.type].blockedReason ?? undefined}
+                  >
                     <span>{item.key}</span>
                     <strong>{item.label}</strong>
                   </button>
@@ -455,6 +486,61 @@ function StudioShell(props: { token: string }) {
           <span>Lane {snapshot.laneId} on {snapshot.branchName ?? "detached"} | {snapshot.footerText}</span>
         </footer>
       </main>
+      {directoryPickerOpen ? (
+        <div className="picker-overlay" onClick={() => setDirectoryPickerOpen(false)}>
+          <div className="picker-modal panel" onClick={(event) => event.stopPropagation()}>
+            <header className="panel-header">
+              <span>Select Documentation Directory</span>
+              <strong>{directoryPicker?.currentPath || "repo root"}</strong>
+            </header>
+            <div className="picker-actions">
+              <button
+                onClick={() => {
+                  const selectedPath = directoryPicker?.currentPath ?? "";
+                  if (!selectedPath) {
+                    return;
+                  }
+                  void sendAction({ type: "reference-root-add", rootPath: selectedPath });
+                  setDirectoryPickerOpen(false);
+                }}
+                disabled={!directoryPicker?.currentPath}
+              >
+                Use This Directory
+              </button>
+              <button
+                onClick={() => {
+                  if (directoryPicker?.parentPath === null) {
+                    return;
+                  }
+                  void loadDirectoryPicker(directoryPicker.parentPath);
+                }}
+                disabled={directoryPicker?.parentPath === null}
+              >
+                Up One Level
+              </button>
+              <button onClick={() => setDirectoryPickerOpen(false)}>Close</button>
+            </div>
+            <div className="picker-list">
+              {(directoryPicker?.directories ?? []).map((entry) => (
+                <button
+                  className="picker-row"
+                  key={entry.path}
+                  onClick={() => void loadDirectoryPicker(entry.path)}
+                >
+                  <span>{entry.name}</span>
+                  <strong>{entry.path}</strong>
+                </button>
+              ))}
+              {(directoryPicker?.directories.length ?? 0) === 0 ? (
+                <div className="tab-summary">
+                  <strong>No subdirectories here</strong>
+                  <span>You can select this directory, go up one level, or close the picker.</span>
+                </div>
+              ) : null}
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -464,7 +550,8 @@ function renderPrepareTab(
   snapshot: StudioSnapshot,
   sendAction: (request: StudioActionRequest) => Promise<void>,
   referenceRootInput: string,
-  setReferenceRootInput: (value: string) => void
+  setReferenceRootInput: (value: string) => void,
+  openDirectoryPicker: () => Promise<void>
 ) {
   if (activeTab === "context" && snapshot.prepareClarity) {
     return (
@@ -528,6 +615,9 @@ function renderPrepareTab(
               }}
             >
               Add Directory
+            </button>
+            <button onClick={() => void openDirectoryPicker()}>
+              Browse Directories
             </button>
           </div>
           <div className="reference-root-list">

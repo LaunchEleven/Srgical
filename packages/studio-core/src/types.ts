@@ -40,6 +40,7 @@ export type StudioActionRequest = {
   referenceId?: string;
   selected?: boolean;
   rootPath?: string;
+  announce?: boolean;
 };
 
 export type StudioActionState = {
