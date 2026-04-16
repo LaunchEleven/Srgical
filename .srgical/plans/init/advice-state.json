@@ -1,14 +1,14 @@
 {
   "version": 1,
   "planId": "init",
-  "updatedAt": "2026-04-15T13:51:58.552Z",
-  "problemStatement": "The active `init` plan is still missing the concrete outcome it is supposed to drive, so the team cannot yet build a first real draft or identify the first safe execution slice in this `srgical` monorepo.",
+  "updatedAt": "2026-04-16T13:53:31.124Z",
+  "problemStatement": "The active `init` prepare pack has repo and product context, but it still does not have the user’s concrete one-sentence desired outcome for what this plan is supposed to achieve.",
   "clarity": "still fuzzy",
-  "stateAssessment": "Repo-level product intent is grounded, but the plan target and implementation area are still unresolved.",
+  "stateAssessment": "Planning is blocked at Discover because the pack is grounded in repo docs but missing the actual target outcome and first executable slice.",
   "researchNeeded": [
-    "Confirm the exact deliverable, change, or decision this `init` plan is meant to produce.",
-    "Inspect the relevant `apps/` or `packages/` area to map existing seams before drafting execution steps."
+    "Get the user's exact desired outcome for the `init` plan, including the intended change, decision, or release target.",
+    "After that outcome is stated, inspect only the relevant `apps/` or `packages/` seam to identify the first safe executable slice and confirm any command/agent naming mismatch that affects that area."
   ],
-  "advice": "Do not draft the plan yet. The docs and pack state already establish the product direction, workflow, and current planning gap, but they do not answer what this specific `init` plan is for. The best move is to lock the desired outcome first, then immediately ground it in the corresponding workspace area so the draft reflects real code seams instead of generic product language. Keep the `auggie` versus `augment` naming mismatch visible as an open doc issue until confirmed.",
-  "nextAction": "Ask the user for the exact outcome this `init` plan should achieve, then gather the matching `apps/` or `packages/` implementation area."
+  "advice": "Do not broaden repo research yet. The current context already covers the product, workflow, stack, release, and testing guidance well enough for discovery. The missing piece is not more documentation; it is the user’s explicit goal for this specific `init` plan. Once that is stated, narrow the next pass to the matching implementation seam instead of continuing repo-wide context syncs.",
+  "nextAction": "Ask the user for the concrete desired outcome of the `init` plan in one sentence."
 }

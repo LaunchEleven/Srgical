@@ -5,14 +5,14 @@ import { buildContextRefreshPrompt, buildPackWriterPrompt, buildPlanDicePrompt, 
 import type { PlanningPackState } from "../../src/core/planning-pack-state";
 import { createTempWorkspace, writePlanningPack } from "../helpers/workspace";
 
-test("build-planner-prompt enforces convergence and the new prepare actions", () => {
+test("build-planner-prompt enforces convergence and the new prepare actions", async () => {
   const messages: ChatMessage[] = [
     { role: "user", content: "We should keep this workflow local-first and make the next action obvious after every refinement." },
     { role: "assistant", content: "Locked. The visible contract is prepare for shaping and operate for execution. Any blocker before we build the draft?" },
     { role: "user", content: "yes absolutely" }
   ];
 
-  const prompt = buildPlannerPrompt(messages, "G:\\code\\demo", createPackState());
+  const prompt = await buildPlannerPrompt(messages, "G:\\code\\demo", createPackState());
 
   assert.match(prompt, /Operating mode: decision sprint, not endless discovery\./);
   assert.match(prompt, /Run a lightweight internal sufficiency check before asking a question/);
@@ -29,14 +29,14 @@ test("build-planner-prompt enforces convergence and the new prepare actions", ()
   assert.doesNotMatch(prompt, /\/confirm-plan/);
 });
 
-test("build-planner-prompt blocks further questioning when budget is exhausted", () => {
+test("build-planner-prompt blocks further questioning when budget is exhausted", async () => {
   const messages: ChatMessage[] = [
     { role: "assistant", content: "Question one?" },
     { role: "assistant", content: "Question two?" },
     { role: "assistant", content: "Question three?" }
   ];
 
-  const prompt = buildPlannerPrompt(messages, "G:\\code\\demo");
+  const prompt = await buildPlannerPrompt(messages, "G:\\code\\demo");
 
   assert.match(prompt, /Estimated blocker questions already asked by planner: 3/);
   assert.match(prompt, /Remaining blocker questions: 0/);

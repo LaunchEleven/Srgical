@@ -16,7 +16,7 @@ import {
 } from "../../../apps/cli/src/core/agent";
 import { executeAutoRun, requestAutoRunStop } from "../../../apps/cli/src/core/auto-run";
 import { readPackSnapshot } from "../../../apps/cli/src/core/change-summary";
-import { syncPlanningContext } from "../../../apps/cli/src/core/context-refresh";
+import { syncPlanningContext, syncSelectedGuidanceInContext } from "../../../apps/cli/src/core/context-refresh";
 import { appendExecutionLog, saveExecutionState } from "../../../apps/cli/src/core/execution-state";
 import { formatExecutionFailureMessage, formatNoQueuedNextStepMessage, hasQueuedNextStep } from "../../../apps/cli/src/core/execution-controls";
 import { buildExecutionIterationPrompt } from "../../../apps/cli/src/core/handoff";
@@ -38,6 +38,15 @@ import {
 import { unblockTrackerStep } from "../../../apps/cli/src/core/tracker-unblock";
 import { getPlanningPackPaths, readText, resolvePlanId, resolveWorkspace, saveActivePlanId } from "../../../apps/cli/src/core/workspace";
 import { getWorkspaceBranchName } from "../../../apps/cli/src/core/worktree-lanes";
+import {
+  addReferenceRoot,
+  loadReferenceCatalog,
+  loadReferenceRoots,
+  removeReferenceRoot,
+  recommendReferences,
+  saveSelectedReferenceIds,
+  toggleReferenceSelection
+} from "../../../apps/cli/src/core/reference-library";
 import { getStudioTheme, type StudioMode } from "@srgical/studio-shared";
 import {
   delayStudioStream,
@@ -55,7 +64,17 @@ import {
   selectAutoGatherFiles,
   toStudioContextLabel
 } from "./helpers";
-import type { StudioActionId, StudioActionRequest, StudioController, StudioEvent, StudioListener, StudioSnapshot } from "./types";
+import type {
+  PrepareClarityCheck,
+  PrepareClarityView,
+  ReferenceView,
+  StudioActionId,
+  StudioActionRequest,
+  StudioController,
+  StudioEvent,
+  StudioListener,
+  StudioSnapshot
+} from "./types";
 
 const GATHER_SOURCE_LIMIT = 6000;
 
@@ -94,6 +113,8 @@ export async function createStudioController(options: StudioControllerOptions = 
   let uiConfig = await loadStudioUiConfig(workspace, { planId });
   let settings = await loadStudioSettings();
   let branchName = await getWorkspaceBranchName(workspace).catch(() => null);
+  let prepareClarity = await loadPrepareClarityView(workspace, planId, state, messages);
+  let references = await loadReferenceView(workspace, planId, state, messages);
   let busy = false;
   let busyStatus = "ready";
   let gatheredFingerprint = "";
@@ -117,6 +138,8 @@ export async function createStudioController(options: StudioControllerOptions = 
     settings,
     theme: getStudioTheme(settings.themeId),
     actions: buildActionStates(mode, state),
+    prepareClarity,
+    references,
     footerText:
       busy
         ? `Working: ${busyStatus}`
@@ -144,6 +167,8 @@ export async function createStudioController(options: StudioControllerOptions = 
     uiConfig = await loadStudioUiConfig(workspace, { planId });
     settings = await loadStudioSettings();
     branchName = await getWorkspaceBranchName(workspace).catch(() => branchName);
+    prepareClarity = await loadPrepareClarityView(workspace, planId, state, messages);
+    references = await loadReferenceView(workspace, planId, state, messages);
     publishSnapshot();
   };
 
@@ -423,6 +448,7 @@ export async function createStudioController(options: StudioControllerOptions = 
           activeLiveResult.append(chunk);
         }
       });
+      await syncSelectedGuidanceInContext(workspace, { planId }).catch(() => undefined);
       await recordPlanningPackWrite(workspace, "write", { planId });
       await refreshPlanningAdvice(workspace, messages, { planId }).catch(() => null);
       const headline = await recordVisibleChange(workspace, before, "Built or refreshed the prepare draft.", {
@@ -463,6 +489,7 @@ export async function createStudioController(options: StudioControllerOptions = 
           activeLiveResult.append(chunk);
         }
       });
+      await syncSelectedGuidanceInContext(workspace, { planId }).catch(() => undefined);
       await recordPlanningPackWrite(workspace, "dice", { planId });
       const headline = await recordVisibleChange(workspace, before, "Sliced the draft into execution-ready steps.", {
         planId,
@@ -940,6 +967,50 @@ export async function createStudioController(options: StudioControllerOptions = 
         case "theme":
           await setTheme(request.themeId);
           break;
+        case "reference-toggle":
+          if (!request.referenceId) {
+            throw new Error("A reference id is required to change reference selection.");
+          }
+          await toggleReferenceSelection(workspace, request.referenceId, request.selected === true, { planId });
+          await syncSelectedGuidanceInContext(workspace, { planId }).catch(() => undefined);
+          await refresh();
+          break;
+        case "reference-autoselect": {
+          const catalog = await loadReferenceCatalog(workspace, { planId });
+          const recommended = recommendReferences(catalog, {
+            planId,
+            evidence: state.evidence,
+            unknowns: state.unknowns,
+            messages
+          });
+          const nextSelected = new Set(references.selectedIds);
+          for (const entry of recommended) {
+            nextSelected.add(entry.id);
+          }
+          await saveSelectedReferenceIds(workspace, Array.from(nextSelected), { planId });
+          await syncSelectedGuidanceInContext(workspace, { planId }).catch(() => undefined);
+          await refresh();
+          break;
+        }
+        case "reference-clear":
+          await saveSelectedReferenceIds(workspace, [], { planId });
+          await syncSelectedGuidanceInContext(workspace, { planId }).catch(() => undefined);
+          await refresh();
+          break;
+        case "reference-root-add":
+          if (!request.rootPath?.trim()) {
+            throw new Error("A directory path is required to add a documentation root.");
+          }
+          await addReferenceRoot(workspace, request.rootPath, { planId });
+          await refresh();
+          break;
+        case "reference-root-remove":
+          if (!request.rootPath?.trim()) {
+            throw new Error("A directory path is required to remove a documentation root.");
+          }
+          await removeReferenceRoot(workspace, request.rootPath, { planId });
+          await refresh();
+          break;
         case "command":
           await handleCommand(request.command ?? "");
           break;
@@ -1033,6 +1104,183 @@ function buildActionStates(mode: StudioMode, state: PlanningPackState): Record<S
     import: { enabled: prepareOnly, blockedReason: prepareOnly ? null : "Import is only available in prepare mode." },
     wheel: { enabled: true, blockedReason: null },
     theme: { enabled: true, blockedReason: null },
-    command: { enabled: true, blockedReason: null }
+    command: { enabled: true, blockedReason: null },
+    "reference-toggle": { enabled: true, blockedReason: null },
+    "reference-autoselect": { enabled: true, blockedReason: null },
+    "reference-clear": { enabled: true, blockedReason: null },
+    "reference-root-add": { enabled: true, blockedReason: null },
+    "reference-root-remove": { enabled: true, blockedReason: null }
+  };
+}
+
+async function loadPrepareClarityView(
+  workspace: string,
+  planId: string,
+  state: PlanningPackState,
+  messages: ChatMessage[]
+): Promise<PrepareClarityView | null> {
+  const paths = getPlanningPackPaths(workspace, { planId });
+  const contextDocument = await readText(paths.context).catch(() => "");
+
+  if (!contextDocument && state.mode !== "Discover" && !state.packPresent) {
+    return null;
+  }
+
+  const contextGrounded = /"docKey":"context","state":"grounded"/.test(contextDocument.replace(/\s+/g, ""));
+  const sections = parseMarkdownSections(stripDocStateMarker(contextDocument));
+  const checks = buildPrepareClarityChecks(state);
+
+  return {
+    contextDocument: stripDocStateMarker(contextDocument).trim(),
+    contextGrounded,
+    contextUpdatedAt: state.manifest?.lastRefinedAt ?? state.lastWriteAt ?? state.manifest?.updatedAt ?? null,
+    coachHeadline: buildCoachHeadline(state),
+    coachSummary: buildCoachSummary(state, messages),
+    checks,
+    repoTruth: sections.get("repo truth") ?? null,
+    evidenceSection: sections.get("evidence gathered") ?? sections.get("imported source snapshots") ?? null,
+    unknownsSection: sections.get("unknowns to resolve") ?? null,
+    workingAgreements: sections.get("working agreements") ?? null,
+    selectedGuidance: sections.get("selected guidance in effect") ?? null
+  };
+}
+
+function buildPrepareClarityChecks(state: PlanningPackState): PrepareClarityCheck[] {
+  const readiness = state.readiness;
+  const advice = state.advice;
+  const checks: PrepareClarityCheck[] = readiness.checks.map((check) => ({
+    id: check.id,
+    title: check.label,
+    passed: check.passed,
+    whyItMatters: explainReadinessCheck(check.id),
+    nextMove: recommendNextMove(check.id, state)
+  }));
+
+  if (advice?.researchNeeded.length) {
+    checks.push({
+      id: "research",
+      title: "Open research gaps called out",
+      passed: false,
+      whyItMatters: "Unresolved repo or product questions are usually where AI starts guessing and humans lose confidence.",
+      nextMove: advice.researchNeeded[0] ?? "Resolve the highest-risk unknown before building the draft."
+    });
+  }
+
+  return checks;
+}
+
+function explainReadinessCheck(id: string): string {
+  switch (id) {
+    case "goal":
+      return "The AI can only help well once the human has named the real outcome, not just the first idea.";
+    case "repo":
+      return "Repo truth keeps planning anchored in what exists today instead of generic best-practice filler.";
+    case "constraints":
+      return "Explicit constraints preserve human judgment and stop the AI from choosing the wrong tradeoff.";
+    case "execution":
+      return "A safe first slice proves the direction and reduces wandering implementation loops.";
+    case "approval":
+      return "The human should deliberately signal when the direction is coherent enough to draft or execute.";
+    default:
+      return "Clear shared context helps the human and AI apply fundamentals deliberately instead of improvising blindly.";
+  }
+}
+
+function recommendNextMove(id: string, state: PlanningPackState): string {
+  switch (id) {
+    case "goal":
+      return "State the first-version outcome in one sentence the team could test.";
+    case "repo":
+      return "Import the file or subsystem that best represents current repo truth, then refresh context.";
+    case "constraints":
+      return "Capture hard edges: must-haves, must-not-haves, fixed tools, and compatibility constraints.";
+    case "execution":
+      return "Name the first safe validation slice before worrying about the full rollout.";
+    case "approval":
+      return state.readiness.readyToWrite
+        ? "If the direction feels coherent, give an explicit go-ahead and build the draft."
+        : "Do not approve yet; finish the missing clarity checks first.";
+    default:
+      return state.nextAction;
+  }
+}
+
+function buildCoachHeadline(state: PlanningPackState): string {
+  if (state.readiness.readyToWrite) {
+    return "Context is strong enough to draft. The next job is deliberate refinement, not more vague exploration.";
+  }
+  if (state.readiness.score <= 2) {
+    return "The fundamentals are still thin. Tighten outcome, repo truth, and constraints before drafting.";
+  }
+  return "The direction is forming, but at least one important seam still needs human judgment before the draft will hold.";
+}
+
+function buildCoachSummary(state: PlanningPackState, messages: ChatMessage[]): string {
+  const userMessages = messages.filter((message) => message.role === "user" && message.content.trim().length > 0).length;
+  const evidenceCount = state.evidence.length;
+  const unknownCount = state.unknowns.length;
+  return [
+    `Readiness ${state.readiness.score}/${state.readiness.total}.`,
+    `${userMessages} user messages have shaped this plan so far.`,
+    evidenceCount > 0 ? `${evidenceCount} evidence signals are recorded.` : "No strong evidence signals are recorded yet.",
+    unknownCount > 0 ? `${unknownCount} unknowns still need judgment.` : "No major unknowns are currently recorded."
+  ].join(" ");
+}
+
+function stripDocStateMarker(content: string): string {
+  return content.replace(/^<!-- SRGICAL:DOC_STATE .*?-->\r?\n\r?\n?/, "");
+}
+
+function parseMarkdownSections(content: string): Map<string, string> {
+  const sections = new Map<string, string>();
+  let currentHeading: string | null = null;
+  let buffer: string[] = [];
+
+  for (const line of content.split(/\r?\n/)) {
+    const match = /^##\s+(.+?)\s*$/.exec(line);
+    if (match) {
+      if (currentHeading) {
+        sections.set(currentHeading, buffer.join("\n").trim());
+      }
+      currentHeading = match[1].trim().toLowerCase();
+      buffer = [];
+      continue;
+    }
+    if (currentHeading) {
+      buffer.push(line);
+    }
+  }
+
+  if (currentHeading) {
+    sections.set(currentHeading, buffer.join("\n").trim());
+  }
+
+  return sections;
+}
+
+async function loadReferenceView(
+  workspace: string,
+  planId: string,
+  state: PlanningPackState,
+  messages: ChatMessage[]
+): Promise<ReferenceView> {
+  const entries = await loadReferenceCatalog(workspace, { planId }).catch(() => []);
+  const roots = await loadReferenceRoots(workspace, { planId }).catch(() => []);
+  const recommendations = recommendReferences(entries, {
+    planId,
+    evidence: state.evidence,
+    unknowns: state.unknowns,
+    messages
+  });
+  const recommendationMap = new Map(recommendations.map((entry) => [entry.id, entry]));
+  return {
+    entries: entries.map((entry) => ({
+      ...entry,
+      recommended: recommendationMap.has(entry.id),
+      recommendationReason: recommendationMap.get(entry.id)?.reason ?? null
+    })),
+    selectedIds: entries.filter((entry) => entry.selected).map((entry) => entry.id),
+    recommendedIds: recommendations.map((entry) => entry.id),
+    roots
   };
 }

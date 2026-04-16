@@ -232,6 +232,10 @@ function RepoDashboard(props: { token: string }) {
 function StudioShell(props: { token: string }) {
   const [snapshot, setSnapshot] = useState<StudioSnapshot | null>(null);
   const [input, setInput] = useState("");
+  const [activeTab, setActiveTab] = useState("prepare");
+  const [lastContentTab, setLastContentTab] = useState("prepare");
+  const [drawerOpen, setDrawerOpen] = useState(true);
+  const [referenceRootInput, setReferenceRootInput] = useState("");
 
   useEffect(() => {
     void fetchStudioSnapshot(props.token).then(setSnapshot);
@@ -247,6 +251,24 @@ function StudioShell(props: { token: string }) {
     };
     return () => events.close();
   }, [props.token]);
+
+  useEffect(() => {
+    setActiveTab((current) => {
+      if (current === "docs") {
+        return current;
+      }
+      if (snapshot?.mode === "operate") {
+        return current === "prepare" || current === "context" || current === "references" ? "operate" : current;
+      }
+      return current === "operate" || current === "review" ? "prepare" : current;
+    });
+  }, [snapshot?.mode]);
+
+  useEffect(() => {
+    if (activeTab !== "docs") {
+      setLastContentTab(activeTab);
+    }
+  }, [activeTab]);
 
   const theme = useMemo<StudioTheme>(() => {
     if (!snapshot) {
@@ -276,101 +298,140 @@ function StudioShell(props: { token: string }) {
     return <div className="app loading">Launching Studio...</div>;
   }
 
+  const tabs = snapshot.mode === "prepare"
+    ? [
+        { id: "prepare", label: "Prepare" },
+        { id: "context", label: "Context" },
+        { id: "references", label: "References" },
+        { id: "transcript", label: "Transcript" }
+      ]
+    : [
+        { id: "operate", label: "Operate" },
+        { id: "review", label: "Review" },
+        { id: "transcript", label: "Transcript" }
+      ];
+
+  const selectTab = (tabId: string) => {
+    setActiveTab(tabId);
+  };
+
+  const openDocs = () => {
+    setLastContentTab(activeTab === "docs" ? lastContentTab : activeTab);
+    setActiveTab("docs");
+  };
+
   return (
     <div className="app" style={buildThemeVars(theme)}>
       <div className="backdrop" />
-      <main className="shell">
-        <section className="panel transcript-panel">
-          <header className="panel-header">
-            <span>{snapshot.mode === "prepare" ? "Prepare Transcript" : "Operate Transcript"}</span>
-            <strong>{snapshot.workspaceLabel}</strong>
-          </header>
-          <div className="studio-identity">
-            <span>Lane {snapshot.laneId}</span>
-            <span>Branch {snapshot.branchName ?? "detached"}</span>
-            <span>Plan {snapshot.planId}</span>
-          </div>
-          <div className="transcript-body">
-            {snapshot.messages.map((message, index) => (
-              <article className={`message ${message.role}`} key={`${index}-${message.role}`}>
-                <div className="message-role">{message.role === "assistant" ? "AI" : message.role === "system" ? "SYSTEM" : "YOU"}</div>
-                <pre>{message.content}</pre>
-              </article>
-            ))}
-          </div>
-        </section>
-
-        <aside className="panel control-panel">
-          <header className="panel-header">
-            <span>{snapshot.mode === "prepare" ? "Prepare Control" : "Operate Control"}</span>
-            <strong>{snapshot.busy ? snapshot.busyStatus : "ready"}</strong>
-          </header>
-
-          <ControlBlock title="Overview">
-            <Detail label="Stage" value={snapshot.state.mode} chip />
-            <Detail label="Next Action" value={snapshot.state.nextAction} />
-            <Detail label="Next Step" value={snapshot.state.currentPosition.nextRecommended ?? "none"} chip />
-            <Detail label="Approval" value={snapshot.state.approvalStatus} chip />
-          </ControlBlock>
-
-          <ControlBlock title="Evidence">
-            {snapshot.state.evidence.length > 0 ? snapshot.state.evidence.slice(0, 5).map((item) => <ListRow key={item} value={item} />) : <ListRow value="none yet" />}
-          </ControlBlock>
-
-          <ControlBlock title="Unknowns">
-            {snapshot.state.unknowns.length > 0 ? snapshot.state.unknowns.slice(0, 5).map((item) => <ListRow key={item} value={item} />) : <ListRow value="none recorded" />}
-          </ControlBlock>
-
-          <ControlBlock title="Last Change">
-            <ListRow value={snapshot.state.manifest?.lastChangeSummary ?? "none yet"} />
-          </ControlBlock>
-
-          <ControlBlock title="Runtime">
-            <Detail label="Agent" value={snapshot.agentLabel} />
-            <Detail label="Theme" value={snapshot.theme.label} chip />
-            <Detail label="Wheel" value={`${snapshot.uiConfig.wheelSensitivity}/10`} />
-          </ControlBlock>
-
-          <ControlBlock title="Settings">
-            <label className="theme-select">
-              <span>Theme</span>
-              <select value={snapshot.settings.themeId} onChange={(event) => void setTheme(event.target.value)}>
-                {STUDIO_THEMES.map((themeOption) => (
-                  <option key={themeOption.id} value={themeOption.id}>
-                    {themeOption.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </ControlBlock>
-
-          <ControlBlock title="Actions">
-            <div className="actions">
-              {(snapshot.mode === "prepare"
-                ? [
-                    { key: "F2", label: "Gather More", action: { type: "gather" as const } },
-                    { key: "F3", label: "Build Draft", action: { type: "build" as const } },
-                    { key: "F4", label: "Slice Plan", action: { type: "slice" as const } },
-                    { key: "F5", label: "Review", action: { type: "review" as const } },
-                    { key: "F6", label: "Approve", action: { type: "approve" as const } },
-                    { key: "F7", label: "Operate", action: { type: "switch-mode" as const, mode: "operate" as const } }
-                  ]
-                : [
-                    { key: "F2", label: "Run Next", action: { type: "run" as const } },
-                    { key: "F3", label: "Auto Continue", action: { type: "auto" as const } },
-                    { key: "F4", label: "Checkpoint", action: { type: "checkpoint" as const } },
-                    { key: "F5", label: "Prepare", action: { type: "switch-mode" as const, mode: "prepare" as const } },
-                    { key: "F6", label: "Review", action: { type: "review" as const } },
-                    { key: "F7", label: "Unblock", action: { type: "unblock" as const } }
-                  ]).map((item) => (
-                <button className="action-button" key={item.key + item.label} onClick={() => void sendAction(item.action)}>
-                  <span>{item.key}</span>
-                  <strong>{item.label}</strong>
-                </button>
-              ))}
+      <main className="studio-shell">
+        <header className="panel studio-topbar">
+          <div className="studio-title">
+            <div className="eyebrow">{snapshot.mode === "prepare" ? "Prepare Workspace" : "Operate Workspace"}</div>
+            <h1>{snapshot.workspaceLabel}</h1>
+            <div className="studio-identity">
+              <span>Lane {snapshot.laneId}</span>
+              <span>Branch {snapshot.branchName ?? "detached"}</span>
+              <span>Plan {snapshot.planId}</span>
             </div>
+          </div>
+          <div className="studio-topbar-actions">
+            {tabs.map((tab) => (
+              <button
+                key={tab.id}
+                className={`shell-tab ${activeTab === tab.id ? "active" : ""}`}
+                onClick={() => selectTab(tab.id)}
+              >
+                {tab.label}
+              </button>
+            ))}
+            <button className={`shell-tab ${activeTab === "docs" ? "active" : ""}`} onClick={openDocs}>
+              Documentation
+            </button>
+            {snapshot.mode === "operate" ? (
+              <button className="return-button" onClick={() => void sendAction({ type: "switch-mode", mode: "prepare" })}>
+                Return To Prepare
+              </button>
+            ) : null}
+            <button className="drawer-toggle" onClick={() => setDrawerOpen((current) => !current)}>
+              {drawerOpen ? "Hide Drawer" : "Show Drawer"}
+            </button>
+          </div>
+        </header>
+
+        <aside className="panel studio-sidebar">
+          <ControlBlock title="Readiness">
+            <Detail label="Stage" value={snapshot.state.mode} chip />
+            <Detail label="Approval" value={snapshot.state.approvalStatus} chip />
+            <Detail label="Next Step" value={snapshot.state.currentPosition.nextRecommended ?? "none"} chip />
+            <Detail label="Selected Refs" value={String(snapshot.references.selectedIds.length)} chip />
+          </ControlBlock>
+          <ControlBlock title="Next Move">
+            <ListRow value={snapshot.state.nextAction} />
+          </ControlBlock>
+          <ControlBlock title="Open Questions">
+            {snapshot.state.unknowns.length > 0 ? snapshot.state.unknowns.slice(0, 4).map((item) => <ListRow key={item} value={item} />) : <ListRow value="none recorded" />}
+          </ControlBlock>
+          <ControlBlock title="Evidence Signals">
+            {snapshot.state.evidence.length > 0 ? snapshot.state.evidence.slice(0, 4).map((item) => <ListRow key={item} value={item} />) : <ListRow value="none yet" />}
           </ControlBlock>
         </aside>
+
+        <section className="panel studio-main">
+          {activeTab === "docs"
+            ? <DocumentationPanel mode={snapshot.mode} returnTab={lastContentTab} onBack={() => setActiveTab(lastContentTab)} />
+            : snapshot.mode === "prepare"
+              ? renderPrepareTab(activeTab, snapshot, sendAction, referenceRootInput, setReferenceRootInput)
+              : renderOperateTab(activeTab, snapshot)}
+        </section>
+
+        {drawerOpen ? (
+          <aside className="panel studio-drawer">
+            <header className="panel-header">
+              <span>{snapshot.mode === "prepare" ? "Prepare Actions" : "Operate Actions"}</span>
+              <strong>{snapshot.busy ? snapshot.busyStatus : "ready"}</strong>
+            </header>
+            <ControlBlock title="Summary">
+              <ListRow value={snapshot.prepareClarity?.coachHeadline ?? snapshot.state.nextAction} />
+            </ControlBlock>
+            <ControlBlock title="Settings">
+              <label className="theme-select">
+                <span>Theme</span>
+                <select value={snapshot.settings.themeId} onChange={(event) => void setTheme(event.target.value)}>
+                  {STUDIO_THEMES.map((themeOption) => (
+                    <option key={themeOption.id} value={themeOption.id}>
+                      {themeOption.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </ControlBlock>
+            <ControlBlock title="Actions">
+              <div className="actions">
+                {(snapshot.mode === "prepare"
+                  ? [
+                      { key: "F2", label: "Gather More", action: { type: "gather" as const } },
+                      { key: "F3", label: "Build Draft", action: { type: "build" as const } },
+                      { key: "F4", label: "Slice Plan", action: { type: "slice" as const } },
+                      { key: "F5", label: "Review", action: { type: "review" as const } },
+                      { key: "F6", label: "Approve", action: { type: "approve" as const } },
+                      { key: "F7", label: "Operate", action: { type: "switch-mode" as const, mode: "operate" as const } }
+                    ]
+                  : [
+                      { key: "F2", label: "Run Next", action: { type: "run" as const } },
+                      { key: "F3", label: "Auto Continue", action: { type: "auto" as const } },
+                      { key: "F4", label: "Checkpoint", action: { type: "checkpoint" as const } },
+                      { key: "F6", label: "Review", action: { type: "review" as const } },
+                      { key: "F7", label: "Unblock", action: { type: "unblock" as const } }
+                    ]).map((item) => (
+                  <button className="action-button" key={item.key + item.label} onClick={() => void sendAction(item.action)}>
+                    <span>{item.key}</span>
+                    <strong>{item.label}</strong>
+                  </button>
+                ))}
+              </div>
+            </ControlBlock>
+          </aside>
+        ) : null}
 
         <section className="command-bar panel">
           <div className="command-label">{snapshot.mode === "prepare" ? "Plan Message Or :Command" : "Operate Command"}</div>
@@ -394,6 +455,271 @@ function StudioShell(props: { token: string }) {
           <span>Lane {snapshot.laneId} on {snapshot.branchName ?? "detached"} | {snapshot.footerText}</span>
         </footer>
       </main>
+    </div>
+  );
+}
+
+function renderPrepareTab(
+  activeTab: string,
+  snapshot: StudioSnapshot,
+  sendAction: (request: StudioActionRequest) => Promise<void>,
+  referenceRootInput: string,
+  setReferenceRootInput: (value: string) => void
+) {
+  if (activeTab === "context" && snapshot.prepareClarity) {
+    return (
+      <div className="tab-content">
+        <div className="context-sections">
+          <ContextExcerpt title="Repo Truth" value={snapshot.prepareClarity.repoTruth} empty="Repo truth has not been captured clearly yet." />
+          <ContextExcerpt title="Evidence" value={snapshot.prepareClarity.evidenceSection} empty="Evidence still needs to be grounded in actual repo facts." />
+          <ContextExcerpt title="Unknowns" value={snapshot.prepareClarity.unknownsSection} empty="Unknowns are not clearly surfaced yet." />
+          <ContextExcerpt title="Working Agreements" value={snapshot.prepareClarity.workingAgreements} empty="Working agreements have not been made explicit yet." />
+          <ContextExcerpt title="Selected Guidance" value={snapshot.prepareClarity.selectedGuidance} empty="No guidance documents are actively shaping the plan yet." />
+        </div>
+        <div className="context-document">
+          <div className="context-document-label">context.md</div>
+          <pre>{snapshot.prepareClarity.contextDocument || "# Context\n\nThe context document has not been shaped yet."}</pre>
+        </div>
+      </div>
+    );
+  }
+
+  if (activeTab === "references") {
+    return (
+      <div className="tab-content">
+        <div className="tab-summary">
+          <strong>{snapshot.references.selectedIds.length} selected references</strong>
+          <span>
+            {snapshot.references.recommendedIds.length} suggested from the current plan signals. Keep this lean and only activate guidance that genuinely sharpens the plan.
+          </span>
+        </div>
+        <div className="reference-toolbar">
+          <button onClick={() => void sendAction({ type: "reference-autoselect" })}>
+            Auto Select Relevant
+          </button>
+          <button onClick={() => void sendAction({ type: "reference-clear" })} disabled={snapshot.references.selectedIds.length === 0}>
+            Clear Selected
+          </button>
+        </div>
+        <section className="reference-roots">
+          <div className="reference-roots-head">
+            <strong>Documentation Search Roots</strong>
+            <span>Add directories that should be scanned for context and guidance docs.</span>
+          </div>
+          <div className="reference-root-input">
+            <input
+              value={referenceRootInput}
+              onChange={(event) => setReferenceRootInput(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && referenceRootInput.trim()) {
+                  void sendAction({ type: "reference-root-add", rootPath: referenceRootInput.trim() });
+                  setReferenceRootInput("");
+                }
+              }}
+              placeholder="docs/playbooks or REFERENCE/company-standards"
+            />
+            <button
+              onClick={() => {
+                if (!referenceRootInput.trim()) {
+                  return;
+                }
+                void sendAction({ type: "reference-root-add", rootPath: referenceRootInput.trim() });
+                setReferenceRootInput("");
+              }}
+            >
+              Add Directory
+            </button>
+          </div>
+          <div className="reference-root-list">
+            {snapshot.references.roots.length > 0 ? snapshot.references.roots.map((root) => (
+              <div className="reference-root-chip" key={root}>
+                <span>{root}</span>
+                <button onClick={() => void sendAction({ type: "reference-root-remove", rootPath: root })}>Remove</button>
+              </div>
+            )) : <span className="reference-root-empty">Using built-in roots only: README.md, docs, REFERENCE.</span>}
+          </div>
+        </section>
+        <div className="reference-grid">
+          {snapshot.references.entries.map((entry) => (
+            <article className="reference-card" key={entry.id}>
+              <div className="reference-card-head">
+                <strong>{entry.title}</strong>
+                <div className="reference-statuses">
+                  {entry.recommended ? <span className="status-chip">suggested</span> : null}
+                  <span className={`status-chip ${entry.selected ? "ok" : ""}`}>{entry.selected ? "selected" : "available"}</span>
+                </div>
+              </div>
+              <div className="reference-path">{entry.path}</div>
+              <p>{entry.summary}</p>
+              {entry.recommended && entry.recommendationReason ? <div className="reference-reason">{entry.recommendationReason}</div> : null}
+              <div className="reference-tags">
+                {entry.tags.map((tag) => (
+                  <span className="chip" key={tag}>{tag}</span>
+                ))}
+              </div>
+              <button onClick={() => void sendAction({ type: "reference-toggle", referenceId: entry.id, selected: !entry.selected })}>
+                {entry.selected ? "Remove From Context Set" : "Use This Guidance"}
+              </button>
+            </article>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  if (activeTab === "transcript") {
+    return <TranscriptPanel snapshot={snapshot} />;
+  }
+
+  return (
+    <div className="tab-content">
+      {snapshot.prepareClarity ? (
+        <>
+          <div className="clarity-hero">
+            <h2>{snapshot.prepareClarity.coachHeadline}</h2>
+            <p>{snapshot.prepareClarity.coachSummary}</p>
+          </div>
+          <div className="clarity-next-action">
+            <span>Next deliberate move</span>
+            <strong>{snapshot.state.nextAction}</strong>
+          </div>
+          <div className="clarity-checklist">
+            {snapshot.prepareClarity.checks.map((check) => (
+              <article className={`clarity-check ${check.passed ? "passed" : "missing"}`} key={check.id}>
+                <div className="clarity-check-head">
+                  <strong>{check.title}</strong>
+                  <span className="status-chip">{check.passed ? "ready" : "missing"}</span>
+                </div>
+                <p>{check.whyItMatters}</p>
+                <div className="clarity-next">{check.nextMove}</div>
+              </article>
+            ))}
+          </div>
+        </>
+      ) : (
+        <div className="tab-summary">
+          <strong>Prepare clarity data is still loading.</strong>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function renderOperateTab(activeTab: string, snapshot: StudioSnapshot) {
+  if (activeTab === "transcript") {
+    return <TranscriptPanel snapshot={snapshot} />;
+  }
+
+  if (activeTab === "review") {
+    return (
+      <div className="tab-content">
+        <div className="tab-summary">
+          <strong>Review before PR</strong>
+          <span>This is the future home for PR readiness, selected guidance checks, and final change summaries.</span>
+        </div>
+        <div className="context-sections">
+          <ContextExcerpt title="Current Step" value={snapshot.state.nextStepSummary ? `${snapshot.state.nextStepSummary.id}: ${snapshot.state.nextStepSummary.scope}` : null} empty="No current step is queued." />
+          <ContextExcerpt title="Acceptance" value={snapshot.state.nextStepSummary?.acceptance ?? null} empty="Acceptance criteria are not available yet." />
+          <ContextExcerpt title="Validation" value={snapshot.state.nextStepSummary?.validation ?? null} empty="Validation path is not available yet." />
+          <ContextExcerpt title="Last Change" value={snapshot.state.manifest?.lastChangeSummary ?? null} empty="No visible change recorded yet." />
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="tab-content">
+      <div className="clarity-hero">
+        <h2>Execution should stay explicit and reviewable.</h2>
+        <p>Run the next safe step, keep checkpoints clear, and return to prepare whenever the plan needs judgment rather than momentum.</p>
+      </div>
+      <div className="context-sections">
+        <ContextExcerpt title="Next Step" value={snapshot.state.nextStepSummary ? `${snapshot.state.nextStepSummary.id}: ${snapshot.state.nextStepSummary.scope}` : null} empty="No next step is queued." />
+        <ContextExcerpt title="Acceptance" value={snapshot.state.nextStepSummary?.acceptance ?? null} empty="Acceptance criteria are not available yet." />
+        <ContextExcerpt title="Validation" value={snapshot.state.nextStepSummary?.validation ?? null} empty="Validation path is not available yet." />
+        <ContextExcerpt title="References In Effect" value={snapshot.references.selectedIds.join("\n") || null} empty="No references are currently selected." />
+      </div>
+    </div>
+  );
+}
+
+function TranscriptPanel(props: { snapshot: StudioSnapshot }) {
+  return (
+    <div className="tab-content">
+      <div className="tab-summary">
+        <strong>Transcript and evidence trail</strong>
+        <span>Use this when you need the full conversation. The main workspace stays summary-first on purpose.</span>
+      </div>
+      <div className="transcript-body">
+        {props.snapshot.messages.map((message, index) => (
+          <article className={`message ${message.role}`} key={`${index}-${message.role}`}>
+            <div className="message-role">{message.role === "assistant" ? "AI" : message.role === "system" ? "SYSTEM" : "YOU"}</div>
+            <pre>{message.content}</pre>
+          </article>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function DocumentationPanel(props: { mode: "prepare" | "operate"; returnTab: string; onBack: () => void }) {
+  return (
+    <div className="tab-content">
+      <div className="tab-summary">
+        <strong>How srgical is meant to be used</strong>
+        <span>Use prepare to shape context and judgment. Use operate to execute from an approved plan. Keep the human in charge of the decision quality.</span>
+      </div>
+      <div className="docs-grid">
+        <section className="context-excerpt">
+          <div className="context-excerpt-title">Core Flow</div>
+          <pre>{[
+            "1. Prepare",
+            "- clarify the desired outcome",
+            "- gather repo truth and imported evidence",
+            "- select any rules, skills, or guidance that should shape the work",
+            "- build and slice the draft until the next step is explicit",
+            "",
+            "2. Approve",
+            "- the human deliberately confirms the plan is good enough to execute",
+            "",
+            "3. Operate",
+            "- execute one step at a time or use auto-continue carefully",
+            "- checkpoint when needed",
+            "- return to prepare when judgment or reshaping is needed"
+          ].join("\n")}</pre>
+        </section>
+        <section className="context-excerpt">
+          <div className="context-excerpt-title">Working Philosophy</div>
+          <pre>{[
+            "- humans need to understand the fundamentals well enough to apply judgment",
+            "- AI is strongest when the repo, tests, and seams are structured clearly",
+            "- context.md is the living source of truth for what is actually known",
+            "- references are guidance, not unquestioned truth",
+            "- the goal is not maximum verbosity; it is deliberate clarity"
+          ].join("\n")}</pre>
+        </section>
+        <section className="context-excerpt">
+          <div className="context-excerpt-title">References And Documents</div>
+          <pre>{[
+            "- use the References tab to activate guidance that matters for the current plan",
+            "- add extra documentation directories when company docs live outside the default roots",
+            "- selected references are included in planning prompts and mirrored into context.md"
+          ].join("\n")}</pre>
+        </section>
+        <section className="context-excerpt">
+          <div className="context-excerpt-title">When To Return To Prepare</div>
+          <pre>{[
+            "- the next step is no longer clear",
+            "- new evidence changes the approach",
+            "- implementation exposed a missing decision or risky seam",
+            "- the plan drifted away from the intended outcome"
+          ].join("\n")}</pre>
+        </section>
+      </div>
+      <div className="reference-toolbar">
+        <button onClick={props.onBack}>Back To {props.mode === "prepare" ? "Prepare" : "Operate"}</button>
+        <span className="reference-root-empty">Returning to: {props.returnTab}</span>
+      </div>
     </div>
   );
 }
@@ -446,6 +772,15 @@ function Detail(props: { label: string; value: string; chip?: boolean }) {
 
 function ListRow(props: { value: string }) {
   return <div className="list-row">- {props.value}</div>;
+}
+
+function ContextExcerpt(props: { title: string; value: string | null; empty: string }) {
+  return (
+    <section className="context-excerpt">
+      <div className="context-excerpt-title">{props.title}</div>
+      <pre>{props.value?.trim() ? props.value : props.empty}</pre>
+    </section>
+  );
 }
 
 async function fetchRepoSnapshot(token: string): Promise<RepoSnapshot> {

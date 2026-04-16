@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { captureSourcesInContext } from "../../src/core/context-refresh";
+import { captureSelectedGuidanceInContext, captureSourcesInContext } from "../../src/core/context-refresh";
 
 test("captureSourcesInContext appends imported source snapshots with full source text", () => {
   const context = [
@@ -52,4 +52,38 @@ test("captureSourcesInContext replaces an existing source snapshot instead of du
   assert.match(updated, /NEW_CONTENT/);
   assert.doesNotMatch(updated, /OLD_CONTENT/);
   assert.match(updated, /### Source: `notes\/extra\.md`/);
+});
+
+test("captureSelectedGuidanceInContext appends and replaces the selected guidance section", () => {
+  const initial = captureSelectedGuidanceInContext(
+    "# Context\n\n## Working Agreements\n\n- Keep humans in the loop.",
+    [
+      {
+        title: "Testing Guide",
+        path: "docs/testing-guide.md",
+        summary: "Use vitest and keep coverage honest.",
+        tags: ["testing"]
+      }
+    ]
+  );
+
+  assert.match(initial, /## Selected Guidance In Effect/);
+  assert.match(initial, /### Testing Guide/);
+  assert.match(initial, /docs\/testing-guide\.md/);
+
+  const updated = captureSelectedGuidanceInContext(
+    initial,
+    [
+      {
+        title: "Architecture Notes",
+        path: "docs/architecture.md",
+        summary: "Protect seams and boundaries.",
+        tags: ["architecture"]
+      }
+    ]
+  );
+
+  assert.equal((updated.match(/## Selected Guidance In Effect/g) ?? []).length, 1);
+  assert.match(updated, /### Architecture Notes/);
+  assert.doesNotMatch(updated, /### Testing Guide/);
 });

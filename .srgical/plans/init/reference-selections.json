@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "updatedAt": "2026-04-16T13:12:29.881Z",
+  "selectedIds": [
+    "docs/adr/0001-tech-stack.md",
+    "docs/distribution.md",
+    "docs/product-foundation.md",
+    "docs/studio-plan-tutorial.md",
+    "docs/testing-strategy.md",
+    "readme.md"
+  ]
+}

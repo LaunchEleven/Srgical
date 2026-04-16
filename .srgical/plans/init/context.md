@@ -2,7 +2,7 @@
 
 # Context
 
-Updated: 2026-04-15T23:59:00+10:00
+Updated: 2026-04-16T13:52:26.0037229Z
 Updated By: srgical
 
 ## SRGICAL META
@@ -13,64 +13,114 @@ Updated By: srgical
 
 ## Repo Truth
 
-- This repo is a Node-based monorepo rooted at `G:\code\Launch11Projects\srgical` with `apps/*` and `packages/*` workspaces.
-- The root package is `srgical-monorepo`, marked `private: true`, and requires Node `>=20`.
-- The root `package.json` currently does not declare a package `version` field; version/release state is instead surfaced through dedicated root scripts.
-- The main root workflow scripts delegate to workspace packages, especially `@launcheleven/srgical` for `dev`, `start`, `status`, `test`, and `test:coverage`.
-- The root `build` flow currently depends on four workspace builds in sequence: `@srgical/studio-shared`, `@srgical/studio-core`, `@srgical/studio-web`, and `@launcheleven/srgical`.
-- Release and publishing workflows already exist at the repo root through `scripts/release-pack.mjs`, `scripts/publish-github.mjs`, `scripts/publish-npm.mjs`, `scripts/read-package-version.mjs`, and `scripts/read-release-state.mjs`.
-- The repo already documents the rebooted product loop as `prepare -> approve -> operate -> repeat`.
-- The prepare workflow writes visible planning-pack state under `.srgical/`, and `context.md` is explicitly intended to be refreshed directly from gathered/imported material before draft build.
-- The active prepare pack is `.srgical/plans/init/`, and the scaffolded pack files already exist for `plan.md`, `context.md`, `tracker.md`, `changes.md`, and `manifest.json`.
-- Product docs already define the core product shape as a local-first, markdown-first planning and execution system with a full-screen planning studio and incremental execution loop.
-- The accepted initial stack decision is TypeScript on Node using `commander` for CLI commands, `blessed` for the full-screen TUI, and native child-process spawning for Codex orchestration.
-- The README's documented local development loop is `npm install`, `npm run build`, `npm test`, then `npm run dev -- prepare <id>`.
+- This repo is a monorepo rooted at `G:\code\Launch11Projects\srgical` with workspaces under `apps/*` and `packages/*`.
+- The package manifest names the repo `srgical-monorepo`, marks it `private`, and requires Node.js `>=20`.
+- Top-level npm scripts route the main developer workflow through the published CLI package `@launcheleven/srgical` for `dev`, `start`, `status`, and test execution.
+- The build pipeline currently composes four workspace builds in order: `@srgical/studio-shared`, `@srgical/studio-core`, `@srgical/studio-web`, and `@launcheleven/srgical`.
+- Release support already exists in-repo through `scripts/release-pack.mjs`, `scripts/publish-github.mjs`, `scripts/publish-npm.mjs`, `scripts/read-package-version.mjs`, and `scripts/read-release-state.mjs`.
+- The repo already contains product and engineering docs that define the current direction, including `docs/product-foundation.md`, `docs/adr/0001-tech-stack.md`, `docs/distribution.md`, `docs/studio-plan-tutorial.md`, and `docs/testing-strategy.md`.
+- The README positions `srgical` as a local-first CLI that writes visible planning state under `.srgical/` and runs a loop of `prepare`, approval, `operate`, and repeat.
+- The README's development flow is currently `npm install`, `npm run build`, `npm test`, and `npm run dev -- prepare <id>`, so local development still goes through the packaged CLI entrypoint instead of a separate studio-only tool.
+- The README also states that legacy commands such as `doctor`, `init`, `studio`, and `run-next` now only redirect users toward the rebooted workflow.
+- The active prepare pack is `.srgical/plans/init/`, and the existing tracker is still at the initial discover stage with `DISCOVER-001` as the next pending step.
+- The current prepare session remains in Discover stage, and the visible next action is still to ask for the concrete desired outcome for the `init` plan in one sentence before gathering a narrower implementation seam.
+- Checkpoint mode is enabled in the active prepare session, which is relevant session behavior but does not change the plan content on its own.
 
 ## Evidence Gathered
 
-- Imported `package.json` confirms the repo is organized as a private monorepo with `apps/*` and `packages/*` workspaces, Node `>=20`, and script coverage for build, dev, start, status, test, coverage, and release/publish tasks.
-- The same imported `package.json` also confirms there is no root `version` field in the current manifest snapshot, so package versioning should not be assumed from the monorepo root file alone.
-- Imported `README.md` states the product promise plainly: `srgical` is a local-first CLI that helps plan work with an AI, turns that plan into a visible pack inside the repo, and then executes the next step cleanly.
-- `README.md` confirms the primary user workflow:
-  - `srgical prepare <id>` creates or reopens a plan pack and opens the full-screen prepare studio.
-  - Inside prepare, `F2` gathers context, `:import <path>` syncs a document into `context.md`, `:context` refreshes `context.md`, `F3` builds the draft, `F4` slices the plan, and `F6` approves it.
-  - `srgical operate <id>` runs execution after approval, with variants for `--dry-run`, `--auto --max-steps <n>`, and `--checkpoint`.
-- `README.md` also confirms supported local agent expectations for install/use today: at least one of `codex`, `claude`, or `auggie` must be installed and working.
-- `README.md` includes a concrete developer workflow for running the product locally: install dependencies, build, run tests, then enter prepare mode through `npm run dev -- prepare release-readiness`.
-- Imported `docs/product-foundation.md` gives higher-level intent and constraints:
-  - The product is modeled on a four-part durable planning/execution pattern from `Writr\migrations-part-5`.
-  - Non-negotiables are local-first behavior, explicit agent actions, markdown-first repo-visible workflow, and execution that is incremental, resumable, and validation-aware.
-  - V1 scope includes three launch-scope adapters (`codex`, `claude`, `augment`), one planning-pack format under `.srgical/`, one full-screen TUI, one execution command for the current next-step prompt, and truthful installed-tool detection plus session-scoped active-agent selection.
-  - V1 success criteria emphasize no manual prompt copy-paste, planning in a dedicated UI, familiar Writr-style pack output, single-command execution looping, and honest reporting/selection of installed tools.
-- `docs/product-foundation.md` also narrows the release/distribution posture: GitHub Packages uses `@launcheleven/srgical`, npm public uses `@launch11/srgical`, semver is driven via git tags in GitHub Actions, and standalone binaries are intended for Windows, macOS, and Linux.
-- The conversation transcript confirms this prepare session is still in Discover stage and the system-directed next action remains: gather more evidence or describe the desired outcome before building the first draft.
-- The transcript also confirms that `package.json`, `README.md`, and `docs/product-foundation.md` were explicitly loaded into the prepare session more than once as context sources, so their content is established imported planning evidence rather than guesswork.
-- The transcript adds one explicit planning blocker that should remain visible in context:
-  - After the first auto context sync, the system asked the human to "say exactly what the first version should do."
-  - No answer to that request appears in the supplied transcript, so the first-version outcome is still unresolved.
-- There is one terminology mismatch to preserve as evidence rather than normalize away yet:
-  - `README.md` names supported local CLIs as `codex`, `claude`, or `auggie`.
-  - `docs/product-foundation.md` names V1 launch-scope adapters as `codex`, `claude`, and `augment`.
-  - This may reflect a rename, packaging distinction, or stale documentation and should stay visible until confirmed.
+- Imported `package.json` confirms the repo is organized as a workspace monorepo and that the current developer entrypoints are intentionally thin wrappers around the main CLI package rather than ad hoc root scripts.
+- Imported `README.md` adds concrete workflow truth for the current product surface:
+  - `srgical prepare <id>` creates or reopens a plan pack under `.srgical/plans/<id>/` and opens the full-screen prepare studio.
+  - Prepare-mode commands already include `:import <path>` to sync a specific document into `context.md`, `:context` to refresh context from transcript plus evidence, `F3` to build the draft, `F4` to slice steps, and `F6` to approve.
+  - Operate mode already exposes `--dry-run`, `--auto --max-steps <n>`, and `--checkpoint` variants.
+  - Install guidance currently expects npm install of `@launch11/srgical` plus at least one local agent CLI: `codex`, `claude`, or `auggie`.
+  - The README's development section confirms the normal local loop remains repo-local and CLI-driven: install dependencies, build, run tests, then launch prepare through `npm run dev -- prepare <id>`.
+  - The README explicitly points fuller prepare UX walkthroughs to `docs/studio-plan-tutorial.md`, which is relevant supporting documentation if the draft later needs interaction details.
+- Imported `docs/product-foundation.md` captures the deeper product intent behind the workflow:
+  - The product is modeled after a four-part Writr-style system: stable plan, current-context handoff log, strict step tracker, and repeatable next-agent prompt.
+  - The core thesis is that teams should be able to plan in a dedicated studio, write the pack into the repo, and continue execution without reconstructing state manually.
+  - Non-negotiables are local-first behavior, explicit agent actions, markdown-first repo-visible workflow, incremental and resumable execution, and a TUI that does not feel like a generic debug console.
+  - V1 scope calls for launch-scope adapters for `codex`, `claude`, and `augment`, one `.srgical/` planning-pack format, one full-screen TUI, one execution command for the next-step prompt, and truthful installed-tool detection with session-scoped agent selection.
+  - V1 success criteria emphasize single-command bootstrap, planning in a dedicated interface, familiarity with the Writr-style system, single-command next-step execution, and honest reporting when supported agents are missing or multiple.
+  - Distribution strategy is split between GitHub Packages as `@launcheleven/srgical`, npm public as `@launch11/srgical`, semver via git tags and GitHub Actions, and standalone binaries for Windows, macOS, and Linux.
+- The transcript confirms this prepare session is still in Discover stage, and the planner has not yet been given a user-authored desired outcome beyond gathering repo and product context.
+- The transcript now shows the same three sources being loaded repeatedly across multiple auto-sync passes, which reinforces that the current context is based on repeated grounding in `package.json`, `README.md`, and `docs/product-foundation.md` rather than newly broadened repo inspection.
+- The transcript also confirms that context sync is an explicit first-class studio action, not a side effect to defer until a later draft build.
+- The latest visible system guidance in prepare is still to ask for the concrete desired outcome for the `init` plan in one sentence, then gather only the matching `apps/` or `packages/` area before drafting.
+- The planner also surfaced that requirement directly to the user as: the first version still needs to be stated plainly before the draft can move forward.
+- The transcript records theme changes to Amber Grid and later Neon Command; these are session-state changes only and do not affect plan content.
+- The transcript records checkpoint mode being enabled during the session; this affects operate behavior expectations but does not supply missing product or implementation scope.
+- Selected references now in effect expand the grounded evidence beyond the three imported files to include `docs/adr/0001-tech-stack.md`, `docs/distribution.md`, `docs/studio-plan-tutorial.md`, and `docs/testing-strategy.md`.
+- Those selected references add useful current guidance:
+  - ADR 0001 confirms the accepted initial implementation stack is TypeScript on Node with `commander`, `blessed`, and native child-process spawning for Codex orchestration.
+  - `docs/distribution.md` sharpens release truth: current production channels are GitHub Packages, public npm, and GitHub Releases; versioning is tag-driven; and the package does not bundle agent CLIs.
+  - `docs/studio-plan-tutorial.md` reinforces the prepare mental model that transcript changes and pack-file writes are separate, and that `context.md` is the one document intended to refresh earlier during gather/import flows.
+  - `docs/testing-strategy.md` frames current quality priorities around command safety, pack integrity, adapter behavior, and release verification, with an executable baseline already identified for tests around planning-pack state, execution state, `doctor`, and `run-next`.
 
 ## Unknowns To Resolve
 
-- Desired outcome not confirmed yet.
-- The clearest missing input from the transcript is still: what, exactly, should the first version do?
-- This pack is still the generic `init` prepare pack; the concrete initiative, change target, or first deliverable has not been stated in the transcript yet.
-- The first real draft has not been built, so there is no confirmed problem statement, desired outcome, risk frame, or execution slice list yet.
-- The source file inventory was unavailable in the current snapshot, so current implementation status inside `apps/` and `packages/` is not yet captured in this context doc.
-- The adapter naming mismatch between `auggie` in `README.md` and `augment` in `docs/product-foundation.md` needs confirmation.
-- If versioning matters for the plan, the relevant package manifest or release source still needs to be inspected because the root `package.json` does not carry a version field.
-- No repo-level validation has been run in this context-sync action, so build/test health is still unknown.
+- The desired outcome for the `init` prepare pack is still not explicitly stated by the user; current evidence describes the product and workflow but not the specific change, release goal, or implementation target this pack should drive.
+- The first safe execution slice has not been identified yet because there is still no confirmed draft outcome to decompose.
+- Repo-level file inventories were provided, but source-file inventory details are still unavailable, so implementation seams inside `apps/` and `packages/` remain unverified and should only be gathered after the desired outcome is pinned down.
+- Product-foundation notes say V1 scope includes adapters for `codex`, `claude`, and `augment`, while the README install requirements mention `codex`, `claude`, and `auggie`; that naming mismatch needs confirmation before a draft treats agent support as settled truth.
+- The exact package/workspace mapping for `@launcheleven/srgical` versus the public install name `@launch11/srgical` is implied by docs and scripts but not yet reconciled in this context pack.
+- The selected references introduce legacy and rebooted command language side by side, such as `doctor`, `init`, `studio plan`, `/write`, and `/dice`, while the README foregrounds `prepare`, `operate`, `:build`, and `:slice`; the intended user-facing command canon for this plan still needs to be treated carefully.
 
 ## Working Agreements
 
+- Treat `context.md` as the live evidence log for prepare; imported files and transcript facts should be folded here before draft generation when they materially sharpen repo truth.
 - The human decides when there is enough context to move forward.
+- Prefer confirmed repo and transcript facts over assumptions, especially when product docs and README language diverge.
+- Preserve high-signal imported material with enough fidelity that later draft generation can rely on it without reopening the same files unless code-level seams are needed.
 - Prepare can gather heavily, but it should not silently approve the plan.
 - Operate executes one step by default and reports what changed after every run.
-- Treat imported source files and transcript-loaded documents as first-class evidence for `context.md`, especially before the first draft exists.
-- Prefer concrete repo truth from imported files and existing docs over speculative planning language.
-- Keep the prepare pack aligned to the rebooted workflow described in `README.md`: context sync can happen before draft build, approval is explicit, and execution should only follow an approved plan.
-- Preserve useful discrepancies in the evidence section when docs conflict instead of flattening them into a false certainty.
-- Treat repeated transcript prompts as signal: if the system keeps asking for the first-version outcome, that missing decision stays an active unknown until the human answers it directly.
+- Follow the explicit prepare guidance from the transcript: get the plan outcome in one sentence first, then inspect only the matching `apps/` or `packages/` area instead of broad repo spelunking.
+- Until the user states the target outcome for `init`, this pack should remain in discovery mode and avoid pretending the repo-wide product direction is the same thing as the plan goal.
+- Carry forward selected-reference guidance when it sharpens repo truth: treat `context.md` as the early-sync evidence log, reserve broader pack rewrites for explicit draft actions, and keep command/release/testing notes visible when they materially constrain the plan.
+
+## Selected Guidance In Effect
+
+- `README.md`: `context.md` is a living document that gather/import actions can refresh directly before the full draft is built, and the current rebooted user flow is `prepare` -> approve -> `operate`.
+- `docs/product-foundation.md`: the product should preserve the four-part Writr-style planning pattern, stay local-first and markdown-visible, and keep execution incremental, resumable, and explicit.
+- `docs/adr/0001-tech-stack.md`: the accepted initial stack is TypeScript on Node with `commander`, `blessed`, and native child-process spawning for Codex orchestration.
+- `docs/distribution.md`: release truth currently includes dual package publishing (`@launcheleven/srgical` and `@launch11/srgical`), tag-driven semver, GitHub Releases artifacts, and separate local installation of supported agent CLIs.
+- `docs/studio-plan-tutorial.md`: transcript updates do not automatically rewrite the planning pack, `context.md` is the one document meant to sync earlier, and draft/slicing actions should stay explicit.
+- `docs/testing-strategy.md`: later planning should respect the current testing emphasis on command safety, pack integrity, agent/platform regressions, and release verification rather than assuming manual smoke testing is enough.
+
+<!-- SRGICAL:SELECTED_GUIDANCE_SECTION -->
+
+## Selected Guidance In Effect
+
+
+
+### srgical
+- Path: `README.md`
+- Summary: `srgical` is a local-first CLI for planning work with an AI, turning that plan into a visible pack inside your repo, and then executing the next step cleanly.
+- Tags: testing, ai, delivery
+
+### ADR 0001: Initial Stack
+- Path: `docs/adr/0001-tech-stack.md`
+- Summary: Accepted on 2026-03-23
+- Tags: architecture, ai, delivery
+
+### Distribution Guide
+- Path: `docs/distribution.md`
+- Summary: The current production release channels are GitHub Packages for npm, the public npm registry, and GitHub Releases.
+- Tags: testing, ai, security, delivery
+
+### Product Foundation
+- Path: `docs/product-foundation.md`
+- Summary: The system in `Writr\migrations-part-5` has four durable primitives:
+- Tags: ai, delivery
+
+### Studio Plan Tutorial
+- Path: `docs/studio-plan-tutorial.md`
+- Summary: This guide is for the moment when `srgical studio plan` feels fuzzy:
+- Tags: testing, architecture, ai, security, delivery
+
+### Testing Strategy
+- Path: `docs/testing-strategy.md`
+- Summary: This plan turns the current srgical CLI into a continuously verifiable tool instead of a repo that only relies on
+- Tags: testing, ai, delivery
+
+<!-- /SRGICAL:SELECTED_GUIDANCE_SECTION -->

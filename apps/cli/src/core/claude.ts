@@ -98,7 +98,7 @@ export async function requestPlannerReply(
   const packState = await readPlanningPackState(workspaceRoot, options);
   const result = await runClaudeExec({
     cwd: workspaceRoot,
-    prompt: buildPlannerPrompt(messages, workspaceRoot, packState),
+    prompt: await buildPlannerPrompt(messages, workspaceRoot, packState),
     permissionMode: "plan",
     maxTurns: 4,
     onOutputChunk: options.onOutputChunk

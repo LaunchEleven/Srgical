@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "updatedAt": "2026-04-15T14:48:01.347Z",
+  "updatedAt": "2026-04-16T13:53:52.969Z",
   "messages": [
     {
       "role": "assistant",
@@ -24,15 +24,15 @@
     },
     {
       "role": "system",
-      "content": "Auto Context Sync completed.\nVisible change: Refreshed the living context doc. | docs 3 | added 0 | edited 0 | done 0\nEvidence: package.json, README.md, docs/product-foundation.md\nUnknowns: Confirm the desired outcome for this `init` plan: what change, deliverable, or decision the user actually wants to drive. | Inspect the current implementation under `apps/` and `packages/` to establish which product seams already exist and where the first safe execution slice belongs.\nNext action: Ask for the exact outcome this `init` plan should achieve, then gather the corresponding `apps/` or `packages/` area to ground the first draft.\nCodex summary:\nUpdated [context.md](G:\\code\\Launch11Projects\\srgical\\.srgical\\plans\\init\\context.md) to replace the boilerplate with current repo truth, imported evidence from `package.json`, `README.md`, and `docs/product-foundation.md`, the current discover-stage unknowns, and working agreements consistent with the prepare workflow.\n\nI preserved the doc marker, title, updated fields, SRGICAL META section, and the required section structure. I also kept the `auggie` vs `augment` naming mismatch visible as an unresolved doc discrepancy instead of collapsing it into a guessed fact."
+      "content": "Auto Context Sync completed.\nVisible change: Refreshed the living context doc. | docs 3 | added 0 | edited 0 | done 0\nEvidence: package.json, README.md, docs/product-foundation.md\nUnknowns: Confirm the exact desired outcome for the `init` plan pack, including what change, decision, or release target it is meant to produce. | Inspect the actual implementation seams under `apps/` and `packages/` only after the outcome is confirmed, so the first slice maps to real code boundaries i"
     },
     {
       "role": "system",
-      "content": "I refreshed `context.md`, but I still need one thing from you.\nNeed from you: say exactly what the first version should do."
+      "content": "Theme set to Amber Grid."
     },
     {
       "role": "system",
-      "content": "Prepare mode gathers context, keeps `context.md` current, builds the draft, slices it into steps, and gets the plan ready to operate.\nType normal text to chat with the planner.\nUse `:` to run a studio command such as `:import <path>`, `:context`, `:build`, `:slice --help`, or `:operate`.\nStage: Discover\nNext action: Ask for the exact outcome this `init` plan should achieve, then gather the corresponding `apps/` or `packages/` area to ground the first draft."
+      "content": "Prepare mode gathers context, keeps `context.md` current, builds the draft, slices it into steps, and gets the plan ready to operate.\nType normal text to chat with the planner.\nUse `:` to run a studio command such as `:import <path>`, `:context`, `:build`, `:slice --help`, or `:operate`.\nStage: Discover\nNext action: Ask for the concrete desired outcome for the `init` plan in one sentence, then gather only the matching `apps/` or `packages/` area before drafting."
     },
     {
       "role": "system",
@@ -48,7 +48,7 @@
     },
     {
       "role": "system",
-      "content": "Auto Context Sync completed.\nVisible change: Refreshed the living context doc. | docs 3 | added 0 | edited 0 | done 0\nEvidence: package.json, README.md, docs/product-foundation.md\nUnknowns: Confirm the exact deliverable, change, or decision this `init` plan is meant to produce. | Inspect the relevant `apps/` or `packages/` area to map existing seams before drafting execution steps.\nNext action: Ask the user for the exact outcome this `init` plan should achieve, then gather the matching `apps/` or `packages/` implementation area.\nCodex summary:\nUpdated [context.md](G:\\code\\Launch11Projects\\srgical\\.srgical\\plans\\init\\context.md).\n\nI kept the doc marker, title, Updated fields, SRGICAL META section, and the existing section structure intact. The refresh now captures the newer transcript signal that the missing first-version definition is still the central unresolved input, adds the README development workflow as evidence/repo truth, and clarifies that the root `package.json` has no `version` field rather than leaving that point vague."
+      "content": "Auto Context Sync completed.\nVisible change: Refreshed the living context doc. | docs 3 | added 0 | edited 0 | done 0\nEvidence: package.json, README.md, docs/product-foundation.md\nUnknowns: Get the user's exact desired outcome for the `init` plan, including the intended change, decision, or release target. | After that outcome is stated, inspect only the relevant `apps/` or `packages/` implementation seam to identify the first safe executable slice.\nNext action: Ask the user for the concrete desired outcome of the `init` plan in one sentence.\nCodex summary:\nUpdated [context.md](G:\\code\\Launch11Projects\\srgical\\.srgical\\plans\\init\\context.md:1) only.\n\nI kept the existing SRGICAL identity and section structure, added the newly confirmed README development and legacy-command facts to `Repo Truth`, captured the repeated auto-sync plus the explicit “ask for the outcome first, then inspect only the matching area” guidance in `Evidence Gathered`, and tightened `Unknowns To Resolve` and `Working Agreements` around that current discovery state."
     },
     {
       "role": "system",
@@ -56,11 +56,35 @@
     },
     {
       "role": "system",
-      "content": "Operate mode is execution-only.\nUse `:` to run studio commands such as `:run`, `:auto 3`, `:checkpoint`, or `:prepare`.\nStage: Discover\nNext action: Ask the user for the exact outcome this `init` plan should achieve, then gather the matching `apps/` or `packages/` implementation area."
+      "content": "Theme set to Neon Command."
     },
     {
       "role": "system",
-      "content": "Theme set to Neon Command."
+      "content": "Checkpoint mode enabled."
+    },
+    {
+      "role": "system",
+      "content": "Prepare mode gathers context, keeps `context.md` current, builds the draft, slices it into steps, and gets the plan ready to operate.\nType normal text to chat with the planner.\nUse `:` to run a studio command such as `:import <path>`, `:context`, `:build`, `:slice --help`, or `:operate`.\nStage: Discover\nNext action: Ask the user for the concrete desired outcome of the `init` plan in one sentence."
+    },
+    {
+      "role": "system",
+      "content": "Loaded context file: package.json\n\n===== BEGIN FILE package.json =====\n{\n  \"name\": \"srgical-monorepo\",\n  \"private\": true,\n  \"workspaces\": [\n    \"apps/*\",\n    \"packages/*\"\n  ],\n  \"scripts\": {\n    \"build\": \"npm run build -w @srgical/studio-shared && npm run build -w @srgical/studio-core && npm run build -w @srgical/studio-web && npm run build -w @launcheleven/srgical\",\n    \"dev\": \"npm run dev -w @launcheleven/srgical --\",\n    \"start\": \"npm run start -w @launcheleven/srgical --\",\n    \"status\": \"npm run status -w @launcheleven/srgical --\",\n    \"test\": \"npm run test -w @launcheleven/srgical\",\n    \"test:coverage\": \"npm run test:coverage -w @launcheleven/srgical\",\n    \"prepack\": \"npm run build\",\n    \"release:pack\": \"node scripts/release-pack.mjs\",\n    \"publish:github\": \"node scripts/publish-github.mjs\",\n    \"publish:npm\": \"node scripts/publish-npm.mjs\",\n    \"release:version\": \"node scripts/read-package-version.mjs\",\n    \"release:state\": \"node scripts/read-release-state.mjs\"\n  },\n  \"engines\": {\n    \"node\": \">=20\"\n  }\n}\n===== END FILE package.json ====="
+    },
+    {
+      "role": "system",
+      "content": "Loaded context file: README.md\n\n===== BEGIN FILE README.md =====\n# srgical\n\n`srgical` is a local-first CLI for planning work with an AI, turning that plan into a visible pack inside your repo, and then executing the next step cleanly.\n\nIt is built around a simple loop:\n\n1. `prepare` the plan\n2. approve it\n3. `operate` the next step\n4. repeat\n\n## Install From npm\n\nRequirements:\n\n- Node.js 20 or newer\n- At least one local agent CLI installed and working on your machine: `codex`, `claude`, or `auggie`\n\n```bash\nnpm install -g @launch11/srgical\n```\n\nAfter install:\n\n```bash\nsrgical about\n```\n\n## Quick Start\n\nCreate or reopen a named plan:\n\n```bash\nsrgical prepare release-readiness\n```\n\nThat command creates the plan pack under `.srgical/plans/release-readiness/` if it does not exist, then opens the full-screen prepare studio.\n\nInside `prepare`:\n\n- Type normal text to talk to the planner\n- Press `F2` to gather more context\n- Use `:import <path>` to read a specific document and sync it into `context.md`\n- Use `:context` to refresh `context.md` from the current transcript and gathered evidence\n- Press `F3` to build the draft\n- Press `F4` to slice the plan into steps\n- Press `F6` to approve the current draft\n- Type `:help` to see the command list\n\nCheck the current state at any time:\n\n```bash\nsrgical status release-readiness\n```\n\nWhen the plan is approved, switch to execution:\n\n```bash\nsrgical operate release-readiness\n```\n\nUseful operate variants:\n\n```bash\nsrgical operate release-readiness --dry-run\nsrgical operate release-readiness --auto --max-steps 5\nsrgical operate release-readiness --checkpoint\n```\n\n## Main Commands\n\n```bash\nsrgical prepare <\n... [truncated after 1600 chars]\n===== END FILE README.md ====="
+    },
+    {
+      "role": "system",
+      "content": "Loaded context file: docs/product-foundation.md\n\n===== BEGIN FILE docs/product-foundation.md =====\n# Product Foundation\n\n## Source Pattern\n\nThe system in `Writr\\migrations-part-5` has four durable primitives:\n\n1. `01`: a stable high-level plan\n2. `02`: a current-context kickoff and handoff log\n3. `03`: a detailed step tracker with strict progression rules\n4. `04`: a repeatable next-agent prompt that forces disciplined continuation\n\nThat pattern is the product.\n\n## Product Thesis\n\nTeams should be able to run one command, enter a planning studio, talk with an AI until the approach is ready, write a\ntracker pack into the repo, and then keep executing the next valid chunk without manually reconstructing state each\ntime.\n\n## Non-Negotiables\n\n- Local-first by default\n- Agent actions remain explicit\n- The workflow is markdown-first and repo-visible\n- Execution must be incremental, resumable, and validation-aware\n- The UI cannot feel like a boring debug console\n\n## V1 Scope\n\n- Three launch-scope agent adapters: `codex`, `claude`, and `augment`\n- One planning-pack format under `.srgical/`\n- One full-screen TUI for planning conversation\n- One execution command that runs the current next-step prompt through the active workspace agent\n- Truthful installed-tool detection plus session-scoped active-agent selection\n\n## V1 Success Criteria\n\n- A new repo can be bootstrapped without manual prompt copy-paste\n- The user can plan inside a dedicated interface instead of a raw shell\n- The generated pack is close enough to the existing Writr-style system that it feels familiar\n- The user can trigger the next execution loop with a single command\n- The product reports missing supported agents hon\n... [truncated after 1600 chars]\n===== END FILE docs/product-foundation.md ====="
+    },
+    {
+      "role": "system",
+      "content": "Auto Context Sync completed.\nVisible change: Refreshed the living context doc. | docs 3 | added 0 | edited 0 | done 0\nEvidence: package.json, README.md, docs/product-foundation.md\nUnknowns: Get the user's exact desired outcome for the `init` plan, including the intended change, decision, or release target. | After that outcome is stated, inspect only the relevant `apps/` or `packages/` seam to identify the first safe executable slice and confirm any command/agent naming mismatch that affects that area.\nNext action: Ask the user for the concrete desired outcome of the `init` plan in one sentence.\nCodex summary:\nUpdated [context.md](/G:/code/Launch11Projects/srgical/.srgical/plans/init/context.md:1) only.\n\nI kept the SRGICAL marker, title, metadata, and core sections intact, then folded in the newer transcript and reference material: repeated auto-sync passes, the explicit “state what the first version should do” prompt, Discover-stage/checkpoint-mode session truth, and the active guidance from ADR, distribution, studio tutorial, and testing docs. I also added a `Selected Guidance In Effect` section and tightened the unknowns around the still-missing concrete outcome and command/agent naming mismatches.\n\nVerification: read the file back after the patch; no other `.srgical` files were changed."
+    },
+    {
+      "role": "system",
+      "content": "I refreshed `context.md`, but I still need one thing from you.\nNeed from you: say exactly what the first version should do."
     }
   ],
   "activeAgentId": null

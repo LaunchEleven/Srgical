@@ -85,6 +85,10 @@ Updated By: srgical
 - The human decides when there is enough context to move forward.
 - Prepare can gather heavily, but it should not silently approve the plan.
 - Operate executes one step by default and reports what changed after every run.
+
+## Selected Guidance In Effect
+
+- No guidance documents selected yet.
 `,
     "context",
     "boilerplate"

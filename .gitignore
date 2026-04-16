@@ -4,3 +4,4 @@ coverage/
 *.log
 .artifacts/
 **/.tmp-*/
+.srgical\

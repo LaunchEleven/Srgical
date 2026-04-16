@@ -2,6 +2,7 @@ import { readdir } from "node:fs/promises";
 import path from "node:path";
 import type { PlanDiceOptions } from "./plan-dicing";
 import type { PlanningPackState } from "./planning-pack-state";
+import { loadSelectedReferenceDocuments } from "./reference-library";
 import { fileExists, getPlanningPackPaths, readText, type PlanningPathOptions } from "./workspace";
 
 export type ChatMessage = {
@@ -40,10 +41,11 @@ function renderTranscript(messages: ChatMessage[]): string {
     .join("\n\n");
 }
 
-export function buildPlannerPrompt(messages: ChatMessage[], workspaceRoot: string, packState?: PlanningPackState): string {
+export async function buildPlannerPrompt(messages: ChatMessage[], workspaceRoot: string, packState?: PlanningPackState): Promise<string> {
   const usedBlockerQuestions = countPlannerQuestionTurns(messages);
   const remainingBlockerQuestions = Math.max(0, PLANNER_BLOCKER_QUESTION_BUDGET - usedBlockerQuestions);
   const userWantsConvergence = detectUserConvergenceSignal(messages);
+  const selectedReferences = await renderSelectedReferencePromptSection(workspaceRoot, packState ? { planId: packState.planId } : {});
 
   return `You are the planning partner inside srgical, a local-first CLI that helps users turn long AI-driven delivery
 projects into a disciplined execution pack.
@@ -87,6 +89,10 @@ ${packState ? renderPlanningStateSummary(packState) : "- unavailable during this
 - Treat this state as the source of truth for whether the CLI is ready for Build Draft, Slice Plan, or approval.
 - If readiness says the first draft is not yet writable, do not tell the user to build the draft yet.
 - If the only missing signal is explicit approval, tell the user they can build or slice the draft now and approve it later when they want to operate from it.
+
+Selected references in effect:
+
+${selectedReferences}
 
 Response contract (choose exactly one mode):
 Mode A - Single blocker (only when truly required)
@@ -141,6 +147,7 @@ export async function buildPackWriterPrompt(
   options: PlanningPathOptions = {}
 ): Promise<string> {
   const repoTruth = await buildRepoTruthSnapshot(workspaceRoot, options);
+  const selectedReferences = await renderSelectedReferencePromptSection(workspaceRoot, options);
 
   return `You are writing a prepare pack for the current repository.
 
@@ -160,6 +167,7 @@ Operating rules:
 - Prefer repo truth for what already exists in the codebase and the conversation for what the user now wants next.
 - Make the pack specific to the actual commands, docs, stack, and current capabilities in this workspace.
 - Do not invent frameworks, release channels, adapters, tests, or subsystems that are not supported by the repo truth or transcript.
+- If selected references are provided below, apply them deliberately where they genuinely improve the draft; do not cargo-cult them into unrelated parts of the plan.
 - Keep the workflow local-first, explicit, incremental, and validation-aware.
 - Apply SOLID and loose DDD thinking pragmatically where it improves boundaries, naming, or step structure.
 - Capture telemetry, logging, and feature-flag considerations when the work would realistically need them.
@@ -177,6 +185,10 @@ Quality bar:
 Repo truth snapshot:
 
 ${repoTruth}
+
+Selected references in effect:
+
+${selectedReferences}
 
 Conversation transcript:
 
@@ -203,6 +215,7 @@ export async function buildContextRefreshPrompt(
       )
       .join("\n\n")
     : "- none";
+  const selectedReferences = await renderSelectedReferencePromptSection(workspaceRoot, options);
 
   return `You are updating the living context document for the active srgical prepare pack.
 
@@ -216,10 +229,11 @@ Operating rules:
 - Do not claim you are blocked from writing context.md. This workflow is the direct context-sync path.
 - Treat context.md as a living working document that should be refined in place as the team's understanding improves.
 - Preserve the document identity, including the SRGICAL doc-state marker, title, Updated fields, and SRGICAL META section.
-- Keep the main sections recognizable: Repo Truth, Evidence Gathered, Unknowns To Resolve, and Working Agreements.
+- Keep the main sections recognizable: Repo Truth, Evidence Gathered, Unknowns To Resolve, Working Agreements, and Selected Guidance In Effect.
 - Integrate the new source material thoughtfully instead of blindly pasting it. Carry forward confirmed facts, constraints, decisions, and useful open questions.
 - When the user imported an implementation spec or long plan document, preserve that material with high fidelity so the full source intent remains available in context.md.
 - If imported material already contains a fleshed-out plan, capture that content as evidence, working agreements, or clarified unknowns unless it is already confirmed in the repo or transcript.
+- If selected references are active, carry forward the useful rules, skills, or principles into context.md as working agreements, guidance, or constraints where relevant.
 - Prefer precise repo truth and transcript facts over generic advice.
 - Remove or reshape stale context when the new evidence supersedes it.
 - Do not edit plan.md, tracker.md, changes.md, or manifest.json in this action.
@@ -229,10 +243,15 @@ Quality bar for context.md:
 - Evidence Gathered should summarize the important imported or discovered material clearly enough that later draft generation can rely on it.
 - Unknowns To Resolve should stay honest and current.
 - Working Agreements should reflect the latest confirmed operating expectations.
+- Selected Guidance In Effect should name the active rules, skills, or reference docs influencing the plan right now.
 
 Repo truth snapshot:
 
 ${repoTruth}
+
+Selected references in effect:
+
+${selectedReferences}
 
 Current context.md:
 
@@ -255,6 +274,7 @@ export async function buildPlanDicePrompt(
   options: PlanningPathOptions = {}
 ): Promise<string> {
   const repoTruth = await buildRepoTruthSnapshot(workspaceRoot, options);
+  const selectedReferences = await renderSelectedReferencePromptSection(workspaceRoot, options);
   const resolutionInstruction =
     diceOptions.resolution === "low"
       ? "Use coarse but still execution-oriented slices. Favor a smaller number of bigger step blocks."
@@ -291,6 +311,7 @@ Operating rules:
 - Use pragmatic SOLID and loose DDD thinking where it improves boundaries, naming, or step decomposition.
 - Surface telemetry, logging, and feature-flag considerations when the work would realistically need them.
 - Do not invent repo facts, frameworks, or implementation details unsupported by the repo truth or transcript.
+- If selected references are active, use them to influence slicing, validation expectations, and architectural boundaries where relevant.
 - Preserve completed steps except for note corrections. Pending and future steps may be reshaped.
 - If the first risky seam needs proof, insert an explicit SPIKE-### step with hypothesis, validation, and follow-through notes.
 
@@ -306,6 +327,10 @@ Repo truth snapshot:
 
 ${repoTruth}
 
+Selected references in effect:
+
+${selectedReferences}
+
 Conversation transcript:
 
 ${renderTranscript(messages)}
@@ -319,6 +344,7 @@ export async function buildAdvicePrompt(
   options: PlanningPathOptions = {}
 ): Promise<string> {
   const repoTruth = await buildRepoTruthSnapshot(workspaceRoot, options);
+  const selectedReferences = await renderSelectedReferencePromptSection(workspaceRoot, options);
 
   return `You are the planning advisor inside srgical.
 
@@ -332,6 +358,7 @@ Rules:
 - Prefer concise, practical advice over generic coaching.
 - If the plan is still fuzzy, say so plainly.
 - If more repo research is needed, name the missing area directly.
+- If selected references are active, use them as deliberate guidance, not as automatic truth.
 - Return valid JSON only. No markdown fences. No prose before or after the JSON.
 
 ${PLANNING_FRAMEWORK_WRAPPER}
@@ -354,6 +381,10 @@ ${renderPlanningStateSummary(packState)}
 Repo truth snapshot:
 
 ${repoTruth}
+
+Selected references in effect:
+
+${selectedReferences}
 
 Conversation transcript:
 
@@ -424,6 +455,25 @@ async function buildRepoTruthSnapshot(workspaceRoot: string, options: PlanningPa
     "",
     renderNamedSnippet(".srgical/plans/<id>/manifest.json", manifestSnippet)
   ].join("\n");
+}
+
+async function renderSelectedReferencePromptSection(workspaceRoot: string, options: PlanningPathOptions = {}): Promise<string> {
+  const selected = await loadSelectedReferenceDocuments(workspaceRoot, options).catch(() => []);
+
+  if (selected.length === 0) {
+    return "- none selected";
+  }
+
+  return selected
+    .map((entry) =>
+      [
+        `- ${entry.title} (${entry.path})`,
+        `  summary: ${entry.summary}`,
+        `  tags: ${entry.tags.join(", ") || "general"}`,
+        renderNamedSnippet(`reference:${entry.path}`, entry.contentSnippet)
+      ].join("\n")
+    )
+    .join("\n\n");
 }
 
 function renderPlanningStateSummary(packState: PlanningPackState): string {

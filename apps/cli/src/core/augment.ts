@@ -100,7 +100,7 @@ export async function requestPlannerReply(
   const packState = await readPlanningPackState(workspaceRoot, options);
   const result = await runAugmentExec({
     cwd: workspaceRoot,
-    prompt: buildPlannerPrompt(messages, workspaceRoot, packState),
+    prompt: await buildPlannerPrompt(messages, workspaceRoot, packState),
     askMode: true,
     maxTurns: 4,
     onOutputChunk: options.onOutputChunk

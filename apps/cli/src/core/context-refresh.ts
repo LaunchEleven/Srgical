@@ -5,6 +5,7 @@ import { readPlanningPackState, type PlanningMode } from "./planning-pack-state"
 import { recordVisibleChange } from "./prepare-pack";
 import { refreshPlanningAdvice } from "./planning-advice";
 import type { ChatMessage, ContextRefreshSource } from "./prompts";
+import { loadSelectedReferenceDocuments } from "./reference-library";
 import { getPlanningPackPaths, readText, writeText, type PlanningPathOptions } from "./workspace";
 
 export type ContextRefreshResult = {
@@ -37,6 +38,8 @@ export async function syncPlanningContext(
       await writeText(paths.context, updatedContext);
     }
   }
+
+  await syncSelectedGuidanceInContext(workspaceRoot, options);
 
   const advice = await refreshPlanningAdvice(workspaceRoot, messages, options).catch(() => null);
   const state = await readPlanningPackState(workspaceRoot, options);
@@ -108,6 +111,9 @@ const SOURCE_CAPTURE_SECTION_END = "<!-- /SRGICAL:SOURCE_CAPTURE_SECTION -->";
 const SOURCE_CAPTURE_HEADING = "## Imported Source Snapshots";
 const SOURCE_CAPTURE_BLOCK_OPEN = "<!-- SRGICAL:SOURCE_CAPTURE ";
 const SOURCE_CAPTURE_BLOCK_CLOSE = "<!-- /SRGICAL:SOURCE_CAPTURE -->";
+const GUIDANCE_SECTION_START = "<!-- SRGICAL:SELECTED_GUIDANCE_SECTION -->";
+const GUIDANCE_SECTION_END = "<!-- /SRGICAL:SELECTED_GUIDANCE_SECTION -->";
+const GUIDANCE_HEADING = "## Selected Guidance In Effect";
 
 export function captureSourcesInContext(
   context: string,
@@ -143,6 +149,59 @@ export function captureSourcesInContext(
 
   if (sectionMatch) {
     return context.replace(sectionRegex, renderedSection);
+  }
+
+  return `${context.trimEnd()}\n\n${renderedSection}\n`;
+}
+
+export async function syncSelectedGuidanceInContext(
+  workspaceRoot: string,
+  options: PlanningPathOptions = {}
+): Promise<void> {
+  const paths = getPlanningPackPaths(workspaceRoot, options);
+  const currentContext = await readText(paths.context).catch(() => "");
+  if (!currentContext) {
+    return;
+  }
+
+  const selected = await loadSelectedReferenceDocuments(workspaceRoot, options, 1200).catch(() => []);
+  const updatedContext = captureSelectedGuidanceInContext(currentContext, selected);
+
+  if (updatedContext !== currentContext) {
+    await writeText(paths.context, updatedContext);
+  }
+}
+
+export function captureSelectedGuidanceInContext(
+  context: string,
+  selected: Array<{ title: string; path: string; summary: string; tags: string[] }>
+): string {
+  const sectionRegex = new RegExp(
+    `\\n?${escapeRegExp(GUIDANCE_SECTION_START)}\\n[\\s\\S]*?\\n${escapeRegExp(GUIDANCE_SECTION_END)}\\n?`,
+    "m"
+  );
+
+  if (selected.length === 0) {
+    return context.replace(sectionRegex, "\n").replace(/\n{3,}/g, "\n\n").trimEnd();
+  }
+
+  const renderedSection = [
+    GUIDANCE_SECTION_START,
+    GUIDANCE_HEADING,
+    "",
+    ...selected.map((entry) =>
+      [
+        `### ${entry.title}`,
+        `- Path: \`${entry.path}\``,
+        `- Summary: ${entry.summary}`,
+        `- Tags: ${entry.tags.join(", ") || "general"}`
+      ].join("\n")
+    ),
+    GUIDANCE_SECTION_END
+  ].join("\n\n");
+
+  if (sectionRegex.test(context)) {
+    return context.replace(sectionRegex, `\n${renderedSection}\n`);
   }
 
   return `${context.trimEnd()}\n\n${renderedSection}\n`;

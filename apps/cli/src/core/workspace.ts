@@ -31,6 +31,8 @@ export type PlanningPackPaths = {
   planningState: string;
   autoRunState: string;
   adviceState: string;
+  referenceSelections: string;
+  referenceRoots: string;
   activePlanFile: string;
 };
 
@@ -81,6 +83,8 @@ export function getPlanningPackPaths(root: string, options: PlanningPathOptions 
     planningState: path.join(dir, "planning-state.json"),
     autoRunState: path.join(dir, "auto-run-state.json"),
     adviceState: path.join(dir, "advice-state.json"),
+    referenceSelections: path.join(dir, "reference-selections.json"),
+    referenceRoots: path.join(dir, "reference-roots.json"),
     activePlanFile: path.join(planningRoot, ACTIVE_PLAN_FILE)
   };
 }
