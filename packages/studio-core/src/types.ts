@@ -2,7 +2,8 @@ import type { ChatMessage } from "../../../apps/cli/src/core/prompts";
 import type { PlanningPackState } from "../../../apps/cli/src/core/planning-pack-state";
 import type { StudioUiConfig } from "../../../apps/cli/src/core/studio-ui-config";
 import type { PlanDiceOptions } from "../../../apps/cli/src/core/plan-dicing";
-import type { StudioMode, StudioSettings, StudioTheme } from "@srgical/studio-shared";
+import type { AgentEvent, AgentSessionRecord, SkillRegistrySnapshot, StudioMode, StudioSettings, StudioTheme } from "@srgical/studio-shared";
+import type { AgentProviderStatus } from "@srgical/agent-runtime";
 
 export type StudioActionId =
   | "gather"
@@ -25,7 +26,23 @@ export type StudioActionId =
   | "reference-autoselect"
   | "reference-clear"
   | "reference-root-add"
-  | "reference-root-remove";
+  | "reference-root-remove"
+  | "permission-resolve"
+  | "question-resolve"
+  | "interrupt-agent"
+  | "rewind"
+  | "skill-toggle"
+  | "skill-trust"
+  | "skill-directory-add"
+  | "skill-directory-remove"
+  | "session-create"
+  | "session-switch"
+  | "session-fork"
+  | "session-rename"
+  | "session-pin"
+  | "session-archive"
+  | "session-delete"
+  | "retry-agent";
 
 export type StudioActionRequest = {
   type: StudioActionId;
@@ -41,6 +58,19 @@ export type StudioActionRequest = {
   selected?: boolean;
   rootPath?: string;
   announce?: boolean;
+  requestId?: string;
+  behavior?: "allow" | "deny" | "defer";
+  message?: string;
+  updatedInput?: unknown;
+  answers?: Record<string, string>;
+  checkpointId?: string;
+  dryRun?: boolean;
+  skillSource?: string;
+  trust?: "trusted" | "review" | "blocked";
+  directoryPath?: string;
+  sessionId?: string;
+  title?: string;
+  pinned?: boolean;
 };
 
 export type StudioActionState = {
@@ -105,6 +135,19 @@ export type LaneSummary = {
   openedAt: string | null;
   unlockedAt: string | null;
   source: "current" | "managed" | "detected";
+  head: string | null;
+  lifecycle: "current" | "ready" | "working" | "conflicted" | "archived" | "missing" | "prunable";
+  baseRef: string | null;
+  mergeBase: string | null;
+  aheadCount: number;
+  behindCount: number;
+  stagedCount: number;
+  unstagedCount: number;
+  untrackedCount: number;
+  conflictCount: number;
+  gitLocked: boolean;
+  prunable: boolean;
+  nextAction: string;
 };
 
 export type RepoSnapshot = {
@@ -114,7 +157,10 @@ export type RepoSnapshot = {
   requestedPlanId: string | null;
   requestedMode: StudioMode | null;
   lanes: LaneSummary[];
+  sessions: AgentSessionRecord[];
 };
+
+export type { FinishWorkAssessment, FinishWorkRequest, FinishWorkResult } from "@srgical/studio-shared";
 
 export type LaneCreateRequest = {
   planId: string;
@@ -140,12 +186,17 @@ export type StudioSnapshot = {
   busy: boolean;
   busyStatus: string;
   agentLabel: string;
+  agentProvider: AgentProviderStatus;
+  agentSession: AgentSessionRecord;
+  agentSessions: AgentSessionRecord[];
+  recentAgentEvents: AgentEvent[];
   uiConfig: StudioUiConfig;
   settings: StudioSettings;
   theme: StudioTheme;
   actions: Record<StudioActionId, StudioActionState>;
   prepareClarity: PrepareClarityView | null;
   references: ReferenceView;
+  skills: SkillRegistrySnapshot;
   footerText: string;
 };
 
@@ -153,6 +204,10 @@ export type StudioEvent =
   | {
       type: "snapshot";
       snapshot: StudioSnapshot;
+    }
+  | {
+      type: "agent";
+      event: AgentEvent;
     }
   | {
       type: "action";

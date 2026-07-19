@@ -5,6 +5,7 @@ import {
   createGitWorktree,
   getCurrentGitBranch,
   getGitDirtyState,
+  getGitWorktreeDiagnostics,
   listGitWorktrees,
   removeGitWorktree,
   resolveGitRepoContext,
@@ -51,6 +52,19 @@ export type WorktreeLaneSummary = {
   openedAt: string | null;
   unlockedAt: string | null;
   source: "current" | "managed" | "detected";
+  head: string | null;
+  lifecycle: "current" | "ready" | "working" | "conflicted" | "archived" | "missing" | "prunable";
+  baseRef: string | null;
+  mergeBase: string | null;
+  aheadCount: number;
+  behindCount: number;
+  stagedCount: number;
+  unstagedCount: number;
+  untrackedCount: number;
+  conflictCount: number;
+  gitLocked: boolean;
+  prunable: boolean;
+  nextAction: string;
 };
 
 export type CreateWorktreeLaneResult = {
@@ -93,10 +107,28 @@ export async function listWorktreeLanes(
   const summaries = await Promise.all(
     worktrees.map(async (entry, index) => {
       const record = byPath.get(normalizePathKey(entry.worktreePath)) ?? null;
-      const dirty = await getGitDirtyState(entry.worktreePath, options.gitRunner).catch(() => false);
+      const diagnostics = await getGitWorktreeDiagnostics(entry.worktreePath, options.gitRunner).catch(() => ({
+        baseRef: null,
+        mergeBase: null,
+        aheadCount: 0,
+        behindCount: 0,
+        stagedCount: 0,
+        unstagedCount: 0,
+        untrackedCount: 0,
+        conflictCount: 0
+      }));
+      const dirty = diagnostics.stagedCount + diagnostics.unstagedCount + diagnostics.untrackedCount > 0
+        || await getGitDirtyState(entry.worktreePath, options.gitRunner).catch(() => false);
       const isCurrentCheckout = normalizePathKey(entry.worktreePath) === normalizePathKey(context.currentWorkspace);
       const isMainCheckout = index === 0;
 
+      const lifecycle = deriveLaneLifecycle({
+        current: isCurrentCheckout,
+        archived: Boolean(record?.archivedAt),
+        dirty,
+        conflicts: diagnostics.conflictCount,
+        prunable: entry.prunable
+      });
       return {
         laneId: record?.laneId ?? (isMainCheckout ? "current" : sanitizeLaneSegment(path.basename(entry.worktreePath))),
         planId: record?.planId ?? null,
@@ -113,10 +145,51 @@ export async function listWorktreeLanes(
         createdAt: record?.createdAt ?? null,
         openedAt: record?.openedAt ?? null,
         unlockedAt: record?.unlockedAt ?? null,
-        source: record ? "managed" : isMainCheckout ? "current" : "detected"
+        source: record ? "managed" : isMainCheckout ? "current" : "detected",
+        head: entry.head,
+        lifecycle,
+        ...diagnostics,
+        gitLocked: entry.locked,
+        prunable: entry.prunable,
+        nextAction: deriveLaneNextAction(lifecycle, diagnostics.aheadCount, diagnostics.behindCount)
       } satisfies WorktreeLaneSummary;
     })
   );
+
+  const livePaths = new Set(worktrees.map((entry) => normalizePathKey(entry.worktreePath)));
+  for (const record of registry.lanes.filter((lane) => !lane.removedAt && !livePaths.has(normalizePathKey(lane.worktreePath)))) {
+    summaries.push({
+      laneId: record.laneId,
+      planId: record.planId,
+      branchName: record.branchName,
+      worktreePath: record.worktreePath,
+      workspaceLabel: path.basename(record.worktreePath) || record.worktreePath,
+      dirty: false,
+      archived: Boolean(record.archivedAt),
+      removed: false,
+      isCurrentCheckout: false,
+      canRemove: false,
+      deleteLocked: record.deleteLocked,
+      lastMode: record.lastMode,
+      createdAt: record.createdAt,
+      openedAt: record.openedAt,
+      unlockedAt: record.unlockedAt,
+      source: "managed",
+      head: null,
+      lifecycle: "missing",
+      baseRef: null,
+      mergeBase: null,
+      aheadCount: 0,
+      behindCount: 0,
+      stagedCount: 0,
+      unstagedCount: 0,
+      untrackedCount: 0,
+      conflictCount: 0,
+      gitLocked: false,
+      prunable: false,
+      nextAction: "Repair or remove the stale lane record; its worktree is no longer registered with Git."
+    });
+  }
 
   return summaries.sort((left, right) => {
     if (left.isCurrentCheckout !== right.isCurrentCheckout) {
@@ -261,19 +334,15 @@ export async function removeWorktreeLane(
 export async function loadWorktreeLaneRegistry(repoRoot: string): Promise<WorktreeLaneRegistry> {
   const filePath = getWorktreeLaneRegistryPath(repoRoot);
   if (!(await fileExists(filePath))) {
+    const legacyPath = getLegacyWorktreeLaneRegistryPath(repoRoot);
+    if (await fileExists(legacyPath)) {
+      const migrated = await readRegistryFile(legacyPath);
+      await saveWorktreeLaneRegistry(repoRoot, migrated);
+      return migrated;
+    }
     return createEmptyRegistry();
   }
-
-  try {
-    const parsed = JSON.parse(await readFile(filePath, "utf8")) as Partial<WorktreeLaneRegistry>;
-    return {
-      version: 1,
-      updatedAt: typeof parsed.updatedAt === "string" ? parsed.updatedAt : "1970-01-01T00:00:00.000Z",
-      lanes: Array.isArray(parsed.lanes) ? parsed.lanes.map(normalizeLaneRecord).filter((lane): lane is WorktreeLaneRecord => lane !== null) : []
-    };
-  } catch {
-    return createEmptyRegistry();
-  }
+  return readRegistryFile(filePath);
 }
 
 export async function saveWorktreeLaneRegistry(
@@ -299,6 +368,10 @@ export async function saveWorktreeLaneRegistry(
 }
 
 export function getWorktreeLaneRegistryPath(repoRoot: string): string {
+  return path.join(repoRoot, ".git", "srgical", "worktree-lanes.json");
+}
+
+export function getLegacyWorktreeLaneRegistryPath(repoRoot: string): string {
   return path.join(repoRoot, ".srgical", "worktree-lanes.json");
 }
 
@@ -386,4 +459,44 @@ function normalizeLaneRecord(value: unknown): WorktreeLaneRecord | null {
 
 function normalizePathKey(value: string): string {
   return path.resolve(value).replace(/\\/g, "/").toLowerCase();
+}
+
+async function readRegistryFile(filePath: string): Promise<WorktreeLaneRegistry> {
+  try {
+    const parsed = JSON.parse(await readFile(filePath, "utf8")) as Partial<WorktreeLaneRegistry>;
+    return {
+      version: 1,
+      updatedAt: typeof parsed.updatedAt === "string" ? parsed.updatedAt : "1970-01-01T00:00:00.000Z",
+      lanes: Array.isArray(parsed.lanes) ? parsed.lanes.map(normalizeLaneRecord).filter((lane): lane is WorktreeLaneRecord => lane !== null) : []
+    };
+  } catch {
+    return createEmptyRegistry();
+  }
+}
+
+function deriveLaneLifecycle(input: {
+  current: boolean;
+  archived: boolean;
+  dirty: boolean;
+  conflicts: number;
+  prunable: boolean;
+}): WorktreeLaneSummary["lifecycle"] {
+  if (input.prunable) return "prunable";
+  if (input.conflicts > 0) return "conflicted";
+  if (input.archived) return "archived";
+  if (input.current) return "current";
+  if (input.dirty) return "working";
+  return "ready";
+}
+
+function deriveLaneNextAction(lifecycle: WorktreeLaneSummary["lifecycle"], ahead: number, behind: number): string {
+  if (lifecycle === "conflicted") return "Resolve merge conflicts before asking an agent to continue.";
+  if (lifecycle === "missing") return "Repair or remove the stale lane record.";
+  if (lifecycle === "prunable") return "Prune the stale Git worktree metadata after verifying the directory is gone.";
+  if (lifecycle === "archived") return "Keep for history or unlock and remove when it is no longer needed.";
+  if (ahead > 0 && behind > 0) return `Rebase or merge before integration (${ahead} ahead, ${behind} behind).`;
+  if (behind > 0) return `Update from the base branch before continuing (${behind} behind).`;
+  if (ahead > 0) return `Review and integrate ${ahead} local commit${ahead === 1 ? "" : "s"}.`;
+  if (lifecycle === "working") return "Review uncommitted changes and checkpoint before switching context.";
+  return "Ready for an isolated agent session.";
 }

@@ -5,6 +5,9 @@ import { spawn } from "node:child_process";
 import path from "node:path";
 import process from "node:process";
 import {
+  type FinishWorkAssessment,
+  type FinishWorkRequest,
+  type FinishWorkResult,
   createStudioController,
   type LaneCreateRequest,
   type LaneOpenResponse,
@@ -14,6 +17,7 @@ import {
   type StudioEvent,
   type StudioSnapshot
 } from "@srgical/studio-core";
+import { AgentSessionStore, deriveRepositoryId } from "@srgical/agent-runtime";
 import type { StudioMode } from "@srgical/studio-shared";
 import { fileExists } from "../core/workspace";
 import {
@@ -26,12 +30,14 @@ import {
   setWorktreeLaneDeleteLock
 } from "../core/worktree-lanes";
 import { listReferenceDirectoryOptions } from "../core/reference-library";
+import { assessFinishWork } from "../core/finish-work";
 
-type LaunchWebStudioOptions = {
+export type LaunchWebStudioOptions = {
   workspace?: string;
   planId?: string | null;
   mode?: StudioMode;
   openBrowser?: boolean;
+  agentSessionStore?: AgentSessionStore;
 };
 
 type StudioSession = {
@@ -47,10 +53,15 @@ type StudioSession = {
 type WebStudioHost = {
   getRepoSnapshot(): Promise<RepoSnapshot>;
   createLane(request: LaneCreateRequest): Promise<LaneOpenResponse>;
-  openLane(laneId: string, mode: StudioMode): Promise<LaneOpenResponse>;
+  openLane(laneId: string, mode: StudioMode, agentSessionId?: string): Promise<LaneOpenResponse>;
+  openSession(sessionId: string): Promise<LaneOpenResponse>;
+  forkSessionIntoWorktree(sessionId: string): Promise<LaneOpenResponse>;
   archiveLane(laneId: string): Promise<void>;
   setLaneDeleteLock(laneId: string, deleteLocked: boolean): Promise<void>;
   removeLane(laneId: string): Promise<void>;
+  assessFinish(laneId: string): Promise<FinishWorkAssessment>;
+  finishLane(request: FinishWorkRequest): Promise<FinishWorkResult>;
+  updateSession(sessionId: string, action: "pin" | "unpin" | "archive" | "restore" | "delete"): Promise<void>;
   getStudioSession(token: string): StudioSession | null;
   close(): Promise<void>;
 };
@@ -116,20 +127,24 @@ export async function createWebStudioHost(options: LaunchWebStudioOptions = {}):
   const repoState = await resolveWorktreeLaneRepoState(options.workspace ?? process.cwd());
   const sessions = new Map<string, StudioSession>();
   const laneTokens = new Map<string, string>();
+  const agentSessionStore = options.agentSessionStore ?? new AgentSessionStore();
+  const repoId = deriveRepositoryId(repoState.repoRoot);
 
   const getRepoSnapshot = async (): Promise<RepoSnapshot> => {
     const nextRepoState = await resolveWorktreeLaneRepoState(repoState.currentWorkspace);
+    const agentSessions = (await agentSessionStore.list(repoId)).filter((session) => session.lifecycle !== "deleted");
     return {
       repoRoot: nextRepoState.repoRoot,
       repoLabel: path.basename(nextRepoState.repoRoot) || nextRepoState.repoRoot,
       currentWorkspace: nextRepoState.currentWorkspace,
       requestedPlanId: options.planId ?? null,
       requestedMode: options.mode ?? null,
-      lanes: nextRepoState.lanes
+      lanes: nextRepoState.lanes,
+      sessions: agentSessions
     };
   };
 
-  const openLane = async (laneId: string, mode: StudioMode): Promise<LaneOpenResponse> => {
+  const openLane = async (laneId: string, mode: StudioMode, agentSessionId?: string): Promise<LaneOpenResponse> => {
     const workspace = await resolveLaneWorkspacePath(repoState.currentWorkspace, laneId);
     if (!workspace) {
       throw new Error(`Unknown worktree lane \`${laneId}\`.`);
@@ -147,7 +162,14 @@ export async function createWebStudioHost(options: LaunchWebStudioOptions = {}):
 
     let studioToken = laneTokens.get(laneId);
     let session = studioToken ? sessions.get(studioToken) ?? null : null;
-    if (!session || session.mode !== mode || session.planId !== planId || session.workspace !== workspace) {
+    const requestedAgentSession = agentSessionId ? await agentSessionStore.load(repoId, agentSessionId) : null;
+    if (
+      !session
+      || session.mode !== mode
+      || session.planId !== planId
+      || session.workspace !== workspace
+      || Boolean(requestedAgentSession && session.controller.getSnapshot().agentProvider.providerId !== requestedAgentSession.providerId)
+    ) {
       if (session) {
         await session.controller.close();
         sessions.delete(session.token);
@@ -159,7 +181,10 @@ export async function createWebStudioHost(options: LaunchWebStudioOptions = {}):
         planId,
         mode,
         repoRoot: snapshot.repoRoot,
-        laneId
+        laneId,
+        agentSessionId,
+        agentProviderId: requestedAgentSession?.providerId,
+        agentSessionStore
       });
       const startPromise = controller.start().catch(async () => {
         await controller.close().catch(() => undefined);
@@ -177,6 +202,8 @@ export async function createWebStudioHost(options: LaunchWebStudioOptions = {}):
         startPromise
       };
       sessions.set(studioToken, session);
+    } else if (agentSessionId && session.controller.getSnapshot().agentSession.sessionId !== agentSessionId) {
+      await session.controller.dispatch({ type: "session-switch", sessionId: agentSessionId });
     }
 
     if (!studioToken) {
@@ -189,6 +216,45 @@ export async function createWebStudioHost(options: LaunchWebStudioOptions = {}):
       studioToken,
       url: `/?studioToken=${studioToken}`
     };
+  };
+
+  const openSession = async (sessionId: string): Promise<LaneOpenResponse> => {
+    const record = await agentSessionStore.load(repoId, sessionId);
+    if (!record || record.lifecycle === "deleted") throw new Error("That session is no longer available.");
+    const currentBinding = [...record.workspaceBindings].reverse().find((binding) => !binding.retiredAt);
+    if (!currentBinding) {
+      throw new Error("This session's worktree has been retired. Fork it into a new worktree before resuming.");
+    }
+    return openLane(currentBinding.laneId, record.planId ? "prepare" : "operate", record.sessionId);
+  };
+
+  const forkSessionIntoWorktree = async (sessionId: string): Promise<LaneOpenResponse> => {
+    const parent = await agentSessionStore.load(repoId, sessionId);
+    if (!parent || parent.lifecycle === "deleted") throw new Error("That session is no longer available.");
+    if (!parent.planId) throw new Error("A session needs a plan id before it can create a worktree.");
+    const latestBinding = parent.workspaceBindings.at(-1);
+    const created = await createWorktreeLane(repoState.currentWorkspace, {
+      planId: parent.planId,
+      mode: "prepare",
+      baseRef: latestBinding?.branchName ?? undefined
+    });
+    const forked = await agentSessionStore.create({
+      providerId: parent.providerId,
+      providerSessionId: parent.providerSessionId,
+      parentSessionId: parent.sessionId,
+      repoId,
+      laneId: created.lane.laneId,
+      workspace: created.workspace,
+      planId: parent.planId,
+      title: `${parent.title} (continued)`,
+      model: parent.model,
+      permissionMode: parent.permissionMode,
+      capabilities: parent.capabilities,
+      effectiveSkillHashes: parent.effectiveSkillHashes,
+      branchName: created.lane.branchName,
+      startingCommit: created.lane.head
+    });
+    return openLane(created.lane.laneId, "prepare", forked.sessionId);
   };
 
   const createLane = async (request: LaneCreateRequest): Promise<LaneOpenResponse> => {
@@ -226,13 +292,106 @@ export async function createWebStudioHost(options: LaunchWebStudioOptions = {}):
     await setWorktreeLaneDeleteLock(snapshot.repoRoot, laneId, deleteLocked);
   };
 
+  const assessFinish = async (laneId: string): Promise<FinishWorkAssessment> => {
+    const snapshot = await getRepoSnapshot();
+    const lane = snapshot.lanes.find((entry) => entry.laneId === laneId && !entry.removed);
+    if (!lane) throw new Error(`Unknown worktree lane \`${laneId}\`.`);
+    const token = laneTokens.get(laneId);
+    const activeOperation = token ? sessions.get(token)?.controller.getSnapshot().busy === true : false;
+    return assessFinishWork(lane, snapshot.sessions, { activeOperation });
+  };
+
+  const finishLane = async (request: FinishWorkRequest): Promise<FinishWorkResult> => {
+    if (!request.archiveSessions) throw new Error("Finish Work must preserve and archive bound sessions.");
+    if (request.confirmation !== request.laneId) throw new Error(`Type \`${request.laneId}\` exactly to finish this worktree.`);
+    const assessment = await assessFinish(request.laneId);
+    if (!assessment.canArchive) throw new Error(assessment.blockers.join(" ") || "This worktree cannot be archived yet.");
+    if (request.removeWorktree && !assessment.canRemoveWorktree) {
+      throw new Error(assessment.removalBlockers.join(" ") || "This worktree is not safe to remove.");
+    }
+
+    const token = laneTokens.get(request.laneId);
+    if (token) {
+      const live = sessions.get(token);
+      if (live) await live.controller.close();
+      sessions.delete(token);
+      laneTokens.delete(request.laneId);
+    }
+
+    const snapshot = await getRepoSnapshot();
+    const lane = snapshot.lanes.find((entry) => entry.laneId === request.laneId)!;
+    const archivedSessionIds: string[] = [];
+    if (request.archiveSessions) {
+      for (const session of snapshot.sessions) {
+        const ownsLane = session.workspaceBindings.some((binding) => binding.laneId === request.laneId && !binding.retiredAt);
+        if (!ownsLane) continue;
+        await agentSessionStore.append(repoId, session.sessionId, {
+          kind: "workspace.retired",
+          payload: {
+            laneId: lane.laneId,
+            workspace: lane.worktreePath,
+            branchName: lane.branchName,
+            endingCommit: lane.head,
+            reason: request.removeWorktree ? "worktree-removed" : "work-finished",
+            aheadCount: lane.aheadCount,
+            behindCount: lane.behindCount,
+            changedFileCount: lane.stagedCount + lane.unstagedCount + lane.untrackedCount,
+            conflictCount: lane.conflictCount
+          }
+        });
+        await agentSessionStore.retireWorkspace(repoId, session.sessionId, {
+          endingCommit: lane.head,
+          reason: request.removeWorktree ? "worktree-removed" : "work-finished"
+        });
+        await agentSessionStore.setArchived(repoId, session.sessionId, true);
+        archivedSessionIds.push(session.sessionId);
+      }
+    }
+    await archiveWorktreeLane(snapshot.repoRoot, request.laneId);
+    if (request.removeWorktree) await removeWorktreeLane(repoState.currentWorkspace, request.laneId);
+    return {
+      laneId: request.laneId,
+      archivedSessionIds,
+      worktreeRemoved: request.removeWorktree,
+      branchRetained: true
+    };
+  };
+
+  const updateSession = async (sessionId: string, action: "pin" | "unpin" | "archive" | "restore" | "delete"): Promise<void> => {
+    const record = await agentSessionStore.load(repoId, sessionId);
+    if (!record) throw new Error("Unknown session.");
+    if (action === "pin" || action === "unpin") await agentSessionStore.setPinned(repoId, sessionId, action === "pin");
+    if (action === "archive") await agentSessionStore.setArchived(repoId, sessionId, true);
+    if (action === "restore") {
+      const latestBinding = record.workspaceBindings.at(-1);
+      if (latestBinding?.retiredAt) {
+        const snapshot = await getRepoSnapshot();
+        const lane = snapshot.lanes.find((entry) => entry.laneId === latestBinding.laneId && !entry.removed && entry.lifecycle !== "missing");
+        if (!lane) throw new Error("The original worktree was removed. Create a new worktree and fork this session to continue.");
+        await agentSessionStore.bindWorkspace(repoId, sessionId, {
+          laneId: lane.laneId,
+          workspace: lane.worktreePath,
+          branchName: lane.branchName,
+          startingCommit: lane.head
+        });
+      }
+      await agentSessionStore.setArchived(repoId, sessionId, false);
+    }
+    if (action === "delete") await agentSessionStore.setDeleted(repoId, sessionId, true);
+  };
+
   return {
     getRepoSnapshot,
     createLane,
     openLane,
+    openSession,
+    forkSessionIntoWorktree,
     archiveLane,
     setLaneDeleteLock,
     removeLane,
+    assessFinish,
+    finishLane,
+    updateSession,
     getStudioSession(token: string) {
       return sessions.get(token) ?? null;
     },
@@ -342,6 +501,58 @@ async function routeRequest(
       throw new Error("Lane id and deleteLocked are required.");
     }
     await context.host.setLaneDeleteLock(body.laneId, body.deleteLocked);
+    response.statusCode = 202;
+    response.end(JSON.stringify({ ok: true }));
+    return;
+  }
+
+  if (request.method === "GET" && url.pathname === "/api/lanes/finish") {
+    if (!isDashboardAuthorized) return respondUnauthorized(response);
+    const laneId = url.searchParams.get("laneId");
+    if (!laneId) throw new Error("Lane id is required.");
+    response.statusCode = 200;
+    response.setHeader("content-type", "application/json");
+    response.end(JSON.stringify(await context.host.assessFinish(laneId)));
+    return;
+  }
+
+  if (request.method === "POST" && url.pathname === "/api/lanes/finish") {
+    if (!isDashboardAuthorized) return respondUnauthorized(response);
+    const body = await readJsonBody<FinishWorkRequest>(request);
+    response.statusCode = 202;
+    response.setHeader("content-type", "application/json");
+    response.end(JSON.stringify(await context.host.finishLane(body)));
+    return;
+  }
+
+  if (request.method === "POST" && url.pathname === "/api/sessions/open") {
+    if (!isDashboardAuthorized) return respondUnauthorized(response);
+    const body = await readJsonBody<{ sessionId?: string }>(request);
+    if (!body.sessionId) throw new Error("Session id is required.");
+    response.statusCode = 202;
+    response.setHeader("content-type", "application/json");
+    response.end(JSON.stringify(await context.host.openSession(body.sessionId)));
+    return;
+  }
+
+  if (request.method === "POST" && url.pathname === "/api/sessions/fork-worktree") {
+    if (!isDashboardAuthorized) return respondUnauthorized(response);
+    const body = await readJsonBody<{ sessionId?: string }>(request);
+    if (!body.sessionId) throw new Error("Session id is required.");
+    response.statusCode = 202;
+    response.setHeader("content-type", "application/json");
+    response.end(JSON.stringify(await context.host.forkSessionIntoWorktree(body.sessionId)));
+    return;
+  }
+
+  if (request.method === "POST" && url.pathname === "/api/sessions/update") {
+    if (!isDashboardAuthorized) return respondUnauthorized(response);
+    const body = await readJsonBody<{
+      sessionId?: string;
+      action?: "pin" | "unpin" | "archive" | "restore" | "delete";
+    }>(request);
+    if (!body.sessionId || !body.action) throw new Error("Session id and action are required.");
+    await context.host.updateSession(body.sessionId, body.action);
     response.statusCode = 202;
     response.end(JSON.stringify({ ok: true }));
     return;

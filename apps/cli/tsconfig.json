@@ -3,8 +3,10 @@
   "compilerOptions": {
     "baseUrl": ".",
     "paths": {
-      "@srgical/studio-core": ["../../packages/studio-core/dist/packages/studio-core/src/index.d.ts"],
-      "@srgical/studio-shared": ["../../packages/studio-shared/dist/index.d.ts"]
+      "@srgical/agent-runtime": ["../../packages/agent-runtime"],
+      "@srgical/skill-registry": ["../../packages/skill-registry"],
+      "@srgical/studio-core": ["../../packages/studio-core"],
+      "@srgical/studio-shared": ["../../packages/studio-shared"]
     },
     "rootDir": "src",
     "outDir": "dist"

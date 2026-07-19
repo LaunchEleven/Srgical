@@ -1,15 +1,13 @@
 {
-  "name": "@srgical/studio-core",
+  "name": "@srgical/skill-registry",
   "version": "0.0.0",
   "private": true,
-  "main": "dist/packages/studio-core/src/index.js",
-  "types": "dist/packages/studio-core/src/index.d.ts",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
   "scripts": {
     "build": "tsc -p tsconfig.json"
   },
   "dependencies": {
-    "@srgical/agent-runtime": "0.0.0",
-    "@srgical/skill-registry": "0.0.0",
     "@srgical/studio-shared": "0.0.0"
   },
   "devDependencies": {

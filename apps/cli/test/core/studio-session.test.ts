@@ -3,8 +3,10 @@ import assert from "node:assert/strict";
 import { ensurePlanningDir, readText, writeText } from "../../src/core/workspace";
 import {
   loadStoredActiveAgentId,
+  loadStoredAgentSessionId,
   loadStudioSession,
   saveStoredActiveAgentId,
+  saveStoredAgentSessionId,
   saveStudioSession
 } from "../../src/core/studio-session";
 import { createTempWorkspace } from "../helpers/workspace";
@@ -41,5 +43,17 @@ test("legacy studio-session payloads still load messages without an active-agent
 
   assert.deepEqual(await loadStudioSession(workspace), [{ role: "assistant", content: "legacy hello" }]);
   assert.equal(await loadStoredActiveAgentId(workspace), null);
+  assert.equal(await loadStoredAgentSessionId(workspace), null);
   assert.match(await readText(paths.studioSession), /"version": 1/);
+});
+
+test("studio session preserves its structured agent session identity", async () => {
+  const workspace = await createTempWorkspace("srgical-studio-session-id-");
+  await saveStudioSession(workspace, [{ role: "assistant", content: "hello" }]);
+  await saveStoredAgentSessionId(workspace, "session-123");
+  await saveStoredActiveAgentId(workspace, "claude");
+  await saveStudioSession(workspace, [{ role: "user", content: "continue" }]);
+
+  assert.equal(await loadStoredAgentSessionId(workspace), "session-123");
+  assert.equal(await loadStoredActiveAgentId(workspace), "claude");
 });

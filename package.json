@@ -6,7 +6,7 @@
     "packages/*"
   ],
   "scripts": {
-    "build": "npm run build -w @srgical/studio-shared && npm run build -w @srgical/studio-core && npm run build -w @srgical/studio-web && npm run build -w @launcheleven/srgical",
+    "build": "npm run build -w @srgical/studio-shared && npm run build -w @srgical/agent-runtime && npm run build -w @srgical/skill-registry && npm run build -w @srgical/studio-core && npm run build -w @srgical/studio-web && npm run build -w @launcheleven/srgical",
     "dev": "npm run dev -w @launcheleven/srgical --",
     "start": "npm run start -w @launcheleven/srgical --",
     "status": "npm run status -w @launcheleven/srgical --",

@@ -23,6 +23,17 @@ export type GitRepoContext = {
   commonDir: string;
 };
 
+export type GitWorktreeDiagnostics = {
+  baseRef: string | null;
+  mergeBase: string | null;
+  aheadCount: number;
+  behindCount: number;
+  stagedCount: number;
+  unstagedCount: number;
+  untrackedCount: number;
+  conflictCount: number;
+};
+
 export async function runGit(args: string[], cwd: string): Promise<string> {
   const { stdout } = await execFileAsync("git", args, {
     cwd,
@@ -69,6 +80,56 @@ export async function gitBranchExists(repoRoot: string, branchName: string, runn
 export async function getGitDirtyState(workspaceRoot: string, runner: GitRunner = runGit): Promise<boolean> {
   const output = await runner(["status", "--porcelain", "--untracked-files=all"], workspaceRoot);
   return output.trim().length > 0;
+}
+
+export async function getGitWorktreeDiagnostics(
+  workspaceRoot: string,
+  runner: GitRunner = runGit
+): Promise<GitWorktreeDiagnostics> {
+  const status = await runner(["status", "--porcelain=v1", "--untracked-files=all"], workspaceRoot);
+  const counts = parseGitStatusPorcelain(status);
+  const baseRef = await resolveGitBaseRef(workspaceRoot, runner);
+  let mergeBase: string | null = null;
+  let aheadCount = 0;
+  let behindCount = 0;
+  if (baseRef) {
+    mergeBase = await runner(["merge-base", "HEAD", baseRef], workspaceRoot).catch(() => null);
+    const divergence = await runner(["rev-list", "--left-right", "--count", `${baseRef}...HEAD`], workspaceRoot).catch(() => "0\t0");
+    const [behind, ahead] = divergence.trim().split(/\s+/).map((value) => Number.parseInt(value, 10));
+    behindCount = Number.isFinite(behind) ? behind : 0;
+    aheadCount = Number.isFinite(ahead) ? ahead : 0;
+  }
+  return { baseRef, mergeBase, aheadCount, behindCount, ...counts };
+}
+
+export function parseGitStatusPorcelain(output: string): Omit<GitWorktreeDiagnostics, "baseRef" | "mergeBase" | "aheadCount" | "behindCount"> {
+  let stagedCount = 0;
+  let unstagedCount = 0;
+  let untrackedCount = 0;
+  let conflictCount = 0;
+  const conflictCodes = new Set(["DD", "AU", "UD", "UA", "DU", "AA", "UU"]);
+  for (const line of output.replace(/\r\n/g, "\n").split("\n")) {
+    if (!line) continue;
+    const code = line.slice(0, 2);
+    if (code === "??") {
+      untrackedCount += 1;
+      continue;
+    }
+    if (conflictCodes.has(code)) conflictCount += 1;
+    if (code[0] && code[0] !== " ") stagedCount += 1;
+    if (code[1] && code[1] !== " ") unstagedCount += 1;
+  }
+  return { stagedCount, unstagedCount, untrackedCount, conflictCount };
+}
+
+async function resolveGitBaseRef(workspaceRoot: string, runner: GitRunner): Promise<string | null> {
+  const remoteHead = await runner(["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"], workspaceRoot).catch(() => "");
+  if (remoteHead) return remoteHead;
+  for (const candidate of ["main", "master"]) {
+    const exists = await runner(["rev-parse", "--verify", "--quiet", candidate], workspaceRoot).then(() => true).catch(() => false);
+    if (exists) return candidate;
+  }
+  return null;
 }
 
 export async function createGitWorktree(

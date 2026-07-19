@@ -14,7 +14,7 @@ It is built around a simple loop:
 Requirements:
 
 - Node.js 20 or newer
-- At least one local agent CLI installed and working on your machine: `codex`, `claude`, or `auggie`
+- A Claude Console API key or supported cloud provider for the native Claude experience; a working `codex`, `claude`, or `auggie` CLI remains available as a compatibility fallback
 
 ```bash
 npm install -g @launch11/srgical
@@ -33,6 +33,48 @@ Create or reopen a named plan:
 ```bash
 srgical prepare release-readiness
 ```
+
+Add `--web` for the conversation-first local Studio:
+
+```bash
+srgical prepare release-readiness --web
+```
+
+The Studio keeps worktrees, conversations, provider activity, approvals, questions, plan state, and skills in one window.
+
+## Native Claude provider
+
+The native provider uses `@anthropic-ai/claude-agent-sdk` and activates when one of these supported authentication paths is configured:
+
+- `ANTHROPIC_API_KEY`
+- `CLAUDE_CODE_USE_BEDROCK=1`
+- `CLAUDE_CODE_USE_VERTEX=1`
+- `CLAUDE_CODE_USE_FOUNDRY=1`
+
+Srgical deliberately does not reuse Claude subscription OAuth or browser credentials. If supported native authentication is unavailable, Studio explains why and uses the selected local CLI adapter.
+
+Native sessions support partial streaming, durable resume/fork, tool progress, tasks, permission prompts, questions, interrupt, usage/rate-limit events, and file checkpoints.
+
+## Sessions
+
+A session is the durable unit of conversation; a worktree is a workspace the session may use for a period of time. They intentionally are not one-to-one. Studio provides a repository-wide session library with search, recency groups, pinned and archived views, message previews, fork ancestry, and current or retired workspace context. A session can be reopened in its live worktree or forked into a fresh worktree when its previous workspace has retired.
+
+Use **Finish Work** on a lane for post-operation cleanup. Studio assesses active operations, dirty/conflicted files, divergence, locks, and primary-checkout safety before acting. Finishing archives the lane's sessions and records their terminal commit and workspace summary. Worktree removal remains separately gated and requires the lane ID as typed confirmation; the branch, transcripts, plan artifacts, and binding history are retained.
+
+## Worktrees and skills
+
+Each lane maps one worktree and branch to one plan, a set of durable sessions, and an effective skill set. Studio reports dirty/conflict counts, ahead/behind state, stale or prunable worktrees, locks, and a recommended safe next action.
+
+The global skills directory is created automatically at `~/.srgical/skills`. Studio also discovers:
+
+- `.srgical/skills`
+- `.claude/skills` and `~/.claude/skills`
+- `.codex/skills` and `~/.codex/skills`
+- `.agents/skills`
+- `skills`
+- additional directories configured in the Skills inspector
+
+Skills are hashed with their supporting files and tracked by source, scope, trust, compatibility, precedence, and conflicts. They can be enabled, disabled, trusted, reviewed, or blocked per repository.
 
 That command creates the plan pack under `.srgical/plans/release-readiness/` if it does not exist, then opens the full-screen prepare studio.
 
@@ -81,7 +123,7 @@ srgical completion powershell
 
 ## What Gets Written
 
-`srgical` keeps its working state in `.srgical/` inside your repo so the plan, progress, and execution handoff stay visible to both humans and agents.
+Visible plan artifacts remain in `.srgical/` inside your repo. Durable sessions and skill preferences live under `~/.srgical/`; the worktree registry lives in shared Git metadata so branch changes cannot rewrite management state.
 
 Inside prepare, `context.md` is treated as a living document. Gather/import actions can refresh it directly before you build the full draft.
 

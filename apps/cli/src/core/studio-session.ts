@@ -6,6 +6,7 @@ type StoredStudioSession = {
   updatedAt: string;
   messages: ChatMessage[];
   activeAgentId?: string | null;
+  agentSessionId?: string | null;
 };
 
 export const DEFAULT_STUDIO_MESSAGES: ChatMessage[] = [
@@ -19,6 +20,7 @@ export const DEFAULT_STUDIO_MESSAGES: ChatMessage[] = [
 export type StudioSessionState = {
   messages: ChatMessage[];
   activeAgentId: string | null;
+  agentSessionId: string | null;
 };
 
 export async function loadStudioSession(workspaceRoot: string, options: PlanningPathOptions = {}): Promise<ChatMessage[]> {
@@ -43,7 +45,8 @@ export async function loadStudioSessionState(
 
     return {
       messages: messages.length > 0 ? messages : cloneMessages(DEFAULT_STUDIO_MESSAGES),
-      activeAgentId: sanitizeActiveAgentId(parsed.activeAgentId)
+      activeAgentId: sanitizeActiveAgentId(parsed.activeAgentId),
+      agentSessionId: sanitizeSessionId(parsed.agentSessionId)
     };
   } catch {
     return createDefaultSessionState();
@@ -58,7 +61,8 @@ export async function saveStudioSession(
   const currentState = await loadStudioSessionState(workspaceRoot, options);
   await writeStudioSession(workspaceRoot, {
     messages,
-    activeAgentId: currentState.activeAgentId
+    activeAgentId: currentState.activeAgentId,
+    agentSessionId: currentState.agentSessionId
   }, options);
 }
 
@@ -77,7 +81,28 @@ export async function saveStoredActiveAgentId(
   const currentState = await loadStudioSessionState(workspaceRoot, options);
   await writeStudioSession(workspaceRoot, {
     messages: currentState.messages,
-    activeAgentId
+    activeAgentId,
+    agentSessionId: currentState.agentSessionId
+  }, options);
+}
+
+export async function loadStoredAgentSessionId(
+  workspaceRoot: string,
+  options: PlanningPathOptions = {}
+): Promise<string | null> {
+  return (await loadStudioSessionState(workspaceRoot, options)).agentSessionId;
+}
+
+export async function saveStoredAgentSessionId(
+  workspaceRoot: string,
+  agentSessionId: string | null,
+  options: PlanningPathOptions = {}
+): Promise<void> {
+  const currentState = await loadStudioSessionState(workspaceRoot, options);
+  await writeStudioSession(workspaceRoot, {
+    messages: currentState.messages,
+    activeAgentId: currentState.activeAgentId,
+    agentSessionId: sanitizeSessionId(agentSessionId)
   }, options);
 }
 
@@ -91,7 +116,8 @@ async function writeStudioSession(
     version: 2,
     updatedAt: new Date().toISOString(),
     messages: sanitizeMessages(state.messages),
-    activeAgentId: sanitizeActiveAgentId(state.activeAgentId)
+    activeAgentId: sanitizeActiveAgentId(state.activeAgentId),
+    agentSessionId: sanitizeSessionId(state.agentSessionId)
   };
 
   await writeText(paths.studioSession, JSON.stringify(payload, null, 2));
@@ -122,7 +148,8 @@ function cloneMessages(messages: ChatMessage[]): ChatMessage[] {
 function createDefaultSessionState(): StudioSessionState {
   return {
     messages: cloneMessages(DEFAULT_STUDIO_MESSAGES),
-    activeAgentId: null
+    activeAgentId: null,
+    agentSessionId: null
   };
 }
 
@@ -133,6 +160,14 @@ function sanitizeActiveAgentId(value: unknown): string | null {
 
   const normalized = value.trim().toLowerCase();
   return normalized.length > 0 ? normalized : null;
+}
+
+function sanitizeSessionId(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const normalized = value.trim();
+  return /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(normalized) ? normalized : null;
 }
 
 function isRole(value: unknown): value is ChatMessage["role"] {

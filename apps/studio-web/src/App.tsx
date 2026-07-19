@@ -1,13 +1,16 @@
-import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type {
   LaneCreateRequest,
   LaneOpenResponse,
+  FinishWorkAssessment,
+  FinishWorkRequest,
+  LaneSummary,
   RepoSnapshot,
   StudioActionRequest,
   StudioEvent,
   StudioSnapshot
 } from "@srgical/studio-core";
-import { STUDIO_THEMES, getStudioTheme, type StudioTheme } from "@srgical/studio-shared";
+import type { AgentEvent, AgentSessionRecord, SkillRecord } from "@srgical/studio-shared";
 
 declare global {
   interface Window {
@@ -19,895 +22,648 @@ const query = new URLSearchParams(window.location.search);
 const dashboardToken = window.__SRGICAL_TOKEN__ || query.get("token") || "";
 const studioToken = query.get("studioToken") || "";
 
-type DirectoryPickerState = {
-  currentPath: string;
-  parentPath: string | null;
-  directories: Array<{ path: string; name: string }>;
-};
-
 export function App() {
-  return studioToken ? <StudioShell token={studioToken} /> : <RepoDashboard token={dashboardToken} />;
+  return studioToken
+    ? <Studio token={studioToken} dashboardToken={dashboardToken} />
+    : <RepositoryHome token={dashboardToken} />;
 }
 
-function RepoDashboard(props: { token: string }) {
+function RepositoryHome({ token }: { token: string }) {
   const [snapshot, setSnapshot] = useState<RepoSnapshot | null>(null);
   const [planId, setPlanId] = useState("");
   const [mode, setMode] = useState<"prepare" | "operate">("prepare");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [sessionQuery, setSessionQuery] = useState("");
+  const [sessionFilter, setSessionFilter] = useState<"active" | "archived" | "all">("active");
+  const [finishAssessment, setFinishAssessment] = useState<FinishWorkAssessment | null>(null);
+  const [finishConfirmation, setFinishConfirmation] = useState("");
+  const [removeAfterFinish, setRemoveAfterFinish] = useState(false);
 
+  const refresh = async () => setSnapshot(await getJson<RepoSnapshot>(`/api/repo?token=${encodeURIComponent(token)}`));
   useEffect(() => {
-    void fetchRepoSnapshot(props.token).then((next) => {
-      setSnapshot(next);
-      setPlanId(next.requestedPlanId ?? "");
-      setMode(next.requestedMode ?? "prepare");
-    }).catch((reason) => setError(reason instanceof Error ? reason.message : String(reason)));
-  }, [props.token]);
-
-  const visibleLanes = useMemo(
-    () => snapshot?.lanes.filter((lane) => !lane.removed) ?? [],
-    [snapshot]
-  );
-
-  const refresh = async () => {
-    setSnapshot(await fetchRepoSnapshot(props.token));
-  };
+    void refresh().then(() => undefined).catch((reason) => setError(errorText(reason)));
+  }, [token]);
+  useEffect(() => {
+    if (!snapshot) return;
+    setPlanId((current) => current || snapshot.requestedPlanId || "");
+    setMode(snapshot.requestedMode ?? "prepare");
+  }, [snapshot?.repoRoot]);
 
   const createLane = async () => {
-    if (!planId.trim()) {
-      setError("Enter a plan id before creating a new worktree lane.");
-      return;
-    }
-    const childWindow = window.open("about:blank", "_blank");
+    if (!planId.trim()) return setError("Name the plan before creating its isolated worktree.");
     setBusy(true);
     setError(null);
     try {
-      const response = await postJson<LaneOpenResponse, LaneCreateRequest>("/api/lanes/create", props.token, {
+      const opened = await postJson<LaneOpenResponse, LaneCreateRequest>("/api/lanes/create", token, {
         planId: planId.trim(),
         mode
       });
-      if (childWindow) {
-        childWindow.location.replace(response.url);
-      } else {
-        window.open(response.url, "_blank");
-      }
+      window.location.assign(opened.url);
+    } catch (reason) {
+      setError(errorText(reason));
+      setBusy(false);
+    }
+  };
+
+  const openLane = async (lane: LaneSummary) => {
+    if (lane.lifecycle === "missing" || lane.lifecycle === "prunable") return;
+    setBusy(true);
+    setError(null);
+    try {
+      const opened = await postJson<LaneOpenResponse, { laneId: string; mode: "prepare" | "operate" }>(
+        "/api/lanes/open",
+        token,
+        { laneId: lane.laneId, mode: lane.lastMode ?? "prepare" }
+      );
+      window.location.assign(opened.url);
+    } catch (reason) {
+      setError(errorText(reason));
+      setBusy(false);
+    }
+  };
+
+  const mutateLane = async (path: string, body: object) => {
+    setBusy(true);
+    setError(null);
+    try {
+      await postJson(path, token, body);
       await refresh();
     } catch (reason) {
-      childWindow?.close();
-      setError(extractErrorMessage(reason));
+      setError(errorText(reason));
     } finally {
       setBusy(false);
     }
   };
 
-  const openLane = async (laneId: string, laneMode: "prepare" | "operate") => {
-    const childWindow = window.open("about:blank", "_blank");
+  const openSession = async (sessionId: string) => {
     setBusy(true);
     setError(null);
     try {
-      const response = await postJson<LaneOpenResponse, { laneId: string; mode: "prepare" | "operate" }>("/api/lanes/open", props.token, {
-        laneId,
-        mode: laneMode
+      const opened = await postJson<LaneOpenResponse, { sessionId: string }>("/api/sessions/open", token, { sessionId });
+      window.location.assign(opened.url);
+    } catch (reason) {
+      setError(errorText(reason));
+      setBusy(false);
+    }
+  };
+
+  const forkSessionIntoWorktree = async (sessionId: string) => {
+    setBusy(true);
+    setError(null);
+    try {
+      const opened = await postJson<LaneOpenResponse, { sessionId: string }>("/api/sessions/fork-worktree", token, { sessionId });
+      window.location.assign(opened.url);
+    } catch (reason) {
+      setError(errorText(reason));
+      setBusy(false);
+    }
+  };
+
+  const mutateSession = async (sessionId: string, action: "pin" | "unpin" | "archive" | "restore" | "delete") => {
+    if (action === "delete" && !window.confirm("Remove this session from history? Its event files remain on disk as recoverable state.")) return;
+    await mutateLane("/api/sessions/update", { sessionId, action });
+  };
+
+  const beginFinish = async (laneId: string) => {
+    setBusy(true);
+    setError(null);
+    try {
+      const assessment = await getJson<FinishWorkAssessment>(`/api/lanes/finish?token=${encodeURIComponent(token)}&laneId=${encodeURIComponent(laneId)}`);
+      setFinishAssessment(assessment);
+      setFinishConfirmation("");
+      setRemoveAfterFinish(false);
+    } catch (reason) {
+      setError(errorText(reason));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const finishWork = async () => {
+    if (!finishAssessment) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await postJson<unknown, FinishWorkRequest>("/api/lanes/finish", token, {
+        laneId: finishAssessment.laneId,
+        archiveSessions: true,
+        removeWorktree: removeAfterFinish,
+        confirmation: finishConfirmation
       });
-      if (childWindow) {
-        childWindow.location.replace(response.url);
-      } else {
-        window.open(response.url, "_blank");
-      }
+      setFinishAssessment(null);
       await refresh();
     } catch (reason) {
-      childWindow?.close();
-      setError(extractErrorMessage(reason));
+      setError(errorText(reason));
     } finally {
       setBusy(false);
     }
   };
 
-  const archiveLane = async (laneId: string) => {
-    setBusy(true);
-    setError(null);
-    try {
-      await postJson("/api/lanes/archive", props.token, { laneId });
-      await refresh();
-    } catch (reason) {
-      setError(extractErrorMessage(reason));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const setLaneDeleteLock = async (laneId: string, deleteLocked: boolean) => {
-    setBusy(true);
-    setError(null);
-    try {
-      await postJson("/api/lanes/lock", props.token, { laneId, deleteLocked });
-      await refresh();
-    } catch (reason) {
-      setError(extractErrorMessage(reason));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const removeLane = async (laneId: string, dirty: boolean) => {
-    const confirmed = window.confirm(
-      dirty
-        ? `Delete worktree lane "${laneId}"? It is unlocked, so this will force-remove the dirty worktree.`
-        : `Delete worktree lane "${laneId}"? It is unlocked and will be removed now.`
-    );
-    if (!confirmed) {
-      return;
-    }
-    setBusy(true);
-    setError(null);
-    try {
-      await postJson("/api/lanes/remove", props.token, { laneId });
-      await refresh();
-    } catch (reason) {
-      setError(extractErrorMessage(reason));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  if (!snapshot) {
-    return <div className="app loading">Launching Repo Dashboard...</div>;
-  }
+  if (!snapshot) return <Loading label="Opening repository" />;
+  const liveLanes = snapshot.lanes.filter((lane) => !lane.removed);
+  const visibleSessions = snapshot.sessions
+    .filter((session) => sessionFilter === "all" || session.lifecycle === sessionFilter)
+    .filter((session) => {
+      const haystack = [session.title, session.lastMessagePreview, session.planId, session.laneId, session.providerId].filter(Boolean).join(" ").toLowerCase();
+      return haystack.includes(sessionQuery.trim().toLowerCase());
+    })
+    .sort((left, right) => Number(Boolean(right.pinnedAt)) - Number(Boolean(left.pinnedAt)) || right.updatedAt.localeCompare(left.updatedAt));
 
   return (
-    <div className="app dashboard-app">
-      <div className="backdrop" />
-      <main className="dashboard-shell">
-        <section className="hero panel">
+    <div className="home-page">
+      <header className="home-header">
+        <Brand />
+        <div className="repo-path" title={snapshot.repoRoot}>{snapshot.repoRoot}</div>
+      </header>
+      <main className="home-main">
+        <section className="home-intro">
           <div>
-            <div className="eyebrow">Same Repo Parallel Work</div>
+            <div className="overline">Repository workspace</div>
             <h1>{snapshot.repoLabel}</h1>
-            <p>Create a fresh worktree lane for each plan, then open each lane in its own browser tab.</p>
+            <p>Each conversation lives in an isolated Git worktree, with its own plan, agent session, and effective skills.</p>
           </div>
-          <div className="hero-meta">
-            <div><span>Repo Root</span><strong>{snapshot.repoRoot}</strong></div>
-            <div><span>Current Checkout</span><strong>{snapshot.currentWorkspace}</strong></div>
-            <div><span>Lanes</span><strong>{visibleLanes.length}</strong></div>
+          <div className="repo-stats">
+            <Stat value={String(liveLanes.length)} label="worktrees" />
+            <Stat value={String(snapshot.sessions.length)} label="sessions" />
+            <Stat value={String(liveLanes.filter((lane) => lane.dirty).length)} label="in progress" />
+            <Stat value={String(liveLanes.filter((lane) => lane.conflictCount > 0).length)} label="conflicted" />
           </div>
         </section>
 
-        <section className="panel create-panel">
-          <header className="panel-header">
-            <span>Create Lane</span>
-            <strong>{busy ? "working" : "ready"}</strong>
-          </header>
-          <div className="create-grid">
-            <label>
-              <span>Plan Id</span>
-              <input value={planId} onChange={(event) => setPlanId(event.target.value)} placeholder="release-readiness" />
-            </label>
-            <label>
-              <span>Mode</span>
-              <select value={mode} onChange={(event) => setMode(event.target.value as "prepare" | "operate")}>
-                <option value="prepare">prepare</option>
-                <option value="operate">operate</option>
-              </select>
-            </label>
-            <button className="primary-button" onClick={() => void createLane()} disabled={busy}>Create And Open</button>
+        <section className="new-work-card">
+          <div>
+            <strong>Start isolated work</strong>
+            <span>Srgical creates a branch, worktree, plan, and durable conversation together.</span>
           </div>
-          {error ? <div className="error-banner">{error}</div> : null}
+          <input value={planId} onChange={(event) => setPlanId(event.target.value)} placeholder="Plan name, e.g. native-agent-ux" />
+          <select value={mode} onChange={(event) => setMode(event.target.value as "prepare" | "operate")}>
+            <option value="prepare">Prepare first</option>
+            <option value="operate">Operate</option>
+          </select>
+          <button className="primary" disabled={busy} onClick={() => void createLane()}>{busy ? "Working…" : "Create worktree"}</button>
+        </section>
+        {error ? <div className="error-banner">{error}</div> : null}
+
+        <div className="section-heading session-heading">
+          <div><h2>Sessions</h2><p>Durable conversations across every worktree in this repository.</p></div>
+          <div className="session-filters">
+            <input value={sessionQuery} onChange={(event) => setSessionQuery(event.target.value)} placeholder="Search sessions…" />
+            <select value={sessionFilter} onChange={(event) => setSessionFilter(event.target.value as typeof sessionFilter)}>
+              <option value="active">Active</option>
+              <option value="archived">Archived</option>
+              <option value="all">All</option>
+            </select>
+          </div>
+        </div>
+        <section className="session-library">
+          {groupSessions(visibleSessions).map(([label, group]) => (
+            <div className="session-group" key={label}>
+              <div className="session-group-label">{label}<span>{group.length}</span></div>
+              {group.map((session) => (
+                <SessionLibraryRow
+                  session={session}
+                  busy={busy}
+                  key={session.sessionId}
+                  onOpen={() => void openSession(session.sessionId)}
+                  onFork={() => void forkSessionIntoWorktree(session.sessionId)}
+                  onPin={() => void mutateSession(session.sessionId, session.pinnedAt ? "unpin" : "pin")}
+                  onArchive={() => void mutateSession(session.sessionId, session.lifecycle === "archived" ? "restore" : "archive")}
+                  onDelete={() => void mutateSession(session.sessionId, "delete")}
+                />
+              ))}
+            </div>
+          ))}
+          {visibleSessions.length === 0 ? <EmptyState title="No matching sessions" body="Start a worktree conversation or change the search and lifecycle filters." /> : null}
         </section>
 
-        <section className="lane-grid">
-          {visibleLanes.map((lane) => (
-            <article className={`panel lane-card ${lane.archived ? "archived" : ""}`} key={lane.laneId}>
-              <header className="lane-header">
-                <div>
-                  <span className="lane-label">{lane.laneId}</span>
-                  <strong>{lane.planId ?? "no plan yet"}</strong>
-                </div>
-                <span className={`status-chip ${lane.dirty ? "warn" : "ok"}`}>{lane.dirty ? "dirty" : "clean"}</span>
-              </header>
-              <div className="lane-meta">
-                <div><span>Branch</span><strong>{lane.branchName ?? "detached"}</strong></div>
-                <div><span>Path</span><strong>{lane.worktreePath}</strong></div>
-                <div><span>Source</span><strong>{lane.source}</strong></div>
-                <div><span>Delete Lock</span><strong>{lane.deleteLocked ? "locked" : "unlocked"}</strong></div>
-                <div><span>Last Mode</span><strong>{lane.lastMode ?? "none"}</strong></div>
-              </div>
-              <div className="lane-flags">
-                {lane.isCurrentCheckout ? <span className="chip">Current Checkout</span> : null}
-                {lane.archived ? <span className="chip">Archived</span> : null}
-                {lane.deleteLocked ? <span className="chip">Delete Locked</span> : <span className="chip chip-warn">Delete Unlocked</span>}
-              </div>
-              <div className="lane-actions">
-                <button onClick={() => void openLane(lane.laneId, "prepare")} disabled={busy}>Open Prepare</button>
-                <button onClick={() => void openLane(lane.laneId, "operate")} disabled={busy}>Open Operate</button>
-                <button onClick={() => void archiveLane(lane.laneId)} disabled={busy || lane.archived}>Archive</button>
-                <button
-                  onClick={() => void setLaneDeleteLock(lane.laneId, !lane.deleteLocked)}
-                  disabled={busy || lane.isCurrentCheckout}
-                >
-                  {lane.deleteLocked ? "Unlock Delete" : "Relock"}
-                </button>
-                <button onClick={() => void removeLane(lane.laneId, lane.dirty)} disabled={busy || !lane.canRemove}>Delete</button>
-              </div>
-            </article>
+        <div className="section-heading">
+          <div><h2>Worktrees</h2><p>Git state and agent context, reconciled on every refresh.</p></div>
+          <button className="quiet" onClick={() => void refresh()}>Refresh</button>
+        </div>
+        <section className="lane-list">
+          {liveLanes.map((lane) => (
+            <LaneRow
+              lane={lane}
+              busy={busy}
+              key={lane.laneId}
+              onOpen={() => void openLane(lane)}
+              onArchive={() => void mutateLane("/api/lanes/archive", { laneId: lane.laneId })}
+              onFinish={() => void beginFinish(lane.laneId)}
+              onLock={() => void mutateLane("/api/lanes/lock", { laneId: lane.laneId, deleteLocked: !lane.deleteLocked })}
+              onRemove={() => {
+                const phrase = window.prompt(`Type ${lane.laneId} to remove this worktree${lane.dirty ? " and its uncommitted changes" : ""}.`);
+                if (phrase === lane.laneId) void mutateLane("/api/lanes/remove", { laneId: lane.laneId });
+              }}
+            />
           ))}
         </section>
       </main>
-    </div>
-  );
-}
-
-function StudioShell(props: { token: string }) {
-  const [snapshot, setSnapshot] = useState<StudioSnapshot | null>(null);
-  const [input, setInput] = useState("");
-  const [activeTab, setActiveTab] = useState("prepare");
-  const [lastContentTab, setLastContentTab] = useState("prepare");
-  const [drawerOpen, setDrawerOpen] = useState(true);
-  const [referenceRootInput, setReferenceRootInput] = useState("");
-  const [directoryPickerOpen, setDirectoryPickerOpen] = useState(false);
-  const [directoryPicker, setDirectoryPicker] = useState<DirectoryPickerState | null>(null);
-
-  useEffect(() => {
-    void fetchStudioSnapshot(props.token).then(setSnapshot);
-    const events = new EventSource(`/api/studio/events?token=${encodeURIComponent(props.token)}`);
-    events.onmessage = (message) => {
-      const event = JSON.parse(message.data) as StudioEvent;
-      if (event.type === "snapshot") {
-        setSnapshot(event.snapshot);
-      }
-      if (event.type === "action") {
-        setSnapshot(event.snapshot);
-      }
-    };
-    return () => events.close();
-  }, [props.token]);
-
-  useEffect(() => {
-    setActiveTab((current) => {
-      if (current === "docs") {
-        return current;
-      }
-      if (snapshot?.mode === "operate") {
-        return current === "prepare" || current === "context" || current === "references" ? "operate" : current;
-      }
-      return current === "operate" || current === "review" ? "prepare" : current;
-    });
-  }, [snapshot?.mode]);
-
-  useEffect(() => {
-    if (activeTab !== "docs") {
-      setLastContentTab(activeTab);
-    }
-  }, [activeTab]);
-
-  const theme = useMemo<StudioTheme>(() => {
-    if (!snapshot) {
-      return getStudioTheme("neon-command");
-    }
-    return snapshot.theme;
-  }, [snapshot]);
-
-  const sendAction = async (request: StudioActionRequest) => {
-    if (request.type !== "theme" && request.type !== "switch-mode") {
-      setActiveTab("transcript");
-    }
-    await postJson("/api/studio/action", props.token, request);
-  };
-
-  const sendInput = async () => {
-    const text = input.trim();
-    if (!text) {
-      return;
-    }
-    setInput("");
-    await postJson("/api/studio/input", props.token, { text });
-  };
-
-  const setTheme = async (themeId: string) => {
-    await postJson("/api/studio/settings", props.token, { themeId, announce: false });
-  };
-
-  const loadDirectoryPicker = async (targetPath = "") => {
-    setDirectoryPicker(await getJson<DirectoryPickerState>(`/api/studio/directories?token=${encodeURIComponent(props.token)}&path=${encodeURIComponent(targetPath)}`));
-  };
-
-  if (!snapshot) {
-    return <div className="app loading">Launching Studio...</div>;
-  }
-
-  const tabs = snapshot.mode === "prepare"
-    ? [
-        { id: "prepare", label: "Prepare" },
-        { id: "context", label: "Context" },
-        { id: "references", label: "References" },
-        { id: "transcript", label: "Transcript" }
-      ]
-    : [
-        { id: "operate", label: "Operate" },
-        { id: "review", label: "Review" },
-        { id: "transcript", label: "Transcript" }
-      ];
-
-  const selectTab = (tabId: string) => {
-    setActiveTab(tabId);
-  };
-
-  const openDocs = () => {
-    setLastContentTab(activeTab === "docs" ? lastContentTab : activeTab);
-    setActiveTab("docs");
-  };
-
-  return (
-    <div className="app" style={buildThemeVars(theme)}>
-      <div className="backdrop" />
-      <main className="studio-shell">
-        <header className="panel studio-topbar">
-          <div className="studio-title">
-            <div className="eyebrow">{snapshot.mode === "prepare" ? "Prepare Workspace" : "Operate Workspace"}</div>
-            <h1>{snapshot.workspaceLabel}</h1>
-            <div className="studio-identity">
-              <span>Lane {snapshot.laneId}</span>
-              <span>Branch {snapshot.branchName ?? "detached"}</span>
-              <span>Plan {snapshot.planId}</span>
-            </div>
-          </div>
-          <div className="studio-topbar-actions">
-            {tabs.map((tab) => (
-              <button
-                key={tab.id}
-                className={`shell-tab ${activeTab === tab.id ? "active" : ""}`}
-                onClick={() => selectTab(tab.id)}
-              >
-                {tab.label}
-              </button>
-            ))}
-            <button className={`shell-tab ${activeTab === "docs" ? "active" : ""}`} onClick={openDocs}>
-              Documentation
-            </button>
-            {snapshot.mode === "operate" ? (
-              <button className="return-button" onClick={() => void sendAction({ type: "switch-mode", mode: "prepare" })}>
-                Return To Prepare
-              </button>
-            ) : null}
-            <button className="drawer-toggle" onClick={() => setDrawerOpen((current) => !current)}>
-              {drawerOpen ? "Hide Drawer" : "Show Drawer"}
-            </button>
-          </div>
-        </header>
-
-        <aside className="panel studio-sidebar">
-          <ControlBlock title="Readiness">
-            <Detail label="Stage" value={snapshot.state.mode} chip />
-            <Detail label="Approval" value={snapshot.state.approvalStatus} chip />
-            <Detail label="Next Step" value={snapshot.state.currentPosition.nextRecommended ?? "none"} chip />
-            <Detail label="Selected Refs" value={String(snapshot.references.selectedIds.length)} chip />
-          </ControlBlock>
-          <ControlBlock title="Next Move">
-            <ListRow value={snapshot.state.nextAction} />
-          </ControlBlock>
-          <ControlBlock title="Open Questions">
-            {snapshot.state.unknowns.length > 0 ? snapshot.state.unknowns.slice(0, 4).map((item) => <ListRow key={item} value={item} />) : <ListRow value="none recorded" />}
-          </ControlBlock>
-          <ControlBlock title="Evidence Signals">
-            {snapshot.state.evidence.length > 0 ? snapshot.state.evidence.slice(0, 4).map((item) => <ListRow key={item} value={item} />) : <ListRow value="none yet" />}
-          </ControlBlock>
-        </aside>
-
-        <section className="panel studio-main">
-          {activeTab === "docs"
-            ? <DocumentationPanel mode={snapshot.mode} returnTab={lastContentTab} onBack={() => setActiveTab(lastContentTab)} />
-            : snapshot.mode === "prepare"
-              ? renderPrepareTab(
-                  activeTab,
-                  snapshot,
-                  sendAction,
-                  referenceRootInput,
-                  setReferenceRootInput,
-                  async () => {
-                    await loadDirectoryPicker("");
-                    setDirectoryPickerOpen(true);
-                  }
-                )
-              : renderOperateTab(activeTab, snapshot)}
-        </section>
-
-        {drawerOpen ? (
-          <aside className="panel studio-drawer">
-            <header className="panel-header">
-              <span>{snapshot.mode === "prepare" ? "Prepare Actions" : "Operate Actions"}</span>
-              <strong>{snapshot.busy ? snapshot.busyStatus : "ready"}</strong>
-            </header>
-            <ControlBlock title="Summary">
-              <ListRow value={snapshot.prepareClarity?.coachHeadline ?? snapshot.state.nextAction} />
-            </ControlBlock>
-            <ControlBlock title="Settings">
-              <label className="theme-select">
-                <span>Theme</span>
-                <select value={snapshot.settings.themeId} onChange={(event) => void setTheme(event.target.value)}>
-                  {STUDIO_THEMES.map((themeOption) => (
-                    <option key={themeOption.id} value={themeOption.id}>
-                      {themeOption.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            </ControlBlock>
-            <ControlBlock title="Actions">
-              <div className="actions">
-                {(snapshot.mode === "prepare"
-                  ? [
-                      { key: "F2", label: "Gather More", action: { type: "gather" as const } },
-                      { key: "F3", label: "Build Draft", action: { type: "build" as const } },
-                      { key: "F4", label: "Slice Plan", action: { type: "slice" as const } },
-                      { key: "F5", label: "Review", action: { type: "review" as const } },
-                      { key: "F6", label: "Approve", action: { type: "approve" as const } },
-                      { key: "F7", label: "Operate", action: { type: "switch-mode" as const, mode: "operate" as const } }
-                    ]
-                  : [
-                      { key: "F2", label: "Run Next", action: { type: "run" as const } },
-                      { key: "F3", label: "Auto Continue", action: { type: "auto" as const } },
-                      { key: "F4", label: "Checkpoint", action: { type: "checkpoint" as const } },
-                      { key: "F6", label: "Review", action: { type: "review" as const } },
-                      { key: "F7", label: "Unblock", action: { type: "unblock" as const } }
-                    ]).map((item) => (
-                  <button
-                    className="action-button"
-                    key={item.key + item.label}
-                    onClick={() => void sendAction(item.action)}
-                    disabled={snapshot.busy || !snapshot.actions[item.action.type].enabled}
-                    title={snapshot.actions[item.action.type].blockedReason ?? undefined}
-                  >
-                    <span>{item.key}</span>
-                    <strong>{item.label}</strong>
-                  </button>
-                ))}
-              </div>
-            </ControlBlock>
-          </aside>
-        ) : null}
-
-        <section className="command-bar panel">
-          <div className="command-label">{snapshot.mode === "prepare" ? "Plan Message Or :Command" : "Operate Command"}</div>
-          <div className="command-input-row">
-            <input
-              value={input}
-              onChange={(event) => setInput(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") {
-                  void sendInput();
-                }
-              }}
-              placeholder={snapshot.mode === "prepare" ? "Type to chat or use :build / :slice / :theme..." : "Type an operate command like :run or :review"}
-            />
-            <button onClick={() => void sendInput()}>Send</button>
-          </div>
-        </section>
-
-        <footer className="footer">
-          <span>Theme: {snapshot.theme.label}</span>
-          <span>Lane {snapshot.laneId} on {snapshot.branchName ?? "detached"} | {snapshot.footerText}</span>
-        </footer>
-      </main>
-      {directoryPickerOpen ? (
-        <div className="picker-overlay" onClick={() => setDirectoryPickerOpen(false)}>
-          <div className="picker-modal panel" onClick={(event) => event.stopPropagation()}>
-            <header className="panel-header">
-              <span>Select Documentation Directory</span>
-              <strong>{directoryPicker?.currentPath || "repo root"}</strong>
-            </header>
-            <div className="picker-actions">
-              <button
-                onClick={() => {
-                  const selectedPath = directoryPicker?.currentPath ?? "";
-                  if (!selectedPath) {
-                    return;
-                  }
-                  void sendAction({ type: "reference-root-add", rootPath: selectedPath });
-                  setDirectoryPickerOpen(false);
-                }}
-                disabled={!directoryPicker?.currentPath}
-              >
-                Use This Directory
-              </button>
-              <button
-                onClick={() => {
-                  if (directoryPicker?.parentPath === null) {
-                    return;
-                  }
-                  void loadDirectoryPicker(directoryPicker.parentPath);
-                }}
-                disabled={directoryPicker?.parentPath === null}
-              >
-                Up One Level
-              </button>
-              <button onClick={() => setDirectoryPickerOpen(false)}>Close</button>
-            </div>
-            <div className="picker-list">
-              {(directoryPicker?.directories ?? []).map((entry) => (
-                <button
-                  className="picker-row"
-                  key={entry.path}
-                  onClick={() => void loadDirectoryPicker(entry.path)}
-                >
-                  <span>{entry.name}</span>
-                  <strong>{entry.path}</strong>
-                </button>
-              ))}
-              {(directoryPicker?.directories.length ?? 0) === 0 ? (
-                <div className="tab-summary">
-                  <strong>No subdirectories here</strong>
-                  <span>You can select this directory, go up one level, or close the picker.</span>
-                </div>
-              ) : null}
-            </div>
-          </div>
-        </div>
+      {finishAssessment ? (
+        <FinishWorkDialog
+          assessment={finishAssessment}
+          confirmation={finishConfirmation}
+          removeWorktree={removeAfterFinish}
+          busy={busy}
+          onConfirmation={setFinishConfirmation}
+          onRemoveWorktree={setRemoveAfterFinish}
+          onClose={() => setFinishAssessment(null)}
+          onFinish={() => void finishWork()}
+        />
       ) : null}
     </div>
   );
 }
 
-function renderPrepareTab(
-  activeTab: string,
-  snapshot: StudioSnapshot,
-  sendAction: (request: StudioActionRequest) => Promise<void>,
-  referenceRootInput: string,
-  setReferenceRootInput: (value: string) => void,
-  openDirectoryPicker: () => Promise<void>
-) {
-  if (activeTab === "context" && snapshot.prepareClarity) {
-    return (
-      <div className="tab-content">
-        <div className="context-sections">
-          <ContextExcerpt title="Repo Truth" value={snapshot.prepareClarity.repoTruth} empty="Repo truth has not been captured clearly yet." />
-          <ContextExcerpt title="Evidence" value={snapshot.prepareClarity.evidenceSection} empty="Evidence still needs to be grounded in actual repo facts." />
-          <ContextExcerpt title="Unknowns" value={snapshot.prepareClarity.unknownsSection} empty="Unknowns are not clearly surfaced yet." />
-          <ContextExcerpt title="Working Agreements" value={snapshot.prepareClarity.workingAgreements} empty="Working agreements have not been made explicit yet." />
-          <ContextExcerpt title="Selected Guidance" value={snapshot.prepareClarity.selectedGuidance} empty="No guidance documents are actively shaping the plan yet." />
-        </div>
-        <div className="context-document">
-          <div className="context-document-label">context.md</div>
-          <pre>{snapshot.prepareClarity.contextDocument || "# Context\n\nThe context document has not been shaped yet."}</pre>
-        </div>
+function LaneRow(props: {
+  lane: LaneSummary;
+  busy: boolean;
+  onOpen(): void;
+  onFork(): void;
+  onArchive(): void;
+  onFinish(): void;
+  onLock(): void;
+  onRemove(): void;
+}) {
+  const { lane } = props;
+  const changed = lane.stagedCount + lane.unstagedCount + lane.untrackedCount;
+  return (
+    <article className="lane-row">
+      <button className="lane-open" disabled={props.busy || lane.lifecycle === "missing" || lane.lifecycle === "prunable"} onClick={props.onOpen}>
+        <span className={`lane-dot ${lane.lifecycle}`} />
+        <span className="lane-primary"><strong>{lane.planId ?? lane.laneId}</strong><small>{lane.branchName ?? "detached"}</small></span>
+      </button>
+      <div className="lane-metrics">
+        <Metric label="state" value={lane.lifecycle} />
+        <Metric label="changes" value={String(changed)} />
+        <Metric label="ahead / behind" value={`${lane.aheadCount} / ${lane.behindCount}`} />
+        <Metric label="skills context" value={lane.lastMode ?? "not opened"} />
       </div>
-    );
-  }
+      <div className="lane-guidance"><strong>{lane.nextAction}</strong><span>{lane.worktreePath}</span></div>
+      <details className="row-menu">
+        <summary>•••</summary>
+        <div>
+          {lane.source === "managed" ? <button onClick={props.onFinish} disabled={props.busy}>Finish work…</button> : null}
+          <button onClick={props.onArchive} disabled={props.busy || lane.archived}>Archive</button>
+          {!lane.isCurrentCheckout ? <button onClick={props.onLock}>{lane.deleteLocked ? "Unlock removal" : "Lock removal"}</button> : null}
+          {!lane.isCurrentCheckout ? <button className="danger" onClick={props.onRemove} disabled={!lane.canRemove}>Remove worktree</button> : null}
+        </div>
+      </details>
+    </article>
+  );
+}
 
-  if (activeTab === "references") {
-    return (
-      <div className="tab-content">
-        <div className="tab-summary">
-          <strong>{snapshot.references.selectedIds.length} selected references</strong>
-          <span>
-            {snapshot.references.recommendedIds.length} suggested from the current plan signals. Keep this lean and only activate guidance that genuinely sharpens the plan.
-          </span>
-        </div>
-        <div className="reference-toolbar">
-          <button onClick={() => void sendAction({ type: "reference-autoselect" })}>
-            Auto Select Relevant
-          </button>
-          <button onClick={() => void sendAction({ type: "reference-clear" })} disabled={snapshot.references.selectedIds.length === 0}>
-            Clear Selected
-          </button>
-        </div>
-        <section className="reference-roots">
-          <div className="reference-roots-head">
-            <strong>Documentation Search Roots</strong>
-            <span>Add directories that should be scanned for context and guidance docs.</span>
-          </div>
-          <div className="reference-root-input">
-            <input
-              value={referenceRootInput}
-              onChange={(event) => setReferenceRootInput(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" && referenceRootInput.trim()) {
-                  void sendAction({ type: "reference-root-add", rootPath: referenceRootInput.trim() });
-                  setReferenceRootInput("");
-                }
-              }}
-              placeholder="docs/playbooks or REFERENCE/company-standards"
-            />
-            <button
-              onClick={() => {
-                if (!referenceRootInput.trim()) {
-                  return;
-                }
-                void sendAction({ type: "reference-root-add", rootPath: referenceRootInput.trim() });
-                setReferenceRootInput("");
-              }}
-            >
-              Add Directory
-            </button>
-            <button onClick={() => void openDirectoryPicker()}>
-              Browse Directories
-            </button>
-          </div>
-          <div className="reference-root-list">
-            {snapshot.references.roots.length > 0 ? snapshot.references.roots.map((root) => (
-              <div className="reference-root-chip" key={root}>
-                <span>{root}</span>
-                <button onClick={() => void sendAction({ type: "reference-root-remove", rootPath: root })}>Remove</button>
-              </div>
-            )) : <span className="reference-root-empty">Using built-in roots only: README.md, docs, REFERENCE.</span>}
-          </div>
-        </section>
-        <div className="reference-grid">
-          {snapshot.references.entries.map((entry) => (
-            <article className="reference-card" key={entry.id}>
-              <div className="reference-card-head">
-                <strong>{entry.title}</strong>
-                <div className="reference-statuses">
-                  {entry.recommended ? <span className="status-chip">suggested</span> : null}
-                  <span className={`status-chip ${entry.selected ? "ok" : ""}`}>{entry.selected ? "selected" : "available"}</span>
-                </div>
-              </div>
-              <div className="reference-path">{entry.path}</div>
-              <p>{entry.summary}</p>
-              {entry.recommended && entry.recommendationReason ? <div className="reference-reason">{entry.recommendationReason}</div> : null}
-              <div className="reference-tags">
-                {entry.tags.map((tag) => (
-                  <span className="chip" key={tag}>{tag}</span>
-                ))}
-              </div>
-              <button onClick={() => void sendAction({ type: "reference-toggle", referenceId: entry.id, selected: !entry.selected })}>
-                {entry.selected ? "Remove From Context Set" : "Use This Guidance"}
-              </button>
-            </article>
-          ))}
-        </div>
+function SessionLibraryRow(props: {
+  session: AgentSessionRecord;
+  busy: boolean;
+  onOpen(): void;
+  onPin(): void;
+  onArchive(): void;
+  onDelete(): void;
+}) {
+  const { session } = props;
+  const binding = [...session.workspaceBindings].reverse().find((item) => !item.retiredAt) ?? session.workspaceBindings.at(-1);
+  const resumable = Boolean(binding && !binding.retiredAt && session.lifecycle === "active");
+  return (
+    <article className={`library-session ${session.lifecycle}`}>
+      <button className="library-session-main" disabled={props.busy || !resumable} onClick={props.onOpen}>
+        <span className={`session-state ${session.status}`} />
+        <span className="library-session-copy">
+          <strong>{session.pinnedAt ? "◆ " : ""}{session.title}</strong>
+          <small>{session.lastMessagePreview ?? "No conversation preview yet."}</small>
+        </span>
+      </button>
+      <div className="session-context">
+        <span>{binding?.laneId ?? session.laneId}</span>
+        <span>{binding?.branchName ?? "branch unknown"}</span>
+        {session.parentSessionId ? <span>fork</span> : null}
+        {binding?.retiredAt ? <span className="retired">worktree retired</span> : null}
       </div>
-    );
-  }
+      <time>{formatRelativeTime(session.updatedAt)}</time>
+      <details className="row-menu session-menu"><summary>•••</summary><div>
+        <button onClick={props.onPin}>{session.pinnedAt ? "Unpin" : "Pin"}</button>
+        {binding?.retiredAt ? <button onClick={props.onFork}>Fork into new worktree</button> : null}
+        <button onClick={props.onArchive}>{session.lifecycle === "archived" ? "Restore to history" : "Archive"}</button>
+        <button className="danger" onClick={props.onDelete}>Remove from history</button>
+      </div></details>
+    </article>
+  );
+}
 
-  if (activeTab === "transcript") {
-    return <TranscriptPanel snapshot={snapshot} />;
-  }
+function FinishWorkDialog(props: {
+  assessment: FinishWorkAssessment;
+  confirmation: string;
+  removeWorktree: boolean;
+  busy: boolean;
+  onConfirmation(value: string): void;
+  onRemoveWorktree(value: boolean): void;
+  onClose(): void;
+  onFinish(): void;
+}) {
+  const { assessment } = props;
+  const removalBlocked = !assessment.canRemoveWorktree;
+  return (
+    <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) props.onClose(); }}>
+      <section className="finish-dialog" role="dialog" aria-modal="true" aria-labelledby="finish-title">
+        <header><div><div className="overline">Post-operation cleanup</div><h2 id="finish-title">Finish {assessment.planId ?? assessment.laneId}</h2><p>Archive the work without coupling session retention to worktree removal.</p></div><button className="quiet" onClick={props.onClose}>Close</button></header>
+        <div className="finish-summary">
+          <Metric label="sessions" value={String(assessment.sessionCount)} />
+          <Metric label="changes" value={String(assessment.changedFileCount)} />
+          <Metric label="ahead / behind" value={`${assessment.aheadCount} / ${assessment.behindCount}`} />
+          <Metric label="conflicts" value={String(assessment.conflictCount)} />
+        </div>
+        {assessment.blockers.length ? <Notice tone="danger" title="Finish is blocked" items={assessment.blockers} /> : null}
+        {assessment.warnings.length ? <Notice tone="warning" title="Review before finishing" items={assessment.warnings} /> : null}
+        <Notice tone="safe" title="Srgical will preserve" items={assessment.preserved} />
+        <label className={`finish-option ${removalBlocked ? "disabled" : ""}`}><input type="checkbox" checked={props.removeWorktree} disabled={removalBlocked} onChange={(event) => props.onRemoveWorktree(event.target.checked)} /><span><strong>Remove the worktree after archiving</strong><small>The Git branch is retained. This is available only when the worktree is clean, unlocked, and conflict-free.</small></span></label>
+        {removalBlocked && assessment.removalBlockers.length ? <Notice tone="neutral" title="Worktree removal unavailable" items={assessment.removalBlockers} /> : null}
+        <label className="confirmation-field"><span>Type <strong>{assessment.laneId}</strong> to confirm</span><input value={props.confirmation} onChange={(event) => props.onConfirmation(event.target.value)} /></label>
+        <footer><button onClick={props.onClose}>Cancel</button><button className="primary" disabled={props.busy || !assessment.canArchive || props.confirmation !== assessment.laneId} onClick={props.onFinish}>{props.removeWorktree ? "Archive sessions & remove worktree" : "Archive sessions & finish"}</button></footer>
+      </section>
+    </div>
+  );
+}
+
+function Notice({ tone, title, items }: { tone: "danger" | "warning" | "safe" | "neutral"; title: string; items: string[] }) {
+  return <div className={`finish-notice ${tone}`}><strong>{title}</strong><ul>{items.map((item) => <li key={item}>{item}</li>)}</ul></div>;
+}
+
+function Studio({ token, dashboardToken: homeToken }: { token: string; dashboardToken: string }) {
+  const [snapshot, setSnapshot] = useState<StudioSnapshot | null>(null);
+  const [input, setInput] = useState("");
+  const [sending, setSending] = useState(false);
+  const [inspector, setInspector] = useState<"worktree" | "skills" | "plan">("worktree");
+  const transcriptEnd = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    void getJson<StudioSnapshot>(`/api/studio/session?token=${encodeURIComponent(token)}`).then(setSnapshot);
+    const stream = new EventSource(`/api/studio/events?token=${encodeURIComponent(token)}`);
+    stream.onmessage = (raw) => {
+      const event = JSON.parse(raw.data) as StudioEvent;
+      if (event.type === "snapshot" || event.type === "action") setSnapshot(event.snapshot);
+      if (event.type === "agent") {
+        setSnapshot((current) => current ? {
+          ...current,
+          recentAgentEvents: [...current.recentAgentEvents, event.event].slice(-250),
+          agentSession: { ...current.agentSession, lastEventSequence: event.event.sequence }
+        } : current);
+      }
+    };
+    return () => stream.close();
+  }, [token]);
+
+  useEffect(() => {
+    transcriptEnd.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+  }, [snapshot?.messages.length, snapshot?.recentAgentEvents.length]);
+
+  const action = async (request: StudioActionRequest) => {
+    await postJson("/api/studio/action", token, request);
+  };
+  const send = async () => {
+    const text = input.trim();
+    if (!text || sending) return;
+    setInput("");
+    setSending(true);
+    try {
+      await postJson("/api/studio/input", token, { text });
+    } finally {
+      setSending(false);
+    }
+  };
+
+  if (!snapshot) return <Loading label="Resuming conversation" />;
+  const pendingPermissions = unresolvedEvents(snapshot.recentAgentEvents, "permission.requested", "permission.resolved");
+  const pendingQuestions = unresolvedEvents(snapshot.recentAgentEvents, "question.requested", "question.resolved");
+  const activity = latestActivity(snapshot.recentAgentEvents);
+  const displayMessages = structuredConversation(snapshot);
 
   return (
-    <div className="tab-content">
-      {snapshot.prepareClarity ? (
-        <>
-          <div className="clarity-hero">
-            <h2>{snapshot.prepareClarity.coachHeadline}</h2>
-            <p>{snapshot.prepareClarity.coachSummary}</p>
+    <div className="studio-layout">
+      <aside className="session-rail">
+        <Brand compact />
+        <button className="back-link" onClick={() => window.location.assign(`/?token=${encodeURIComponent(homeToken)}`)}>← All worktrees</button>
+        <div className="rail-section-label">Current worktree</div>
+        <div className="rail-lane"><span className="lane-dot current" /><div><strong>{snapshot.planId}</strong><small>{snapshot.branchName ?? "detached"}</small></div></div>
+        <div className="rail-section-label">Conversation</div>
+        <button className="new-session" onClick={() => void action({ type: "session-create" })}>＋ New conversation</button>
+        {snapshot.agentSessions.map((session) => <button className={`session-item ${session.sessionId === snapshot.agentSession.sessionId ? "active" : ""}`} onClick={() => void action({ type: "session-switch", sessionId: session.sessionId })} key={session.sessionId}><span>{session.pinnedAt ? "◆" : session.parentSessionId ? "⑂" : "◌"}</span><div><strong>{session.title}</strong><small>{session.lifecycle} · {session.status} · {new Date(session.updatedAt).toLocaleDateString()}</small></div></button>)}
+        <div className="rail-spacer" />
+        <div className="provider-card">
+          <span className={`provider-light ${snapshot.agentProvider.authenticated === false ? "off" : ""}`} />
+          <div><strong>{snapshot.agentProvider.label}</strong><small>{snapshot.agentProvider.detail ?? "Provider ready"}</small></div>
+        </div>
+      </aside>
+
+      <main className="conversation-pane">
+        <header className="conversation-header">
+          <div><strong>{snapshot.workspaceLabel}</strong><span>{snapshot.mode} · {snapshot.agentSession.permissionMode} permissions</span></div>
+          <div className="header-actions">
+            {snapshot.busy ? <button className="stop" onClick={() => void action({ type: "interrupt-agent" })}>■ Stop</button> : null}
+            <button className="quiet" onClick={() => void action({ type: "session-pin", pinned: !snapshot.agentSession.pinnedAt })}>{snapshot.agentSession.pinnedAt ? "Unpin" : "Pin"}</button>
+            <button className="quiet" onClick={() => void action({ type: "session-archive" })}>Archive</button>
+            <button className="quiet" onClick={() => void action({ type: "session-fork" })}>Fork</button>
+            <button className="quiet" onClick={() => { const title = window.prompt("Conversation title", snapshot.agentSession.title); if (title?.trim()) void action({ type: "session-rename", title }); }}>Rename</button>
+            <button className="quiet" onClick={() => void action({ type: "switch-mode", mode: snapshot.mode === "prepare" ? "operate" : "prepare" })}>
+              {snapshot.mode === "prepare" ? "Switch to operate" : "Return to prepare"}
+            </button>
           </div>
-          <div className="clarity-next-action">
-            <span>Next deliberate move</span>
-            <strong>{snapshot.state.nextAction}</strong>
-          </div>
-          <div className="clarity-checklist">
-            {snapshot.prepareClarity.checks.map((check) => (
-              <article className={`clarity-check ${check.passed ? "passed" : "missing"}`} key={check.id}>
-                <div className="clarity-check-head">
-                  <strong>{check.title}</strong>
-                  <span className="status-chip">{check.passed ? "ready" : "missing"}</span>
-                </div>
-                <p>{check.whyItMatters}</p>
-                <div className="clarity-next">{check.nextMove}</div>
+        </header>
+
+        <section className="conversation-scroll">
+          <div className="conversation-inner">
+            <div className="conversation-intro">
+              <div className="claude-mark">S</div>
+              <h1>{snapshot.planId}</h1>
+              <p>{snapshot.prepareClarity?.coachHeadline ?? snapshot.state.nextAction}</p>
+              <div className="context-pills">
+                <span>{snapshot.skills.effectiveSkillHashes.length} skills</span>
+                <span>{snapshot.agentProvider.label}</span>
+                <span>{snapshot.branchName ?? "detached"}</span>
+              </div>
+            </div>
+
+            {displayMessages.map((message, index) => (
+              <article className={`chat-message ${message.role}`} key={`${index}-${message.role}`}>
+                <div className="avatar">{message.role === "user" ? "Y" : message.role === "assistant" ? "S" : "i"}</div>
+                <div><div className="message-author">{message.role === "user" ? "You" : message.role === "assistant" ? snapshot.agentLabel : "Srgical"}</div><pre>{message.content}</pre></div>
               </article>
             ))}
+
+            {activity.map((event) => <Activity event={event} key={event.eventId} />)}
+            {pendingPermissions.map((event) => <PermissionPrompt event={event} action={action} key={event.eventId} />)}
+            {pendingQuestions.map((event) => <QuestionPrompt event={event} action={action} key={event.eventId} />)}
+            <div ref={transcriptEnd} />
           </div>
-        </>
-      ) : (
-        <div className="tab-summary">
-          <strong>Prepare clarity data is still loading.</strong>
+        </section>
+
+        <section className="composer-wrap">
+          <div className="composer">
+            <textarea
+              value={input}
+              onChange={(event) => setInput(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && !event.shiftKey) {
+                  event.preventDefault();
+                  void send();
+                }
+              }}
+              placeholder={snapshot.mode === "prepare" ? "Ask Srgical to explore, plan, or implement…" : "Describe the next change or use an action…"}
+              rows={2}
+            />
+            <div className="composer-footer"><span>{snapshot.skills.effectiveSkillHashes.length} effective skills · Enter to send</span><button className="send-button" disabled={!input.trim() || sending} onClick={() => void send()}>↑</button></div>
+          </div>
+        </section>
+      </main>
+
+      <aside className="inspector-pane">
+        <div className="inspector-tabs">
+          {(["worktree", "skills", "plan"] as const).map((tab) => <button className={inspector === tab ? "active" : ""} onClick={() => setInspector(tab)} key={tab}>{tab}</button>)}
         </div>
-      )}
+        <div className="inspector-body">
+          {inspector === "worktree" ? <WorktreeInspector snapshot={snapshot} /> : null}
+          {inspector === "skills" ? <SkillsInspector snapshot={snapshot} action={action} /> : null}
+          {inspector === "plan" ? <PlanInspector snapshot={snapshot} action={action} /> : null}
+        </div>
+      </aside>
     </div>
   );
 }
 
-function renderOperateTab(activeTab: string, snapshot: StudioSnapshot) {
-  if (activeTab === "transcript") {
-    return <TranscriptPanel snapshot={snapshot} />;
+function Activity({ event }: { event: AgentEvent }) {
+  if (event.kind.startsWith("tool.")) {
+    const payload = event.payload as { toolName?: string; message?: string; toolUseId: string };
+    return <div className="activity-card"><span className="activity-icon">⌘</span><div><strong>{payload.toolName ?? "Tool activity"}</strong><small>{event.kind.replace("tool.", "")} {payload.message ?? ""}</small></div></div>;
   }
-
-  if (activeTab === "review") {
-    return (
-      <div className="tab-content">
-        <div className="tab-summary">
-          <strong>Review before PR</strong>
-          <span>This is the future home for PR readiness, selected guidance checks, and final change summaries.</span>
-        </div>
-        <div className="context-sections">
-          <ContextExcerpt title="Current Step" value={snapshot.state.nextStepSummary ? `${snapshot.state.nextStepSummary.id}: ${snapshot.state.nextStepSummary.scope}` : null} empty="No current step is queued." />
-          <ContextExcerpt title="Acceptance" value={snapshot.state.nextStepSummary?.acceptance ?? null} empty="Acceptance criteria are not available yet." />
-          <ContextExcerpt title="Validation" value={snapshot.state.nextStepSummary?.validation ?? null} empty="Validation path is not available yet." />
-          <ContextExcerpt title="Last Change" value={snapshot.state.manifest?.lastChangeSummary ?? null} empty="No visible change recorded yet." />
-        </div>
-      </div>
-    );
+  if (event.kind.startsWith("task.")) {
+    const payload = event.payload as { subject: string; status?: string; summary?: string };
+    return <div className="activity-card"><span className="activity-icon">✓</span><div><strong>{payload.subject}</strong><small>{payload.status ?? event.kind.replace("task.", "")} {payload.summary ?? ""}</small></div></div>;
   }
+  if (event.kind === "session.failed") return <div className="inline-error">{event.payload.message}</div>;
+  return null;
+}
 
+function PermissionPrompt({ event, action }: { event: AgentEvent; action(request: StudioActionRequest): Promise<void> }) {
+  if (event.kind !== "permission.requested") return null;
   return (
-    <div className="tab-content">
-      <div className="clarity-hero">
-        <h2>Execution should stay explicit and reviewable.</h2>
-        <p>Run the next safe step, keep checkpoints clear, and return to prepare whenever the plan needs judgment rather than momentum.</p>
-      </div>
-      <div className="context-sections">
-        <ContextExcerpt title="Next Step" value={snapshot.state.nextStepSummary ? `${snapshot.state.nextStepSummary.id}: ${snapshot.state.nextStepSummary.scope}` : null} empty="No next step is queued." />
-        <ContextExcerpt title="Acceptance" value={snapshot.state.nextStepSummary?.acceptance ?? null} empty="Acceptance criteria are not available yet." />
-        <ContextExcerpt title="Validation" value={snapshot.state.nextStepSummary?.validation ?? null} empty="Validation path is not available yet." />
-        <ContextExcerpt title="References In Effect" value={snapshot.references.selectedIds.join("\n") || null} empty="No references are currently selected." />
-      </div>
-    </div>
+    <article className="decision-card">
+      <div className="decision-heading"><span>Permission requested</span><strong>{event.payload.title ?? event.payload.toolName}</strong></div>
+      <p>{event.payload.description ?? `Claude wants to use ${event.payload.toolName}.`}</p>
+      <pre>{JSON.stringify(event.payload.input, null, 2)}</pre>
+      <div className="decision-actions"><button className="primary" onClick={() => void action({ type: "permission-resolve", requestId: event.payload.requestId, behavior: "allow", updatedInput: event.payload.input })}>Allow once</button><button onClick={() => void action({ type: "permission-resolve", requestId: event.payload.requestId, behavior: "deny", message: "Denied by user" })}>Deny</button></div>
+    </article>
   );
 }
 
-function TranscriptPanel(props: { snapshot: StudioSnapshot }) {
+function QuestionPrompt({ event, action }: { event: AgentEvent; action(request: StudioActionRequest): Promise<void> }) {
+  const [answers, setAnswers] = useState<Record<string, string>>({});
+  if (event.kind !== "question.requested") return null;
   return (
-    <div className="tab-content">
-      <div className="tab-summary">
-        <strong>Transcript and evidence trail</strong>
-        <span>Use this when you need the full conversation. The main workspace stays summary-first on purpose.</span>
-      </div>
-      <div className="transcript-body">
-        {props.snapshot.messages.map((message, index) => (
-          <article className={`message ${message.role}`} key={`${index}-${message.role}`}>
-            <div className="message-role">{message.role === "assistant" ? "AI" : message.role === "system" ? "SYSTEM" : "YOU"}</div>
-            <pre>{message.content}</pre>
-          </article>
-        ))}
-      </div>
-    </div>
+    <article className="decision-card question-card">
+      <div className="decision-heading"><span>Claude needs your input</span><strong>Choose how to continue</strong></div>
+      {event.payload.questions.map((question) => (
+        <fieldset key={question.question}><legend>{question.question}</legend>{question.options.map((option) => <label className={answers[question.question] === option.label ? "selected" : ""} key={option.label}><input type="radio" name={question.question} onChange={() => setAnswers((current) => ({ ...current, [question.question]: option.label }))} /><span><strong>{option.label}</strong><small>{option.description}</small></span></label>)}</fieldset>
+      ))}
+      <button className="primary" disabled={Object.keys(answers).length < event.payload.questions.length} onClick={() => void action({ type: "question-resolve", requestId: event.payload.requestId, answers })}>Continue</button>
+    </article>
   );
 }
 
-function DocumentationPanel(props: { mode: "prepare" | "operate"; returnTab: string; onBack: () => void }) {
-  return (
-    <div className="tab-content">
-      <div className="tab-summary">
-        <strong>How srgical is meant to be used</strong>
-        <span>Use prepare to shape context and judgment. Use operate to execute from an approved plan. Keep the human in charge of the decision quality.</span>
-      </div>
-      <div className="docs-grid">
-        <section className="context-excerpt">
-          <div className="context-excerpt-title">Core Flow</div>
-          <pre>{[
-            "1. Prepare",
-            "- clarify the desired outcome",
-            "- gather repo truth and imported evidence",
-            "- select any rules, skills, or guidance that should shape the work",
-            "- build and slice the draft until the next step is explicit",
-            "",
-            "2. Approve",
-            "- the human deliberately confirms the plan is good enough to execute",
-            "",
-            "3. Operate",
-            "- execute one step at a time or use auto-continue carefully",
-            "- checkpoint when needed",
-            "- return to prepare when judgment or reshaping is needed"
-          ].join("\n")}</pre>
-        </section>
-        <section className="context-excerpt">
-          <div className="context-excerpt-title">Working Philosophy</div>
-          <pre>{[
-            "- humans need to understand the fundamentals well enough to apply judgment",
-            "- AI is strongest when the repo, tests, and seams are structured clearly",
-            "- context.md is the living source of truth for what is actually known",
-            "- references are guidance, not unquestioned truth",
-            "- the goal is not maximum verbosity; it is deliberate clarity"
-          ].join("\n")}</pre>
-        </section>
-        <section className="context-excerpt">
-          <div className="context-excerpt-title">References And Documents</div>
-          <pre>{[
-            "- use the References tab to activate guidance that matters for the current plan",
-            "- add extra documentation directories when company docs live outside the default roots",
-            "- selected references are included in planning prompts and mirrored into context.md"
-          ].join("\n")}</pre>
-        </section>
-        <section className="context-excerpt">
-          <div className="context-excerpt-title">When To Return To Prepare</div>
-          <pre>{[
-            "- the next step is no longer clear",
-            "- new evidence changes the approach",
-            "- implementation exposed a missing decision or risky seam",
-            "- the plan drifted away from the intended outcome"
-          ].join("\n")}</pre>
-        </section>
-      </div>
-      <div className="reference-toolbar">
-        <button onClick={props.onBack}>Back To {props.mode === "prepare" ? "Prepare" : "Operate"}</button>
-        <span className="reference-root-empty">Returning to: {props.returnTab}</span>
-      </div>
-    </div>
-  );
+function WorktreeInspector({ snapshot }: { snapshot: StudioSnapshot }) {
+  return <><InspectorTitle title="Worktree" subtitle={snapshot.workspace} /><InfoRow label="Branch" value={snapshot.branchName ?? "detached"} /><InfoRow label="Lane" value={snapshot.laneId} /><InfoRow label="Session" value={snapshot.agentSession.status} /><InfoRow label="Provider session" value={snapshot.agentSession.providerSessionId?.slice(0, 12) ?? "not started"} /><div className="inspector-note"><strong>Isolation boundary</strong><p>This lane owns its worktree, branch, plan, durable agent session, and effective skill hashes.</p></div></>;
 }
 
-function buildThemeVars(theme: StudioTheme) {
-  return {
-    ["--app-bg" as const]: theme.chrome.appBackground,
-    ["--app-vignette" as const]: theme.chrome.vignette,
-    ["--grid-color" as const]: theme.chrome.grid,
-    ["--panel-surface" as const]: theme.chrome.panelSurface,
-    ["--panel-surface-alt" as const]: theme.chrome.panelSurfaceAlt,
-    ["--panel-border" as const]: theme.chrome.panelBorder,
-    ["--panel-glow" as const]: theme.chrome.panelGlow,
-    ["--command-surface" as const]: theme.chrome.commandSurface,
-    ["--footer-surface" as const]: theme.chrome.footerSurface,
-    ["--text-primary" as const]: theme.chrome.textPrimary,
-    ["--text-muted" as const]: theme.chrome.textMuted,
-    ["--text-strong" as const]: theme.chrome.textStrong,
-    ["--accent" as const]: theme.chrome.accent,
-    ["--accent-soft" as const]: theme.chrome.accentSoft,
-    ["--success" as const]: theme.chrome.success,
-    ["--warning" as const]: theme.chrome.warning,
-    ["--danger" as const]: theme.chrome.danger,
-    ["--info" as const]: theme.chrome.info,
-    ["--display-font" as const]: theme.typography.display,
-    ["--body-font" as const]: theme.typography.body,
-    ["--mono-font" as const]: theme.typography.mono,
-    ["--heading-transform" as const]: theme.typography.headingTransform,
-    ["--heading-spacing" as const]: theme.typography.headingLetterSpacing
-  } as CSSProperties;
+function SkillsInspector({ snapshot, action }: { snapshot: StudioSnapshot; action(request: StudioActionRequest): Promise<void> }) {
+  const [directory, setDirectory] = useState("");
+  return <><InspectorTitle title="Skills" subtitle={`${snapshot.skills.skills.filter((skill) => skill.effective).length} effective · ${snapshot.skills.conflicts.length} conflicts`} /><div className="global-skill-path"><span>Global directory (created automatically)</span><code>{snapshot.skills.globalSkillsDirectory}</code></div><div className="skill-directory-add"><input value={directory} onChange={(event) => setDirectory(event.target.value)} placeholder="Additional skills directory" /><button disabled={!directory.trim()} onClick={() => { void action({ type: "skill-directory-add", directoryPath: directory.trim() }); setDirectory(""); }}>Add</button></div>{snapshot.skills.configuredDirectories.map((item) => <div className="configured-directory" key={item}><code>{item}</code><button onClick={() => void action({ type: "skill-directory-remove", directoryPath: item })}>Remove</button></div>)}{snapshot.skills.skills.length ? snapshot.skills.skills.map((skill) => <SkillRow skill={skill} action={action} key={`${skill.id}-${skill.source}`} />) : <EmptyState title="No skills found" body="Add a SKILL.md under the global directory or a project/provider skills directory." />}</>;
 }
 
-function ControlBlock(props: { title: string; children: ReactNode }) {
-  return (
-    <section className="control-block">
-      <h2>{props.title}</h2>
-      <div className="control-content">{props.children}</div>
-    </section>
-  );
+function SkillRow({ skill, action }: { skill: SkillRecord; action(request: StudioActionRequest): Promise<void> }) {
+  return <article className={`skill-row ${skill.effective ? "effective" : ""}`}><div><strong>{skill.name}</strong><span>{skill.scope}</span></div><p>{skill.description}</p><small title={skill.source}>{skill.effective ? "Active for this session" : skill.shadowedBy ? "Shadowed by a higher-precedence skill" : "Inactive"}</small><div className="skill-controls"><button onClick={() => void action({ type: "skill-toggle", skillSource: skill.source, selected: !skill.enabled })}>{skill.enabled ? "Disable" : "Enable"}</button><select value={skill.trust} onChange={(event) => void action({ type: "skill-trust", skillSource: skill.source, trust: event.target.value as SkillRecord["trust"] })}><option value="trusted">Trusted</option><option value="review">Review</option><option value="blocked">Blocked</option></select></div></article>;
 }
 
-function Detail(props: { label: string; value: string; chip?: boolean }) {
-  return (
-    <div className="detail-row">
-      <span>{props.label}</span>
-      {props.chip ? <strong className="chip">{props.value}</strong> : <strong>{props.value}</strong>}
-    </div>
-  );
+function PlanInspector({ snapshot, action }: { snapshot: StudioSnapshot; action(request: StudioActionRequest): Promise<void> }) {
+  const actions: Array<{ label: string; request: StudioActionRequest }> = snapshot.mode === "prepare"
+    ? [{ label: "Gather context", request: { type: "gather" } }, { label: "Build draft", request: { type: "build" } }, { label: "Slice plan", request: { type: "slice" } }, { label: "Approve", request: { type: "approve" } }]
+    : [{ label: "Run next", request: { type: "run" } }, { label: "Auto continue", request: { type: "auto" } }, { label: "Checkpoint", request: { type: "checkpoint" } }, { label: "Review", request: { type: "review" } }];
+  return <><InspectorTitle title="Plan" subtitle={snapshot.state.mode} /><div className="readiness"><span>Readiness</span><strong>{snapshot.state.readiness.score}/{snapshot.state.readiness.total}</strong><div><i style={{ width: `${snapshot.state.readiness.score / Math.max(1, snapshot.state.readiness.total) * 100}%` }} /></div></div><div className="next-action"><span>Recommended next move</span><p>{snapshot.state.nextAction}</p></div><div className="plan-actions">{actions.map(({ label, request }) => <button disabled={snapshot.busy || !snapshot.actions[request.type].enabled} title={snapshot.actions[request.type].blockedReason ?? undefined} onClick={() => void action(request)} key={label}>{label}</button>)}</div></>;
 }
 
-function ListRow(props: { value: string }) {
-  return <div className="list-row">- {props.value}</div>;
+function unresolvedEvents(events: AgentEvent[], requested: "permission.requested" | "question.requested", resolved: "permission.resolved" | "question.resolved"): AgentEvent[] {
+  const resolvedIds = new Set(events.filter((event) => event.kind === resolved).map((event) => (event.payload as { requestId: string }).requestId));
+  return events.filter((event) => event.kind === requested && !resolvedIds.has((event.payload as { requestId: string }).requestId));
 }
 
-function ContextExcerpt(props: { title: string; value: string | null; empty: string }) {
-  return (
-    <section className="context-excerpt">
-      <div className="context-excerpt-title">{props.title}</div>
-      <pre>{props.value?.trim() ? props.value : props.empty}</pre>
-    </section>
-  );
+function latestActivity(events: AgentEvent[]): AgentEvent[] {
+  const useful = events.filter((event) => event.kind.startsWith("tool.") || event.kind.startsWith("task.") || event.kind === "session.failed");
+  const seen = new Set<string>();
+  return useful.reverse().filter((event) => {
+    const payload = event.payload as { toolUseId?: string; taskId?: string };
+    const id = payload.toolUseId ?? payload.taskId ?? event.eventId;
+    if (seen.has(id)) return false;
+    seen.add(id);
+    return true;
+  }).slice(0, 8).reverse();
 }
 
-async function fetchRepoSnapshot(token: string): Promise<RepoSnapshot> {
-  return getJson(`/api/repo?token=${encodeURIComponent(token)}`);
+function groupSessions(sessions: AgentSessionRecord[]): Array<[string, AgentSessionRecord[]]> {
+  const groups = new Map<string, AgentSessionRecord[]>();
+  for (const session of sessions) {
+    const label = session.pinnedAt ? "Pinned" : dateGroup(session.updatedAt);
+    groups.set(label, [...(groups.get(label) ?? []), session]);
+  }
+  const order = ["Pinned", "Today", "Yesterday", "Last 7 days", "Older"];
+  return order.flatMap((label) => groups.has(label) ? [[label, groups.get(label)!] as [string, AgentSessionRecord[]]] : []);
 }
 
-async function fetchStudioSnapshot(token: string): Promise<StudioSnapshot> {
-  return getJson(`/api/studio/session?token=${encodeURIComponent(token)}`);
+function dateGroup(timestamp: string): string {
+  const elapsed = Date.now() - new Date(timestamp).getTime();
+  const days = Math.floor(elapsed / 86_400_000);
+  if (days <= 0) return "Today";
+  if (days === 1) return "Yesterday";
+  if (days < 7) return "Last 7 days";
+  return "Older";
 }
+
+function formatRelativeTime(timestamp: string): string {
+  const elapsed = Math.max(0, Date.now() - new Date(timestamp).getTime());
+  const minutes = Math.floor(elapsed / 60_000);
+  if (minutes < 1) return "now";
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h`;
+  return `${Math.floor(hours / 24)}d`;
+}
+
+function structuredConversation(snapshot: StudioSnapshot): StudioSnapshot["messages"] {
+  const roles = new Map(snapshot.recentAgentEvents.filter((event) => event.kind === "message.started").map((event) => [event.payload.messageId, event.payload.role]));
+  const completed = snapshot.recentAgentEvents.filter((event) => event.kind === "message.completed").map((event) => ({
+    role: roles.get(event.payload.messageId) ?? "assistant",
+    content: event.payload.text
+  }));
+  return completed.length > 0 ? completed : snapshot.messages;
+}
+
+function Brand({ compact = false }: { compact?: boolean }) { return <div className={`brand ${compact ? "compact" : ""}`}><span>S</span><strong>srgical</strong></div>; }
+function Loading({ label }: { label: string }) { return <div className="loading"><Brand /><span>{label}…</span></div>; }
+function Stat({ value, label }: { value: string; label: string }) { return <div><strong>{value}</strong><span>{label}</span></div>; }
+function Metric({ value, label }: { value: string; label: string }) { return <div><span>{label}</span><strong>{value}</strong></div>; }
+function InfoRow({ label, value }: { label: string; value: string }) { return <div className="info-row"><span>{label}</span><strong title={value}>{value}</strong></div>; }
+function InspectorTitle({ title, subtitle }: { title: string; subtitle: string }) { return <div className="inspector-title"><h2>{title}</h2><p>{subtitle}</p></div>; }
+function EmptyState({ title, body }: { title: string; body: string }) { return <div className="empty-state"><strong>{title}</strong><p>{body}</p></div>; }
 
 async function getJson<T>(url: string): Promise<T> {
   const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error(await response.text());
-  }
-  return (await response.json()) as T;
+  if (!response.ok) throw new Error(await responseError(response));
+  return response.json() as Promise<T>;
 }
 
-async function postJson<T = { ok: boolean }, TBody = unknown>(url: string, token: string, body: TBody): Promise<T> {
-  const response = await fetch(`${url}?token=${encodeURIComponent(token)}`, {
-    method: "POST",
-    headers: { "content-type": "application/json", "x-srgical-token": token },
-    body: JSON.stringify(body)
-  });
-  if (!response.ok) {
-    throw new Error(await response.text());
-  }
-  return (await response.json()) as T;
+async function postJson<TResponse = { ok: boolean }, TBody = unknown>(url: string, token: string, body: TBody): Promise<TResponse> {
+  const response = await fetch(url, { method: "POST", headers: { "content-type": "application/json", "x-srgical-token": token }, body: JSON.stringify(body) });
+  if (!response.ok) throw new Error(await responseError(response));
+  return response.json() as Promise<TResponse>;
 }
 
-function extractErrorMessage(reason: unknown): string {
-  const fallback = reason instanceof Error ? reason.message : String(reason);
-
-  try {
-    const parsed = JSON.parse(fallback) as { error?: unknown };
-    return typeof parsed.error === "string" ? parsed.error : fallback;
-  } catch {
-    return fallback;
-  }
+async function responseError(response: Response): Promise<string> {
+  try { return ((await response.json()) as { error?: string }).error ?? `Request failed (${response.status})`; } catch { return `Request failed (${response.status})`; }
 }
+function errorText(reason: unknown): string { return reason instanceof Error ? reason.message : String(reason); }

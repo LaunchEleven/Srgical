@@ -1,4 +1,14 @@
+import { randomUUID } from "node:crypto";
 import path from "node:path";
+import {
+  AgentSessionStore,
+  AnthropicAgentProvider,
+  deriveRepositoryId,
+  runLegacyTextTurn,
+  type AgentProvider,
+  type AgentProviderStatus,
+  type AgentSessionHandle
+} from "@srgical/agent-runtime";
 import {
   DEFAULT_SLICE_PLAN_OPTIONS,
   parsePlanDiceIntent,
@@ -8,7 +18,6 @@ import {
 } from "../../../apps/cli/src/core/plan-dicing";
 import {
   dicePlanningPack,
-  getPrimaryAgentAdapter,
   requestPlannerReply,
   resolvePrimaryAgent,
   runNextPrompt,
@@ -27,7 +36,12 @@ import { ensurePreparePack, recordVisibleChange, snapshotRevisionIfNeeded } from
 import type { ChatMessage } from "../../../apps/cli/src/core/prompts";
 import { recordPlanningPackWrite, setHumanWriteConfirmation } from "../../../apps/cli/src/core/planning-state";
 import { loadStudioOperateConfig, saveStudioOperateConfig } from "../../../apps/cli/src/core/studio-operate-config";
-import { loadStudioSession, saveStudioSession } from "../../../apps/cli/src/core/studio-session";
+import {
+  loadStoredAgentSessionId,
+  loadStudioSession,
+  saveStoredAgentSessionId,
+  saveStudioSession
+} from "../../../apps/cli/src/core/studio-session";
 import { loadStudioSettings, saveStudioSettings } from "../../../apps/cli/src/core/studio-settings";
 import {
   loadStudioUiConfig,
@@ -47,7 +61,13 @@ import {
   saveSelectedReferenceIds,
   toggleReferenceSelection
 } from "../../../apps/cli/src/core/reference-library";
-import { getStudioTheme, type StudioMode } from "@srgical/studio-shared";
+import { getStudioTheme, type AgentEventDraft, type AgentSessionRecord, type StudioMode } from "@srgical/studio-shared";
+import {
+  addSkillDirectory,
+  discoverSkills,
+  removeSkillDirectory,
+  setSkillOverride
+} from "@srgical/skill-registry";
 import {
   delayStudioStream,
   getScrollableWheelStep,
@@ -90,10 +110,20 @@ type StudioControllerOptions = {
   mode?: StudioMode;
   repoRoot?: string;
   laneId?: string;
+  agentSessionStore?: AgentSessionStore;
+  resolveAgent?: typeof resolvePrimaryAgent;
+  requestPlanner?: typeof requestPlannerReply;
+  refreshAdvice?: typeof refreshPlanningAdvice;
+  agentProvider?: AgentProvider;
+  agentSessionId?: string;
+  agentProviderId?: string;
 };
 
 export async function createStudioController(options: StudioControllerOptions = {}): Promise<StudioController> {
   let mode: StudioMode = options.mode === "operate" ? "operate" : "prepare";
+  const resolveAgent = options.resolveAgent ?? resolvePrimaryAgent;
+  const requestPlanner = options.requestPlanner ?? requestPlannerReply;
+  const refreshAdvice = options.refreshAdvice ?? refreshPlanningAdvice;
   const workspace = resolveWorkspace(options.workspace);
   const planId = await resolvePlanId(workspace, options.planId).catch(async () => {
     if (mode === "prepare" && options.planId) {
@@ -109,7 +139,51 @@ export async function createStudioController(options: StudioControllerOptions = 
 
   let messages = await loadStudioSession(workspace, { planId });
   let state = await readPlanningPackState(workspace, { planId });
-  let agent = await resolvePrimaryAgent(workspace, { planId });
+  let agent = await resolveAgent(workspace, { planId });
+  const nativeProvider = options.agentProvider ?? new AnthropicAgentProvider();
+  const nativeProviderStatus = await nativeProvider.detect();
+  const nativeProviderEnabled = options.agentProviderId
+    ? options.agentProviderId === nativeProvider.id && nativeProviderStatus.available && nativeProviderStatus.authenticated === true
+    : nativeProviderStatus.available && nativeProviderStatus.authenticated === true;
+  if (options.agentProviderId === nativeProvider.id && !nativeProviderEnabled) {
+    throw new Error(nativeProviderStatus.detail ?? "The native Claude provider is not authenticated.");
+  }
+  const activeProviderStatus: AgentProviderStatus = nativeProviderEnabled
+    ? nativeProviderStatus
+    : {
+        providerId: `legacy-cli:${agent.status.id}`,
+        label: agent.status.label,
+        available: agent.status.available,
+        authenticated: agent.status.available ? null : false,
+        capabilities: ["streaming", "sessions", "interrupt"],
+        detail: nativeProviderStatus.detail
+          ? `Native Claude unavailable: ${nativeProviderStatus.detail}`
+          : "Using the configured CLI adapter."
+      };
+  if (options.agentProviderId && activeProviderStatus.providerId !== options.agentProviderId) {
+    throw new Error(`Session provider \`${options.agentProviderId}\` is unavailable; detected \`${activeProviderStatus.providerId}\`.`);
+  }
+  const repoId = deriveRepositoryId(options.repoRoot ?? workspace);
+  const agentSessionStore = options.agentSessionStore ?? new AgentSessionStore();
+  let skills = await discoverSkills(workspace, { repoId });
+  let agentSession = await resolveStructuredAgentSession({
+    store: agentSessionStore,
+    repoId,
+    workspace,
+    laneId: options.laneId ?? "current",
+    planId,
+    providerId: activeProviderStatus.providerId,
+    providerLabel: activeProviderStatus.label,
+    capabilities: activeProviderStatus.capabilities,
+    effectiveSkillHashes: skills.effectiveSkillHashes,
+    requestedSessionId: options.agentSessionId
+  });
+  agentSession = await agentSessionStore.update(repoId, agentSession.sessionId, {
+    effectiveSkillHashes: skills.effectiveSkillHashes
+  });
+  let agentSessions = await listLaneSessions(agentSessionStore, repoId, workspace, options.laneId ?? "current", activeProviderStatus.providerId);
+  let recentAgentEvents = (await agentSessionStore.readEvents(repoId, agentSession.sessionId)).slice(-250);
+  let unsubscribeAgentEvents: () => void = () => undefined;
   let uiConfig = await loadStudioUiConfig(workspace, { planId });
   let settings = await loadStudioSettings();
   let branchName = await getWorkspaceBranchName(workspace).catch(() => null);
@@ -119,6 +193,8 @@ export async function createStudioController(options: StudioControllerOptions = 
   let busyStatus = "ready";
   let gatheredFingerprint = "";
   let started = false;
+  let activeAgentHandle: AgentSessionHandle | null = null;
+  let forkNextTurn = Boolean(agentSession.parentSessionId && agentSession.providerSessionId && agentSession.lastEventSequence === 0);
   const listeners = new Set<StudioListener>();
 
   const buildSnapshot = (): StudioSnapshot => ({
@@ -133,13 +209,18 @@ export async function createStudioController(options: StudioControllerOptions = 
     state,
     busy,
     busyStatus,
-    agentLabel: agent.status.label,
+    agentLabel: activeProviderStatus.label,
+    agentProvider: activeProviderStatus,
+    agentSession,
+    agentSessions,
+    recentAgentEvents,
     uiConfig,
     settings,
     theme: getStudioTheme(settings.themeId),
     actions: buildActionStates(mode, state),
     prepareClarity,
     references,
+    skills,
     footerText:
       busy
         ? `Working: ${busyStatus}`
@@ -161,11 +242,55 @@ export async function createStudioController(options: StudioControllerOptions = 
     });
   };
 
+  const bindAgentEvents = () => {
+    unsubscribeAgentEvents();
+    unsubscribeAgentEvents = agentSessionStore.subscribe(agentSession.sessionId, (event) => {
+      recentAgentEvents = [...recentAgentEvents, event].slice(-250);
+      emit({ type: "agent", event });
+    });
+  };
+  bindAgentEvents();
+
+  const activateAgentSession = async (next: AgentSessionRecord) => {
+    if (activeAgentHandle) {
+      throw new Error("Stop the active response before switching conversations.");
+    }
+    agentSession = next;
+    recentAgentEvents = (await agentSessionStore.readEvents(repoId, next.sessionId)).slice(-250);
+    await saveStoredAgentSessionId(workspace, next.sessionId, { planId });
+    bindAgentEvents();
+    agentSessions = await listLaneSessions(agentSessionStore, repoId, workspace, options.laneId ?? "current", activeProviderStatus.providerId);
+    publishSnapshot();
+  };
+
   const refresh = async () => {
     state = await readPlanningPackState(workspace, { planId });
-    agent = await resolvePrimaryAgent(workspace, { planId });
+    agent = await resolveAgent(workspace, { planId });
+    const nextAgentSession = await resolveStructuredAgentSession({
+      store: agentSessionStore,
+      repoId,
+      workspace,
+      laneId: options.laneId ?? "current",
+      planId,
+      providerId: activeProviderStatus.providerId,
+      providerLabel: activeProviderStatus.label,
+      capabilities: activeProviderStatus.capabilities,
+      effectiveSkillHashes: skills.effectiveSkillHashes
+    });
+    if (nextAgentSession.sessionId !== agentSession.sessionId) {
+      agentSession = nextAgentSession;
+      recentAgentEvents = (await agentSessionStore.readEvents(repoId, agentSession.sessionId)).slice(-250);
+      bindAgentEvents();
+    } else {
+      agentSession = nextAgentSession;
+    }
     uiConfig = await loadStudioUiConfig(workspace, { planId });
     settings = await loadStudioSettings();
+    skills = await discoverSkills(workspace, { repoId });
+    agentSession = await agentSessionStore.update(repoId, agentSession.sessionId, {
+      effectiveSkillHashes: skills.effectiveSkillHashes
+    });
+    agentSessions = await listLaneSessions(agentSessionStore, repoId, workspace, options.laneId ?? "current", activeProviderStatus.providerId);
     branchName = await getWorkspaceBranchName(workspace).catch(() => branchName);
     prepareClarity = await loadPrepareClarityView(workspace, planId, state, messages);
     references = await loadReferenceView(workspace, planId, state, messages);
@@ -335,7 +460,7 @@ export async function createStudioController(options: StudioControllerOptions = 
       });
       await refresh();
       await liveResult.finalize(
-        `${options.completionLabel} completed.\nVisible change: ${result.headline}\nEvidence: ${result.evidence.join(", ") || "none"}\nUnknowns: ${result.unknowns.join(" | ") || "none"}\nNext action: ${result.nextAction}\n${getPrimaryAgentAdapter().label} summary:\n${result.summary}`
+        `${options.completionLabel} completed.\nVisible change: ${result.headline}\nEvidence: ${result.evidence.join(", ") || "none"}\nUnknowns: ${result.unknowns.join(" | ") || "none"}\nNext action: ${result.nextAction}\n${agent.status.label} summary:\n${result.summary}`
       );
       return result;
     } catch (error) {
@@ -459,7 +584,7 @@ export async function createStudioController(options: StudioControllerOptions = 
       });
       await refresh();
       await activeLiveResult.finalize(
-        `Build Draft completed.\nRevision snapshot: ${snapshot ?? "none"}\nVisible change: ${headline}\n${getPrimaryAgentAdapter().label} summary:\n${result}`
+        `Build Draft completed.\nRevision snapshot: ${snapshot ?? "none"}\nVisible change: ${headline}\n${agent.status.label} summary:\n${result}`
       );
     } catch (error) {
       await liveResult?.discard();
@@ -499,7 +624,7 @@ export async function createStudioController(options: StudioControllerOptions = 
       });
       await refresh();
       await activeLiveResult.finalize(
-        `${label} completed.\nSettings: ${renderPlanDiceLabel(options)}\nRevision snapshot: ${snapshot ?? "none"}\nVisible change: ${headline}\n${getPrimaryAgentAdapter().label} summary:\n${result}`
+        `${label} completed.\nSettings: ${renderPlanDiceLabel(options)}\nRevision snapshot: ${snapshot ?? "none"}\nVisible change: ${headline}\n${agent.status.label} summary:\n${result}`
       );
     } catch (error) {
       await liveResult?.discard();
@@ -544,6 +669,39 @@ export async function createStudioController(options: StudioControllerOptions = 
     );
   };
 
+  const runNativeProviderTurn = async (
+    prompt: string,
+    liveMessage: LiveStudioMessage,
+    permissionMode: AgentSessionRecord["permissionMode"]
+  ): Promise<string> => {
+    agentSession = await agentSessionStore.update(repoId, agentSession.sessionId, { permissionMode });
+    let completedText = "";
+    const turnController = new AbortController();
+    const handle = await nativeProvider.start({
+      session: agentSession,
+      prompt,
+      resumeProviderSessionId: agentSession.providerSessionId,
+      fork: forkNextTurn,
+      emit: async (event) => {
+        await agentSessionStore.append(repoId, agentSession.sessionId, event);
+        if (event.kind === "message.delta") liveMessage.append(event.payload.text);
+        if (event.kind === "message.completed" && event.payload.text) completedText = event.payload.text;
+        if (event.kind === "session.completed" && event.payload.result) completedText = event.payload.result;
+      },
+      signal: turnController.signal
+    });
+    activeAgentHandle = handle;
+    forkNextTurn = false;
+    try {
+      await handle.completion;
+      agentSession = await agentSessionStore.recover(repoId, agentSession.sessionId);
+      agentSessions = await listLaneSessions(agentSessionStore, repoId, workspace, options.laneId ?? "current", activeProviderStatus.providerId);
+      return completedText.trim();
+    } finally {
+      if (activeAgentHandle === handle) activeAgentHandle = null;
+    }
+  };
+
   const runStep = async () => {
     if (busy) {
       return;
@@ -562,12 +720,14 @@ export async function createStudioController(options: StudioControllerOptions = 
       const before = await readPackSnapshot(workspace, { planId });
       const prompt = await buildExecutionIterationPrompt(workspace, state, { planId });
       const activeLiveResult = (liveResult = startLiveMessage("system", "Run next step is executing...\n\n"));
-      const result = await runNextPrompt(workspace, prompt.prompt, {
-        planId,
-        onOutputChunk: (chunk) => {
-          activeLiveResult.append(chunk);
-        }
-      });
+      const result = nativeProviderEnabled
+        ? await runNativeProviderTurn(prompt.prompt, activeLiveResult, "acceptEdits")
+        : await runNextPrompt(workspace, prompt.prompt, {
+            planId,
+            onOutputChunk: (chunk) => {
+              activeLiveResult.append(chunk);
+            }
+          });
       await saveExecutionState(workspace, "success", "studio", result, { planId });
       await appendExecutionLog(workspace, "success", "studio", result, {
         planId,
@@ -588,7 +748,7 @@ export async function createStudioController(options: StudioControllerOptions = 
       });
       await refresh();
       await activeLiveResult.finalize(
-        `Run next step completed.\nPrompt source: ${prompt.handoffDoc.displayPath}\nVisible change: ${headline}\n${getPrimaryAgentAdapter().label} summary:\n${result}`
+        `Run next step completed.\nPrompt source: ${prompt.handoffDoc.displayPath}\nVisible change: ${headline}\n${agent.status.label} summary:\n${result}`
       );
     } catch (error) {
       await liveResult?.discard();
@@ -888,7 +1048,19 @@ export async function createStudioController(options: StudioControllerOptions = 
     setBusyState(true, "thinking...");
     let liveReply: LiveStudioMessage | null = null;
     try {
+      if (agentSession.lifecycle === "archived") {
+        agentSession = await agentSessionStore.setArchived(repoId, agentSession.sessionId, false);
+      }
       await push({ role: "user", content: value });
+      const userMessageId = randomUUID();
+      await agentSessionStore.append(repoId, agentSession.sessionId, {
+        kind: "message.started",
+        payload: { messageId: userMessageId, role: "user" }
+      });
+      await agentSessionStore.append(repoId, agentSession.sessionId, {
+        kind: "message.completed",
+        payload: { messageId: userMessageId, text: value }
+      });
       if (isDirectContextSyncRequest(value)) {
         const result = await refreshContext([], {
           completionLabel: "Context Sync"
@@ -897,14 +1069,25 @@ export async function createStudioController(options: StudioControllerOptions = 
         return;
       }
       const activeLiveReply = (liveReply = startLiveMessage("assistant"));
-      const reply = await requestPlannerReply(workspace, [...messages], {
-        planId,
-        onOutputChunk: (chunk) => {
-          activeLiveReply.append(chunk);
-        }
-      });
-      await activeLiveReply.finalize(reply.trim());
-      await refreshPlanningAdvice(workspace, messages, { planId }).catch(() => null);
+      if (nativeProviderEnabled) {
+        const completedText = await runNativeProviderTurn(value, activeLiveReply, "plan");
+        await activeLiveReply.finalize(completedText);
+      } else {
+        const reply = await runLegacyTextTurn({
+          emit: async (event: AgentEventDraft) => {
+            await agentSessionStore.append(repoId, agentSession.sessionId, event);
+          },
+          invoke: async ({ onOutputChunk }) => requestPlanner(workspace, [...messages], {
+            planId,
+            onOutputChunk: (chunk) => {
+              activeLiveReply.append(chunk);
+              onOutputChunk(chunk);
+            }
+          })
+        });
+        await activeLiveReply.finalize(reply.trim());
+      }
+      await refreshAdvice(workspace, messages, { planId }).catch(() => null);
       await refresh();
     } catch (error) {
       await liveReply?.discard();
@@ -1013,6 +1196,132 @@ export async function createStudioController(options: StudioControllerOptions = 
           await removeReferenceRoot(workspace, request.rootPath, { planId });
           await refresh();
           break;
+        case "permission-resolve":
+          if (!request.requestId || !request.behavior || !activeAgentHandle?.resolvePermission) {
+            throw new Error("There is no active permission request to resolve.");
+          }
+          await activeAgentHandle.resolvePermission(request.requestId, {
+            behavior: request.behavior,
+            message: request.message,
+            updatedInput: request.updatedInput
+          });
+          break;
+        case "question-resolve":
+          if (!request.requestId || !request.answers || !activeAgentHandle?.resolveQuestion) {
+            throw new Error("There is no active question to answer.");
+          }
+          await activeAgentHandle.resolveQuestion(request.requestId, { answers: request.answers });
+          break;
+        case "interrupt-agent":
+          if (activeAgentHandle) {
+            await activeAgentHandle.interrupt();
+          }
+          break;
+        case "rewind":
+          if (!request.checkpointId || !activeAgentHandle?.rewind) {
+            throw new Error("This provider does not have an active rewindable session.");
+          }
+          await activeAgentHandle.rewind(request.checkpointId, request.dryRun);
+          break;
+        case "skill-toggle":
+          if (!request.skillSource || typeof request.selected !== "boolean") {
+            throw new Error("A skill source and enabled state are required.");
+          }
+          await setSkillOverride(repoId, request.skillSource, { enabled: request.selected });
+          await refresh();
+          break;
+        case "skill-trust":
+          if (!request.skillSource || !request.trust) {
+            throw new Error("A skill source and trust level are required.");
+          }
+          await setSkillOverride(repoId, request.skillSource, { trust: request.trust });
+          await refresh();
+          break;
+        case "skill-directory-add":
+          if (!request.directoryPath?.trim()) throw new Error("A skills directory is required.");
+          await addSkillDirectory(repoId, path.resolve(workspace, request.directoryPath));
+          await refresh();
+          break;
+        case "skill-directory-remove":
+          if (!request.directoryPath?.trim()) throw new Error("A skills directory is required.");
+          await removeSkillDirectory(repoId, request.directoryPath);
+          await refresh();
+          break;
+        case "session-create": {
+          const created = await agentSessionStore.create({
+            providerId: activeProviderStatus.providerId,
+            repoId,
+            laneId: options.laneId ?? "current",
+            workspace,
+            planId,
+            title: request.title?.trim() || "New conversation",
+            model: agentSession.model,
+            permissionMode: agentSession.permissionMode,
+            capabilities: activeProviderStatus.capabilities,
+            effectiveSkillHashes: skills.effectiveSkillHashes,
+            branchName
+          });
+          await activateAgentSession(created);
+          break;
+        }
+        case "session-switch": {
+          if (!request.sessionId) throw new Error("A session id is required.");
+          const selected = await agentSessionStore.load(repoId, request.sessionId);
+          if (!selected || selected.lifecycle === "deleted" || selected.laneId !== (options.laneId ?? "current") || path.resolve(selected.workspace) !== path.resolve(workspace)) {
+            throw new Error("That conversation does not belong to this worktree lane.");
+          }
+          await activateAgentSession(selected);
+          break;
+        }
+        case "session-fork": {
+          const forked = await agentSessionStore.create({
+            providerId: activeProviderStatus.providerId,
+            providerSessionId: agentSession.providerSessionId,
+            repoId,
+            laneId: options.laneId ?? "current",
+            workspace,
+            planId,
+            title: request.title?.trim() || `${agentSession.title} (fork)`,
+            model: agentSession.model,
+            permissionMode: agentSession.permissionMode,
+            capabilities: activeProviderStatus.capabilities,
+            effectiveSkillHashes: skills.effectiveSkillHashes,
+            parentSessionId: agentSession.sessionId,
+            branchName
+          });
+          forkNextTurn = true;
+          await activateAgentSession(forked);
+          break;
+        }
+        case "session-rename":
+          if (!request.title?.trim()) throw new Error("A conversation title is required.");
+          agentSession = await agentSessionStore.update(repoId, agentSession.sessionId, { title: request.title.trim() });
+          agentSessions = await listLaneSessions(agentSessionStore, repoId, workspace, options.laneId ?? "current", activeProviderStatus.providerId);
+          publishSnapshot();
+          break;
+        case "session-pin":
+          agentSession = await agentSessionStore.setPinned(repoId, agentSession.sessionId, request.pinned === true);
+          agentSessions = await listLaneSessions(agentSessionStore, repoId, workspace, options.laneId ?? "current", activeProviderStatus.providerId);
+          publishSnapshot();
+          break;
+        case "session-archive":
+          if (activeAgentHandle) throw new Error("Stop the active response before archiving this session.");
+          agentSession = await agentSessionStore.setArchived(repoId, agentSession.sessionId, true);
+          agentSessions = await listLaneSessions(agentSessionStore, repoId, workspace, options.laneId ?? "current", activeProviderStatus.providerId);
+          publishSnapshot();
+          break;
+        case "session-delete":
+          if (activeAgentHandle) throw new Error("Stop the active response before removing this session from history.");
+          agentSession = await agentSessionStore.setDeleted(repoId, agentSession.sessionId, true);
+          agentSessions = await listLaneSessions(agentSessionStore, repoId, workspace, options.laneId ?? "current", activeProviderStatus.providerId);
+          publishSnapshot();
+          break;
+        case "retry-agent": {
+          const lastUserMessage = [...messages].reverse().find((message) => message.role === "user" && message.content.trim());
+          if (!lastUserMessage) throw new Error("There is no user message to retry.");
+          await submitInput(lastUserMessage.content);
+          break;
+        }
         case "command":
           await handleCommand(request.command ?? "");
           break;
@@ -1044,7 +1353,11 @@ export async function createStudioController(options: StudioControllerOptions = 
       }
     },
     async close() {
-      return;
+      if (activeAgentHandle) {
+        await activeAgentHandle.interrupt().catch(() => undefined);
+        activeAgentHandle = null;
+      }
+      unsubscribeAgentEvents();
     },
     getSnapshot() {
       return buildSnapshot();
@@ -1111,7 +1424,23 @@ function buildActionStates(mode: StudioMode, state: PlanningPackState): Record<S
     "reference-autoselect": { enabled: true, blockedReason: null },
     "reference-clear": { enabled: true, blockedReason: null },
     "reference-root-add": { enabled: true, blockedReason: null },
-    "reference-root-remove": { enabled: true, blockedReason: null }
+    "reference-root-remove": { enabled: true, blockedReason: null },
+    "permission-resolve": { enabled: true, blockedReason: null },
+    "question-resolve": { enabled: true, blockedReason: null },
+    "interrupt-agent": { enabled: true, blockedReason: null },
+    rewind: { enabled: true, blockedReason: null },
+    "skill-toggle": { enabled: true, blockedReason: null },
+    "skill-trust": { enabled: true, blockedReason: null },
+    "skill-directory-add": { enabled: true, blockedReason: null },
+    "skill-directory-remove": { enabled: true, blockedReason: null },
+    "session-create": { enabled: true, blockedReason: null },
+    "session-switch": { enabled: true, blockedReason: null },
+    "session-fork": { enabled: true, blockedReason: null },
+    "session-rename": { enabled: true, blockedReason: null },
+    "session-pin": { enabled: true, blockedReason: null },
+    "session-archive": { enabled: true, blockedReason: null },
+    "session-delete": { enabled: true, blockedReason: null },
+    "retry-agent": { enabled: true, blockedReason: null }
   };
 }
 
@@ -1285,4 +1614,74 @@ async function loadReferenceView(
     recommendedIds: recommendations.map((entry) => entry.id),
     roots
   };
+}
+
+async function resolveStructuredAgentSession(options: {
+  store: AgentSessionStore;
+  repoId: string;
+  workspace: string;
+  laneId: string;
+  planId: string;
+  providerId: string;
+  providerLabel: string;
+  capabilities: AgentProviderStatus["capabilities"];
+  effectiveSkillHashes: string[];
+  requestedSessionId?: string;
+}): Promise<AgentSessionRecord> {
+  if (options.requestedSessionId) {
+    const requested = await options.store.load(options.repoId, options.requestedSessionId).catch(() => null);
+    if (
+      requested
+      && requested.lifecycle !== "deleted"
+      && requested.providerId === options.providerId
+      && requested.laneId === options.laneId
+      && path.resolve(requested.workspace) === path.resolve(options.workspace)
+    ) {
+      await saveStoredAgentSessionId(options.workspace, requested.sessionId, { planId: options.planId });
+      return options.store.recover(options.repoId, requested.sessionId);
+    }
+  }
+  const storedSessionId = await loadStoredAgentSessionId(options.workspace, { planId: options.planId });
+  if (storedSessionId) {
+    const stored = await options.store.load(options.repoId, storedSessionId).catch(() => null);
+    if (
+      stored &&
+      stored.lifecycle !== "deleted" &&
+      stored.providerId === options.providerId &&
+      stored.laneId === options.laneId &&
+      path.resolve(stored.workspace) === path.resolve(options.workspace)
+    ) {
+      return options.store.recover(options.repoId, stored.sessionId);
+    }
+  }
+
+  const created = await options.store.create({
+    providerId: options.providerId,
+    repoId: options.repoId,
+    laneId: options.laneId,
+    workspace: options.workspace,
+    planId: options.planId,
+    title: `${options.planId} · ${options.providerLabel}`,
+    model: null,
+    permissionMode: "plan",
+    capabilities: options.capabilities,
+    effectiveSkillHashes: options.effectiveSkillHashes
+  });
+  await saveStoredAgentSessionId(options.workspace, created.sessionId, { planId: options.planId });
+  return created;
+}
+
+async function listLaneSessions(
+  store: AgentSessionStore,
+  repoId: string,
+  workspace: string,
+  laneId: string,
+  providerId: string
+): Promise<AgentSessionRecord[]> {
+  return (await store.list(repoId)).filter((session) =>
+    session.lifecycle !== "deleted"
+    && session.laneId === laneId
+    && session.providerId === providerId
+    && path.resolve(session.workspace) === path.resolve(workspace)
+  );
 }
