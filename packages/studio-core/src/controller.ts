@@ -3,6 +3,7 @@ import path from "node:path";
 import {
   AgentSessionStore,
   AnthropicAgentProvider,
+  CodexAgentProvider,
   deriveRepositoryId,
   runLegacyTextTurn,
   type AgentProvider,
@@ -63,6 +64,15 @@ import {
 } from "../../../apps/cli/src/core/reference-library";
 import { getStudioTheme, type AgentEventDraft, type AgentSessionRecord, type StudioMode } from "@srgical/studio-shared";
 import {
+  importMcpJson,
+  installConnectorPreset,
+  loadConnectorRegistry,
+  removeConnector,
+  resolveConnectorRegistry,
+  setConnectorEnabled,
+  upsertConnector
+} from "@srgical/connector-registry";
+import {
   addSkillDirectory,
   discoverSkills,
   removeSkillDirectory,
@@ -117,6 +127,7 @@ type StudioControllerOptions = {
   agentProvider?: AgentProvider;
   agentSessionId?: string;
   agentProviderId?: string;
+  autoGatherOnStart?: boolean;
 };
 
 export async function createStudioController(options: StudioControllerOptions = {}): Promise<StudioController> {
@@ -140,11 +151,23 @@ export async function createStudioController(options: StudioControllerOptions = 
   let messages = await loadStudioSession(workspace, { planId });
   let state = await readPlanningPackState(workspace, { planId });
   let agent = await resolveAgent(workspace, { planId });
-  const nativeProvider = options.agentProvider ?? new AnthropicAgentProvider();
+  const nativeProvider = options.agentProvider ?? (
+    options.agentProviderId === "anthropic-agent-sdk"
+      ? new AnthropicAgentProvider()
+      : options.agentProviderId === "codex-sdk" || agent.status.id === "codex"
+        ? new CodexAgentProvider()
+        : new AnthropicAgentProvider()
+  );
   const nativeProviderStatus = await nativeProvider.detect();
-  const nativeProviderEnabled = options.agentProviderId
-    ? options.agentProviderId === nativeProvider.id && nativeProviderStatus.available && nativeProviderStatus.authenticated === true
-    : nativeProviderStatus.available && nativeProviderStatus.authenticated === true;
+  const nativeProviderSelected = options.agentProvider
+    ? true
+    : options.agentProviderId
+      ? options.agentProviderId === nativeProvider.id
+      : (agent.status.id === "codex" && nativeProvider.id === "codex-sdk")
+        || (agent.status.id === "claude" && nativeProvider.id === "anthropic-agent-sdk");
+  const nativeProviderEnabled = nativeProviderSelected
+    && nativeProviderStatus.available
+    && nativeProviderStatus.authenticated === true;
   if (options.agentProviderId === nativeProvider.id && !nativeProviderEnabled) {
     throw new Error(nativeProviderStatus.detail ?? "The native Claude provider is not authenticated.");
   }
@@ -157,7 +180,7 @@ export async function createStudioController(options: StudioControllerOptions = 
         authenticated: agent.status.available ? null : false,
         capabilities: ["streaming", "sessions", "interrupt"],
         detail: nativeProviderStatus.detail
-          ? `Native Claude unavailable: ${nativeProviderStatus.detail}`
+          ? `${nativeProviderStatus.label} native provider unavailable: ${nativeProviderStatus.detail}`
           : "Using the configured CLI adapter."
       };
   if (options.agentProviderId && activeProviderStatus.providerId !== options.agentProviderId) {
@@ -166,6 +189,7 @@ export async function createStudioController(options: StudioControllerOptions = 
   const repoId = deriveRepositoryId(options.repoRoot ?? workspace);
   const agentSessionStore = options.agentSessionStore ?? new AgentSessionStore();
   let skills = await discoverSkills(workspace, { repoId });
+  let connectors = await loadConnectorRegistry(repoId);
   let agentSession = await resolveStructuredAgentSession({
     store: agentSessionStore,
     repoId,
@@ -221,6 +245,7 @@ export async function createStudioController(options: StudioControllerOptions = 
     prepareClarity,
     references,
     skills,
+    connectors,
     footerText:
       busy
         ? `Working: ${busyStatus}`
@@ -287,6 +312,7 @@ export async function createStudioController(options: StudioControllerOptions = 
     uiConfig = await loadStudioUiConfig(workspace, { planId });
     settings = await loadStudioSettings();
     skills = await discoverSkills(workspace, { repoId });
+    connectors = await loadConnectorRegistry(repoId);
     agentSession = await agentSessionStore.update(repoId, agentSession.sessionId, {
       effectiveSkillHashes: skills.effectiveSkillHashes
     });
@@ -677,11 +703,21 @@ export async function createStudioController(options: StudioControllerOptions = 
     agentSession = await agentSessionStore.update(repoId, agentSession.sessionId, { permissionMode });
     let completedText = "";
     const turnController = new AbortController();
+    const providerPrompt = (options.laneId ?? "current") === "current"
+      ? [
+          "You are in a repository conversation attached to the primary checkout.",
+          "Inspect and discuss freely, but do not modify files in this checkout.",
+          "If the user's request requires file changes, explain that it is ready for implementation and ask them to use the Create worktree action. Preserve the plan and context for that continuation.",
+          "",
+          prompt
+        ].join("\n")
+      : prompt;
     const handle = await nativeProvider.start({
       session: agentSession,
-      prompt,
+      prompt: providerPrompt,
       resumeProviderSessionId: agentSession.providerSessionId,
       fork: forkNextTurn,
+      mcpServers: resolveConnectorRegistry(connectors).servers,
       emit: async (event) => {
         await agentSessionStore.append(repoId, agentSession.sessionId, event);
         if (event.kind === "message.delta") liveMessage.append(event.payload.text);
@@ -691,6 +727,19 @@ export async function createStudioController(options: StudioControllerOptions = 
       signal: turnController.signal
     });
     activeAgentHandle = handle;
+    if (handle.getMcpStatus) {
+      void handle.getMcpStatus().then((statuses) => {
+        const byId = new Map(statuses.map((status) => [status.connectorId, status]));
+        connectors = {
+          ...connectors,
+          connectors: connectors.connectors.map((connector) => ({
+            ...connector,
+            ...(byId.get(connector.connectorId) ?? {})
+          }))
+        };
+        publishSnapshot();
+      }).catch(() => undefined);
+    }
     forkNextTurn = false;
     try {
       await handle.completion;
@@ -1140,6 +1189,9 @@ export async function createStudioController(options: StudioControllerOptions = 
           await handleCommand(":stop");
           break;
         case "switch-mode":
+          if ((options.laneId ?? "current") === "current" && request.mode === "operate") {
+            throw new Error("Create a worktree before switching this conversation to operate mode.");
+          }
           mode = request.mode === "operate" ? "operate" : "prepare";
           await refresh();
           break;
@@ -1247,6 +1299,46 @@ export async function createStudioController(options: StudioControllerOptions = 
           await removeSkillDirectory(repoId, request.directoryPath);
           await refresh();
           break;
+        case "connector-install":
+          if (!request.presetId) throw new Error("A connector preset is required.");
+          await installConnectorPreset(repoId, request.presetId);
+          await refresh();
+          break;
+        case "connector-upsert":
+          if (!request.connectorLabel?.trim() || !request.connectorDefinition) {
+            throw new Error("A connector name and MCP server definition are required.");
+          }
+          await upsertConnector(repoId, {
+            connectorId: request.connectorId,
+            label: request.connectorLabel,
+            description: request.connectorDescription,
+            definition: request.connectorDefinition
+          });
+          await refresh();
+          break;
+        case "connector-import":
+          if (!request.rawConfig?.trim()) throw new Error("Paste an MCP JSON configuration to import.");
+          await importMcpJson(repoId, request.rawConfig);
+          await refresh();
+          break;
+        case "connector-toggle":
+          if (!request.connectorId || typeof request.selected !== "boolean") {
+            throw new Error("A connector and enabled state are required.");
+          }
+          await setConnectorEnabled(repoId, request.connectorId, request.selected);
+          await refresh();
+          break;
+        case "connector-remove":
+          if (!request.connectorId) throw new Error("A connector is required.");
+          await removeConnector(repoId, request.connectorId);
+          await refresh();
+          break;
+        case "connector-reconnect":
+          if (!request.connectorId || !activeAgentHandle?.reconnectMcpServer) {
+            throw new Error("Reconnect is available while an agent turn is active.");
+          }
+          await activeAgentHandle.reconnectMcpServer(request.connectorId);
+          break;
         case "session-create": {
           const created = await agentSessionStore.create({
             providerId: activeProviderStatus.providerId,
@@ -1274,9 +1366,10 @@ export async function createStudioController(options: StudioControllerOptions = 
           break;
         }
         case "session-fork": {
+          const canForkProviderSession = activeProviderStatus.capabilities.includes("fork");
           const forked = await agentSessionStore.create({
             providerId: activeProviderStatus.providerId,
-            providerSessionId: agentSession.providerSessionId,
+            providerSessionId: canForkProviderSession ? agentSession.providerSessionId : null,
             repoId,
             laneId: options.laneId ?? "current",
             workspace,
@@ -1289,7 +1382,7 @@ export async function createStudioController(options: StudioControllerOptions = 
             parentSessionId: agentSession.sessionId,
             branchName
           });
-          forkNextTurn = true;
+          forkNextTurn = canForkProviderSession;
           await activateAgentSession(forked);
           break;
         }
@@ -1343,12 +1436,12 @@ export async function createStudioController(options: StudioControllerOptions = 
       }
       started = true;
       await system(
-        mode === "prepare"
+        `${(options.laneId ?? "current") === "current" ? "Repository conversation is active against the primary checkout. Use it to inspect, discuss, and plan; create a worktree before changing files.\n\n" : ""}${mode === "prepare"
           ? `Prepare mode gathers context, keeps \`context.md\` current, builds the draft, slices it into steps, and gets the plan ready to operate.\nType normal text to chat with the planner.\nUse \`:\` to run a studio command such as \`:import <path>\`, \`:context\`, \`:build\`, \`:slice --help\`, or \`:operate\`.\nStage: ${state.mode}\nNext action: ${state.nextAction}`
-          : `Operate mode is execution-only.\nUse \`:\` to run studio commands such as \`:run\`, \`:auto 3\`, \`:checkpoint\`, or \`:prepare\`.\nStage: ${state.mode}\nNext action: ${state.nextAction}`
+          : `Operate mode is execution-only.\nUse \`:\` to run studio commands such as \`:run\`, \`:auto 3\`, \`:checkpoint\`, or \`:prepare\`.\nStage: ${state.mode}\nNext action: ${state.nextAction}`}`
       );
       await refresh();
-      if (mode === "prepare") {
+      if (mode === "prepare" && options.autoGatherOnStart !== false) {
         await autoGather("boot");
       }
     },
@@ -1433,6 +1526,12 @@ function buildActionStates(mode: StudioMode, state: PlanningPackState): Record<S
     "skill-trust": { enabled: true, blockedReason: null },
     "skill-directory-add": { enabled: true, blockedReason: null },
     "skill-directory-remove": { enabled: true, blockedReason: null },
+    "connector-install": { enabled: true, blockedReason: null },
+    "connector-upsert": { enabled: true, blockedReason: null },
+    "connector-import": { enabled: true, blockedReason: null },
+    "connector-toggle": { enabled: true, blockedReason: null },
+    "connector-remove": { enabled: true, blockedReason: null },
+    "connector-reconnect": { enabled: true, blockedReason: null },
     "session-create": { enabled: true, blockedReason: null },
     "session-switch": { enabled: true, blockedReason: null },
     "session-fork": { enabled: true, blockedReason: null },

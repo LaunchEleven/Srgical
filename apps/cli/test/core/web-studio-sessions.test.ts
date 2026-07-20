@@ -1,13 +1,13 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { access, mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import test from "node:test";
 import { AgentSessionStore, deriveRepositoryId } from "@srgical/agent-runtime";
 import { createWorktreeLane, setWorktreeLaneDeleteLock } from "../../src/core/worktree-lanes";
-import { createWebStudioHost } from "../../src/ui/web-studio";
+import { createConversationPlanId, createWebStudioHost, deriveConversationTitle } from "../../src/ui/web-studio";
 import { createTempWorkspace } from "../helpers/workspace";
 
 const execFileAsync = promisify(execFile);
@@ -61,6 +61,41 @@ test("web host finishes a lane by archiving sessions before safely removing its 
   assert.equal(retirement?.payload.reason, "worktree-removed");
   assert.equal(retirement?.payload.endingCommit, archived?.workspaceBindings[0]?.endingCommit);
   assert.equal((await host.getRepoSnapshot()).lanes.some((lane) => lane.laneId === created.lane.laneId && !lane.removed), false);
+});
+
+test("web host starts a repository conversation and promotes it to a worktree", async (t) => {
+  const repo = await initGitRepo();
+  const sessionHome = await mkdtemp(path.join(os.tmpdir(), "srgical-conversation-sessions-"));
+  t.after(() => rm(sessionHome, { recursive: true, force: true }));
+  const store = new AgentSessionStore({ homeDir: sessionHome });
+  const host = await createWebStudioHost({ workspace: repo, agentSessionStore: store, openBrowser: false });
+  t.after(() => host.close());
+
+  const opened = await host.startConversation({
+    message: "Understand the authentication flow before we change anything",
+    isolation: "repository"
+  });
+  const studio = host.getStudioSession(opened.studioToken);
+  assert.ok(studio);
+  assert.equal(opened.laneId, "current");
+  assert.equal(studio.controller.getSnapshot().laneId, "current");
+  assert.equal(studio.controller.getSnapshot().agentSession.title, "Understand the authentication flow before we change anything");
+  assert.equal((await host.getRepoSnapshot()).lanes.filter((lane) => lane.source === "managed").length, 0);
+
+  const promoted = await host.forkSessionIntoWorktree(studio.controller.getSnapshot().agentSession.sessionId);
+  assert.notEqual(promoted.laneId, "current");
+  const promotedStudio = host.getStudioSession(promoted.studioToken);
+  assert.equal(promotedStudio?.controller.getSnapshot().agentSession.parentSessionId, studio.controller.getSnapshot().agentSession.sessionId);
+  assert.equal(promotedStudio?.controller.getSnapshot().agentSession.title, studio.controller.getSnapshot().agentSession.title);
+  await access(path.join(promotedStudio!.workspace, ".srgical", "plans", studio.planId, "context.md"));
+
+  await setWorktreeLaneDeleteLock(repo, promoted.laneId, false);
+  await host.removeLane(promoted.laneId);
+});
+
+test("conversation titles and internal plan ids are derived without naming ceremony", () => {
+  assert.equal(deriveConversationTitle("  Investigate the flaky test\nThen propose a fix  "), "Investigate the flaky test");
+  assert.match(createConversationPlanId("Investigate the flaky test"), /^investigate-the-flaky-test-[a-f0-9]{6}$/);
 });
 
 async function initGitRepo(): Promise<string> {

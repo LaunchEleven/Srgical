@@ -28,7 +28,8 @@ export type AgentCapability =
   | "tasks"
   | "usage"
   | "checkpoints"
-  | "skills";
+  | "skills"
+  | "mcp";
 
 export type AgentSessionRecord = {
   version: 1;

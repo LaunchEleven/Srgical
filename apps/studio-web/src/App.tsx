@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type {
-  LaneCreateRequest,
+  ConversationStartRequest,
   LaneOpenResponse,
   FinishWorkAssessment,
   FinishWorkRequest,
@@ -10,7 +10,7 @@ import type {
   StudioEvent,
   StudioSnapshot
 } from "@srgical/studio-core";
-import type { AgentEvent, AgentSessionRecord, SkillRecord } from "@srgical/studio-shared";
+import type { AgentEvent, AgentSessionRecord, ConnectorRecord, McpServerDefinition, McpTransport, SkillRecord } from "@srgical/studio-shared";
 
 declare global {
   interface Window {
@@ -30,8 +30,8 @@ export function App() {
 
 function RepositoryHome({ token }: { token: string }) {
   const [snapshot, setSnapshot] = useState<RepoSnapshot | null>(null);
-  const [planId, setPlanId] = useState("");
-  const [mode, setMode] = useState<"prepare" | "operate">("prepare");
+  const [prompt, setPrompt] = useState("");
+  const [isolation, setIsolation] = useState<"repository" | "worktree">("repository");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sessionQuery, setSessionQuery] = useState("");
@@ -44,21 +44,17 @@ function RepositoryHome({ token }: { token: string }) {
   useEffect(() => {
     void refresh().then(() => undefined).catch((reason) => setError(errorText(reason)));
   }, [token]);
-  useEffect(() => {
-    if (!snapshot) return;
-    setPlanId((current) => current || snapshot.requestedPlanId || "");
-    setMode(snapshot.requestedMode ?? "prepare");
-  }, [snapshot?.repoRoot]);
-
-  const createLane = async () => {
-    if (!planId.trim()) return setError("Name the plan before creating its isolated worktree.");
+  const startConversation = async () => {
+    const message = prompt.trim();
+    if (!message) return;
     setBusy(true);
     setError(null);
     try {
-      const opened = await postJson<LaneOpenResponse, LaneCreateRequest>("/api/lanes/create", token, {
-        planId: planId.trim(),
-        mode
+      const opened = await postJson<LaneOpenResponse, ConversationStartRequest>("/api/conversations/start", token, {
+        message,
+        isolation
       });
+      storeInitialMessage(opened.studioToken, message);
       window.location.assign(opened.url);
     } catch (reason) {
       setError(errorText(reason));
@@ -162,6 +158,7 @@ function RepositoryHome({ token }: { token: string }) {
 
   if (!snapshot) return <Loading label="Opening repository" />;
   const liveLanes = snapshot.lanes.filter((lane) => !lane.removed);
+  const isolatedLanes = liveLanes.filter((lane) => !lane.isCurrentCheckout);
   const visibleSessions = snapshot.sessions
     .filter((session) => sessionFilter === "all" || session.lifecycle === sessionFilter)
     .filter((session) => {
@@ -181,32 +178,39 @@ function RepositoryHome({ token }: { token: string }) {
           <div>
             <div className="overline">Repository workspace</div>
             <h1>{snapshot.repoLabel}</h1>
-            <p>Each conversation lives in an isolated Git worktree, with its own plan, agent session, and effective skills.</p>
+            <p>Start with a conversation. When the work needs file changes, move it into an isolated worktree without losing context.</p>
           </div>
           <div className="repo-stats">
-            <Stat value={String(liveLanes.length)} label="worktrees" />
+            <Stat value={String(isolatedLanes.length)} label="worktrees" />
             <Stat value={String(snapshot.sessions.length)} label="sessions" />
-            <Stat value={String(liveLanes.filter((lane) => lane.dirty).length)} label="in progress" />
-            <Stat value={String(liveLanes.filter((lane) => lane.conflictCount > 0).length)} label="conflicted" />
+            <Stat value={String(isolatedLanes.filter((lane) => lane.dirty).length)} label="in progress" />
+            <Stat value={String(isolatedLanes.filter((lane) => lane.conflictCount > 0).length)} label="conflicted" />
           </div>
         </section>
 
-        <section className="new-work-card">
-          <div>
-            <strong>Start isolated work</strong>
-            <span>Srgical creates a branch, worktree, plan, and durable conversation together.</span>
+        <section className="conversation-starter">
+          <textarea
+            value={prompt}
+            onChange={(event) => setPrompt(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && !event.shiftKey) {
+                event.preventDefault();
+                void startConversation();
+              }
+            }}
+            placeholder="What do you want to work on?"
+            rows={3}
+            autoFocus
+          />
+          <div className="conversation-starter-footer">
+            <label className="isolation-choice"><input type="checkbox" checked={isolation === "worktree"} onChange={(event) => setIsolation(event.target.checked ? "worktree" : "repository")} /><span><strong>Start in a worktree</strong><small>Optional. You can move the conversation later when it needs to change files.</small></span></label>
+            <button className="primary starter-send" disabled={busy || !prompt.trim()} onClick={() => void startConversation()}>{busy ? "Starting..." : "Start conversation"}</button>
           </div>
-          <input value={planId} onChange={(event) => setPlanId(event.target.value)} placeholder="Plan name, e.g. native-agent-ux" />
-          <select value={mode} onChange={(event) => setMode(event.target.value as "prepare" | "operate")}>
-            <option value="prepare">Prepare first</option>
-            <option value="operate">Operate</option>
-          </select>
-          <button className="primary" disabled={busy} onClick={() => void createLane()}>{busy ? "Working…" : "Create worktree"}</button>
         </section>
         {error ? <div className="error-banner">{error}</div> : null}
 
         <div className="section-heading session-heading">
-          <div><h2>Sessions</h2><p>Durable conversations across every worktree in this repository.</p></div>
+          <div><h2>Conversations</h2><p>Pick up any discussion, whether it is exploratory or already isolated for implementation.</p></div>
           <div className="session-filters">
             <input value={sessionQuery} onChange={(event) => setSessionQuery(event.target.value)} placeholder="Search sessions…" />
             <select value={sessionFilter} onChange={(event) => setSessionFilter(event.target.value as typeof sessionFilter)}>
@@ -234,7 +238,7 @@ function RepositoryHome({ token }: { token: string }) {
               ))}
             </div>
           ))}
-          {visibleSessions.length === 0 ? <EmptyState title="No matching sessions" body="Start a worktree conversation or change the search and lifecycle filters." /> : null}
+          {visibleSessions.length === 0 ? <EmptyState title="No matching conversations" body="Start by asking a question above, or change the search and lifecycle filters." /> : null}
         </section>
 
         <div className="section-heading">
@@ -242,7 +246,7 @@ function RepositoryHome({ token }: { token: string }) {
           <button className="quiet" onClick={() => void refresh()}>Refresh</button>
         </div>
         <section className="lane-list">
-          {liveLanes.map((lane) => (
+          {isolatedLanes.map((lane) => (
             <LaneRow
               lane={lane}
               busy={busy}
@@ -257,6 +261,7 @@ function RepositoryHome({ token }: { token: string }) {
               }}
             />
           ))}
+          {isolatedLanes.length === 0 ? <EmptyState title="No isolated worktrees" body="Keep talking in repository context, or start a worktree when a conversation is ready for file changes." /> : null}
         </section>
       </main>
       {finishAssessment ? (
@@ -279,7 +284,6 @@ function LaneRow(props: {
   lane: LaneSummary;
   busy: boolean;
   onOpen(): void;
-  onFork(): void;
   onArchive(): void;
   onFinish(): void;
   onLock(): void;
@@ -317,6 +321,7 @@ function SessionLibraryRow(props: {
   session: AgentSessionRecord;
   busy: boolean;
   onOpen(): void;
+  onFork(): void;
   onPin(): void;
   onArchive(): void;
   onDelete(): void;
@@ -334,15 +339,15 @@ function SessionLibraryRow(props: {
         </span>
       </button>
       <div className="session-context">
-        <span>{binding?.laneId ?? session.laneId}</span>
-        <span>{binding?.branchName ?? "branch unknown"}</span>
+        <span>{(binding?.laneId ?? session.laneId) === "current" ? "repository chat" : binding?.laneId ?? session.laneId}</span>
+        <span>{(binding?.laneId ?? session.laneId) === "current" ? "primary checkout protected" : binding?.branchName ?? "branch unknown"}</span>
         {session.parentSessionId ? <span>fork</span> : null}
         {binding?.retiredAt ? <span className="retired">worktree retired</span> : null}
       </div>
       <time>{formatRelativeTime(session.updatedAt)}</time>
       <details className="row-menu session-menu"><summary>•••</summary><div>
         <button onClick={props.onPin}>{session.pinnedAt ? "Unpin" : "Pin"}</button>
-        {binding?.retiredAt ? <button onClick={props.onFork}>Fork into new worktree</button> : null}
+        {binding?.retiredAt || binding?.laneId === "current" ? <button onClick={props.onFork}>{binding?.laneId === "current" ? "Continue in a worktree" : "Fork into new worktree"}</button> : null}
         <button onClick={props.onArchive}>{session.lifecycle === "archived" ? "Restore to history" : "Archive"}</button>
         <button className="danger" onClick={props.onDelete}>Remove from history</button>
       </div></details>
@@ -392,11 +397,21 @@ function Studio({ token, dashboardToken: homeToken }: { token: string; dashboard
   const [snapshot, setSnapshot] = useState<StudioSnapshot | null>(null);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
-  const [inspector, setInspector] = useState<"worktree" | "skills" | "plan">("worktree");
+  const [promoting, setPromoting] = useState(false);
+  const [inspector, setInspector] = useState<"worktree" | "connectors" | "skills" | "plan">("worktree");
   const transcriptEnd = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    void getJson<StudioSnapshot>(`/api/studio/session?token=${encodeURIComponent(token)}`).then(setSnapshot);
+    void getJson<StudioSnapshot>(`/api/studio/session?token=${encodeURIComponent(token)}`).then((next) => {
+      setSnapshot(next);
+      const initialMessage = takeInitialMessage(token);
+      if (!initialMessage) return;
+      setSending(true);
+      void postJson("/api/studio/input", token, { text: initialMessage }).catch((reason) => {
+        storeInitialMessage(token, initialMessage);
+        window.alert(errorText(reason));
+      }).finally(() => setSending(false));
+    });
     const stream = new EventSource(`/api/studio/events?token=${encodeURIComponent(token)}`);
     stream.onmessage = (raw) => {
       const event = JSON.parse(raw.data) as StudioEvent;
@@ -430,6 +445,17 @@ function Studio({ token, dashboardToken: homeToken }: { token: string; dashboard
       setSending(false);
     }
   };
+  const promoteToWorktree = async () => {
+    if (!snapshot || snapshot.laneId !== "current" || promoting) return;
+    setPromoting(true);
+    try {
+      const opened = await postJson<LaneOpenResponse, { sessionId: string }>("/api/sessions/fork-worktree", homeToken, { sessionId: snapshot.agentSession.sessionId });
+      window.location.assign(opened.url);
+    } catch (reason) {
+      window.alert(errorText(reason));
+      setPromoting(false);
+    }
+  };
 
   if (!snapshot) return <Loading label="Resuming conversation" />;
   const pendingPermissions = unresolvedEvents(snapshot.recentAgentEvents, "permission.requested", "permission.resolved");
@@ -441,9 +467,9 @@ function Studio({ token, dashboardToken: homeToken }: { token: string; dashboard
     <div className="studio-layout">
       <aside className="session-rail">
         <Brand compact />
-        <button className="back-link" onClick={() => window.location.assign(`/?token=${encodeURIComponent(homeToken)}`)}>← All worktrees</button>
-        <div className="rail-section-label">Current worktree</div>
-        <div className="rail-lane"><span className="lane-dot current" /><div><strong>{snapshot.planId}</strong><small>{snapshot.branchName ?? "detached"}</small></div></div>
+        <button className="back-link" onClick={() => window.location.assign(`/?token=${encodeURIComponent(homeToken)}`)}>← All conversations</button>
+        <div className="rail-section-label">Workspace</div>
+        <div className="rail-lane"><span className="lane-dot current" /><div><strong>{snapshot.laneId === "current" ? "Repository chat" : "Isolated worktree"}</strong><small>{snapshot.branchName ?? "detached"}</small></div></div>
         <div className="rail-section-label">Conversation</div>
         <button className="new-session" onClick={() => void action({ type: "session-create" })}>＋ New conversation</button>
         {snapshot.agentSessions.map((session) => <button className={`session-item ${session.sessionId === snapshot.agentSession.sessionId ? "active" : ""}`} onClick={() => void action({ type: "session-switch", sessionId: session.sessionId })} key={session.sessionId}><span>{session.pinnedAt ? "◆" : session.parentSessionId ? "⑂" : "◌"}</span><div><strong>{session.title}</strong><small>{session.lifecycle} · {session.status} · {new Date(session.updatedAt).toLocaleDateString()}</small></div></button>)}
@@ -456,16 +482,16 @@ function Studio({ token, dashboardToken: homeToken }: { token: string; dashboard
 
       <main className="conversation-pane">
         <header className="conversation-header">
-          <div><strong>{snapshot.workspaceLabel}</strong><span>{snapshot.mode} · {snapshot.agentSession.permissionMode} permissions</span></div>
+          <div><strong>{snapshot.workspaceLabel}</strong><span>{snapshot.laneId === "current" ? "repository chat · planning permissions" : `${snapshot.mode} · ${snapshot.agentSession.permissionMode} permissions`}</span></div>
           <div className="header-actions">
             {snapshot.busy ? <button className="stop" onClick={() => void action({ type: "interrupt-agent" })}>■ Stop</button> : null}
             <button className="quiet" onClick={() => void action({ type: "session-pin", pinned: !snapshot.agentSession.pinnedAt })}>{snapshot.agentSession.pinnedAt ? "Unpin" : "Pin"}</button>
             <button className="quiet" onClick={() => void action({ type: "session-archive" })}>Archive</button>
             <button className="quiet" onClick={() => void action({ type: "session-fork" })}>Fork</button>
             <button className="quiet" onClick={() => { const title = window.prompt("Conversation title", snapshot.agentSession.title); if (title?.trim()) void action({ type: "session-rename", title }); }}>Rename</button>
-            <button className="quiet" onClick={() => void action({ type: "switch-mode", mode: snapshot.mode === "prepare" ? "operate" : "prepare" })}>
+            {snapshot.laneId === "current" ? <button className="primary promote-worktree" disabled={snapshot.busy || promoting} onClick={() => void promoteToWorktree()}>{promoting ? "Creating..." : "Create worktree"}</button> : <button className="quiet" onClick={() => void action({ type: "switch-mode", mode: snapshot.mode === "prepare" ? "operate" : "prepare" })}>
               {snapshot.mode === "prepare" ? "Switch to operate" : "Return to prepare"}
-            </button>
+            </button>}
           </div>
         </header>
 
@@ -473,12 +499,12 @@ function Studio({ token, dashboardToken: homeToken }: { token: string; dashboard
           <div className="conversation-inner">
             <div className="conversation-intro">
               <div className="claude-mark">S</div>
-              <h1>{snapshot.planId}</h1>
-              <p>{snapshot.prepareClarity?.coachHeadline ?? snapshot.state.nextAction}</p>
+              <h1>{snapshot.agentSession.title}</h1>
+              <p>{snapshot.laneId === "current" ? "Explore the repository freely. Create a worktree when you are ready to change files." : snapshot.prepareClarity?.coachHeadline ?? snapshot.state.nextAction}</p>
               <div className="context-pills">
                 <span>{snapshot.skills.effectiveSkillHashes.length} skills</span>
                 <span>{snapshot.agentProvider.label}</span>
-                <span>{snapshot.branchName ?? "detached"}</span>
+                <span>{snapshot.laneId === "current" ? "repository context" : snapshot.branchName ?? "detached"}</span>
               </div>
             </div>
 
@@ -507,20 +533,21 @@ function Studio({ token, dashboardToken: homeToken }: { token: string; dashboard
                   void send();
                 }
               }}
-              placeholder={snapshot.mode === "prepare" ? "Ask Srgical to explore, plan, or implement…" : "Describe the next change or use an action…"}
+              placeholder={snapshot.laneId === "current" ? "Ask about the repository, explore an idea, or describe a change…" : snapshot.mode === "prepare" ? "Ask Srgical to explore, plan, or implement…" : "Describe the next change or use an action…"}
               rows={2}
             />
-            <div className="composer-footer"><span>{snapshot.skills.effectiveSkillHashes.length} effective skills · Enter to send</span><button className="send-button" disabled={!input.trim() || sending} onClick={() => void send()}>↑</button></div>
+            <div className="composer-footer"><span>{snapshot.laneId === "current" ? "Primary checkout protected · create a worktree to edit" : `${snapshot.skills.effectiveSkillHashes.length} effective skills · Enter to send`}</span><button className="send-button" disabled={!input.trim() || sending} onClick={() => void send()}>↑</button></div>
           </div>
         </section>
       </main>
 
       <aside className="inspector-pane">
         <div className="inspector-tabs">
-          {(["worktree", "skills", "plan"] as const).map((tab) => <button className={inspector === tab ? "active" : ""} onClick={() => setInspector(tab)} key={tab}>{tab}</button>)}
+          {(["worktree", "connectors", "skills", "plan"] as const).map((tab) => <button className={inspector === tab ? "active" : ""} onClick={() => setInspector(tab)} key={tab}>{tab === "connectors" ? "MCP" : tab}</button>)}
         </div>
         <div className="inspector-body">
           {inspector === "worktree" ? <WorktreeInspector snapshot={snapshot} /> : null}
+          {inspector === "connectors" ? <ConnectorsInspector snapshot={snapshot} action={action} /> : null}
           {inspector === "skills" ? <SkillsInspector snapshot={snapshot} action={action} /> : null}
           {inspector === "plan" ? <PlanInspector snapshot={snapshot} action={action} /> : null}
         </div>
@@ -569,7 +596,159 @@ function QuestionPrompt({ event, action }: { event: AgentEvent; action(request: 
 }
 
 function WorktreeInspector({ snapshot }: { snapshot: StudioSnapshot }) {
-  return <><InspectorTitle title="Worktree" subtitle={snapshot.workspace} /><InfoRow label="Branch" value={snapshot.branchName ?? "detached"} /><InfoRow label="Lane" value={snapshot.laneId} /><InfoRow label="Session" value={snapshot.agentSession.status} /><InfoRow label="Provider session" value={snapshot.agentSession.providerSessionId?.slice(0, 12) ?? "not started"} /><div className="inspector-note"><strong>Isolation boundary</strong><p>This lane owns its worktree, branch, plan, durable agent session, and effective skill hashes.</p></div></>;
+  const repositoryChat = snapshot.laneId === "current";
+  return <><InspectorTitle title={repositoryChat ? "Repository context" : "Worktree"} subtitle={snapshot.workspace} /><InfoRow label="Branch" value={snapshot.branchName ?? "detached"} /><InfoRow label="Workspace" value={repositoryChat ? "Primary checkout (protected)" : snapshot.laneId} /><InfoRow label="Session" value={snapshot.agentSession.status} /><InfoRow label="Provider session" value={snapshot.agentSession.providerSessionId?.slice(0, 12) ?? "not started"} /><div className="inspector-note"><strong>{repositoryChat ? "Conversation first" : "Isolation boundary"}</strong><p>{repositoryChat ? "This conversation can inspect and plan against the repository. Promote it to a worktree before making file changes." : "This lane owns its worktree, branch, plan, durable agent session, and effective skill hashes."}</p></div></>;
+}
+
+function ConnectorsInspector({ snapshot, action }: { snapshot: StudioSnapshot; action(request: StudioActionRequest): Promise<void> }) {
+  const [panel, setPanel] = useState<"catalog" | "custom" | "import">("catalog");
+  const [name, setName] = useState("");
+  const [transport, setTransport] = useState<McpTransport>("http");
+  const [endpoint, setEndpoint] = useState("");
+  const [args, setArgs] = useState("");
+  const [environment, setEnvironment] = useState("");
+  const [authMode, setAuthMode] = useState<"none" | "bearer" | "oauth">("none");
+  const [tokenEnv, setTokenEnv] = useState("");
+  const [clientIdEnv, setClientIdEnv] = useState("");
+  const [clientSecretEnv, setClientSecretEnv] = useState("");
+  const [rawConfig, setRawConfig] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const installedPresets = new Set(snapshot.connectors.connectors.map((connector) => connector.presetId));
+
+  const run = async (request: StudioActionRequest, done?: () => void) => {
+    setBusy(true);
+    setError(null);
+    try {
+      await action(request);
+      done?.();
+    } catch (reason) {
+      setError(errorText(reason));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const addCustom = () => {
+    const definition: McpServerDefinition = transport === "stdio"
+      ? {
+          transport,
+          command: endpoint.trim(),
+          args: args.split(/\r?\n/).map((item) => item.trim()).filter(Boolean),
+          env: parseKeyValueLines(environment)
+        }
+      : {
+          transport,
+          url: endpoint.trim(),
+          headers: authMode === "bearer" && tokenEnv.trim()
+            ? { Authorization: `Bearer \${${normalizeEnvName(tokenEnv)}}` }
+            : undefined,
+          oauth: authMode === "oauth" ? {
+            clientId: clientIdEnv.trim() ? `\${${normalizeEnvName(clientIdEnv)}}` : undefined,
+            clientSecret: clientSecretEnv.trim() ? `\${${normalizeEnvName(clientSecretEnv)}}` : undefined
+          } : undefined
+        };
+    void run({
+      type: "connector-upsert",
+      connectorId: editingId ?? undefined,
+      connectorLabel: name.trim(),
+      connectorDescription: "Custom MCP server",
+      connectorDefinition: definition
+    }, () => {
+      setName("");
+      setEndpoint("");
+      setArgs("");
+      setEnvironment("");
+      setTokenEnv("");
+      setClientIdEnv("");
+      setClientSecretEnv("");
+      setEditingId(null);
+      setPanel("catalog");
+    });
+  };
+
+  return <>
+    <InspectorTitle title="Connectors" subtitle={`${snapshot.connectors.readyCount} ready / ${snapshot.connectors.enabledCount} enabled`} />
+    <div className="connector-summary">
+      <span>Repository-scoped MCP access</span>
+      <code title={snapshot.connectors.configPath}>{snapshot.connectors.configPath}</code>
+      <p>Changes apply on the next agent turn. Secrets can stay in your environment by using <code>{"${ENV_VAR}"}</code>.</p>
+    </div>
+    {!snapshot.agentProvider.capabilities.includes("mcp") ? <div className="connector-provider-note">Saved connectors need the native Codex or Claude provider for managed loading. The current fallback may use only its own MCP configuration.</div> : null}
+    {error ? <div className="inline-error connector-error">{error}</div> : null}
+    {snapshot.connectors.connectors.length > 0
+      ? <div className="connector-list">{snapshot.connectors.connectors.map((connector) => <ConnectorRow connector={connector} busy={busy} run={run} onEdit={() => {
+        setEditingId(connector.connectorId);
+        setName(connector.label);
+        setTransport(connector.definition.transport);
+        setEndpoint(connector.definition.transport === "stdio" ? connector.definition.command ?? "" : connector.definition.url ?? "");
+        setArgs((connector.definition.args ?? []).join("\n"));
+        setEnvironment(Object.entries(connector.definition.env ?? {}).map(([key, value]) => `${key}=${value}`).join("\n"));
+        const authorization = connector.definition.headers?.Authorization ?? connector.definition.headers?.authorization;
+        const bearerReference = authorization?.match(/^Bearer \$\{([^}]+)\}$/)?.[1] ?? "";
+        const oauthIdReference = connector.definition.oauth?.clientId?.match(/^\$\{([^}]+)\}$/)?.[1] ?? "";
+        const oauthSecretReference = connector.definition.oauth?.clientSecret?.match(/^\$\{([^}]+)\}$/)?.[1] ?? "";
+        setAuthMode(bearerReference ? "bearer" : connector.definition.oauth ? "oauth" : "none");
+        setTokenEnv(bearerReference);
+        setClientIdEnv(oauthIdReference);
+        setClientSecretEnv(oauthSecretReference);
+        setPanel("custom");
+      }} key={connector.connectorId} />)}</div>
+      : <EmptyState title="No MCP servers installed" body="Choose a verified connector or add a custom MCP server below." />}
+    <div className="connector-mode-tabs">
+      {(["catalog", "custom", "import"] as const).map((item) => <button className={panel === item ? "active" : ""} onClick={() => setPanel(item)} key={item}>{item}</button>)}
+    </div>
+    {panel === "catalog" ? <div className="connector-catalog">{snapshot.connectors.catalog.map((preset) => {
+      const installed = installedPresets.has(preset.presetId);
+      return <article className="connector-preset" key={preset.presetId}>
+        <div><strong>{preset.label}</strong><span>{preset.category}</span></div>
+        <p>{preset.description}</p>
+        <small>{preset.authDescription}</small>
+        <div><a href={preset.setupUrl} target="_blank" rel="noreferrer">Setup guide</a><button disabled={busy || installed} onClick={() => void run({ type: "connector-install", presetId: preset.presetId })}>{installed ? "Installed" : "Install"}</button></div>
+      </article>;
+    })}</div> : null}
+    {panel === "custom" ? <div className="connector-form">
+      <label><span>Name</span><input value={name} onChange={(event) => setName(event.target.value)} placeholder="My MCP server" /></label>
+      <label><span>Transport</span><select value={transport} onChange={(event) => setTransport(event.target.value as McpTransport)}><option value="http">Streamable HTTP</option><option value="sse">SSE</option><option value="stdio">Local process (stdio)</option></select></label>
+      <label><span>{transport === "stdio" ? "Command" : "Server URL"}</span><input value={endpoint} onChange={(event) => setEndpoint(event.target.value)} placeholder={transport === "stdio" ? "npx" : "https://mcp.example.com/mcp"} /></label>
+      {transport === "stdio" ? <><label><span>Arguments (one per line)</span><textarea rows={4} value={args} onChange={(event) => setArgs(event.target.value)} placeholder={"-y\n@vendor/mcp-server"} /></label><label><span>Environment (KEY=value, one per line)</span><textarea rows={3} value={environment} onChange={(event) => setEnvironment(event.target.value)} placeholder={"API_TOKEN=${MY_MCP_TOKEN}"} /></label></> : <>
+        <label><span>Authentication</span><select value={authMode} onChange={(event) => setAuthMode(event.target.value as typeof authMode)}><option value="none">None / server-managed OAuth</option><option value="bearer">Bearer token from environment</option><option value="oauth">OAuth client from environment</option></select></label>
+        {authMode === "bearer" ? <label><span>Token environment variable</span><input value={tokenEnv} onChange={(event) => setTokenEnv(event.target.value)} placeholder="MY_MCP_TOKEN" /></label> : null}
+        {authMode === "oauth" ? <><label><span>Client ID environment variable</span><input value={clientIdEnv} onChange={(event) => setClientIdEnv(event.target.value)} placeholder="MY_MCP_CLIENT_ID" /></label><label><span>Client secret environment variable</span><input value={clientSecretEnv} onChange={(event) => setClientSecretEnv(event.target.value)} placeholder="MY_MCP_CLIENT_SECRET" /></label></> : null}
+      </>}
+      <button className="primary" disabled={busy || !name.trim() || !endpoint.trim() || (authMode === "bearer" && !tokenEnv.trim())} onClick={addCustom}>{editingId ? "Save changes" : "Add MCP server"}</button>
+    </div> : null}
+    {panel === "import" ? <div className="connector-form connector-import">
+      <p>Paste a Claude-style <code>mcpServers</code> object. HTTP, SSE, stdio, headers, environment, OAuth metadata, timeout, and always-load settings are supported.</p>
+      <textarea rows={11} value={rawConfig} onChange={(event) => setRawConfig(event.target.value)} spellCheck={false} placeholder={'{\n  "mcpServers": {\n    "example": {\n      "type": "http",\n      "url": "https://mcp.example.com/mcp"\n    }\n  }\n}'} />
+      <button className="primary" disabled={busy || !rawConfig.trim()} onClick={() => void run({ type: "connector-import", rawConfig }, () => { setRawConfig(""); setPanel("catalog"); })}>Import configuration</button>
+    </div> : null}
+  </>;
+}
+
+function ConnectorRow({ connector, busy, run, onEdit }: { connector: ConnectorRecord; busy: boolean; run(request: StudioActionRequest): Promise<void>; onEdit(): void }) {
+  const statusLabel = connector.status.replace("-", " ");
+  return <article className={`connector-row ${connector.status}`}>
+    <div className="connector-heading"><span className={`connector-light ${connector.status}`} /><div><strong>{connector.label}</strong><small>{connector.definition.transport} · {statusLabel}</small></div></div>
+    <p>{connector.description}</p>
+    {connector.statusDetail ? <div className="connector-detail">{connector.statusDetail}</div> : null}
+    {connector.missingEnvironmentVariables.length > 0 ? <div className="connector-env">Missing: {connector.missingEnvironmentVariables.map((name) => <code key={name}>{name}</code>)}</div> : null}
+    {connector.tools.length > 0 ? <details className="connector-tools"><summary>{connector.tools.length} tools</summary>{connector.tools.map((tool) => <div key={tool.name}><code>{tool.name}</code>{tool.destructive ? <span>destructive</span> : tool.readOnly ? <span>read only</span> : null}</div>)}</details> : null}
+    <div className="connector-actions"><button disabled={busy} onClick={() => void run({ type: "connector-toggle", connectorId: connector.connectorId, selected: !connector.enabled })}>{connector.enabled ? "Disable" : "Enable"}</button>{connector.presetId ? null : <button disabled={busy} onClick={onEdit}>Edit</button>}<button className="danger" disabled={busy} onClick={() => { if (window.confirm(`Remove ${connector.label}?`)) void run({ type: "connector-remove", connectorId: connector.connectorId }); }}>Remove</button></div>
+  </article>;
+}
+
+function normalizeEnvName(value: string): string {
+  return value.trim().toUpperCase().replace(/[^A-Z0-9_]/g, "_");
+}
+
+function parseKeyValueLines(value: string): Record<string, string> | undefined {
+  const entries = value.split(/\r?\n/).map((line) => {
+    const separator = line.indexOf("=");
+    return separator > 0 ? [line.slice(0, separator).trim(), line.slice(separator + 1).trim()] as const : null;
+  }).filter((entry): entry is readonly [string, string] => Boolean(entry?.[0]));
+  return entries.length > 0 ? Object.fromEntries(entries) : undefined;
 }
 
 function SkillsInspector({ snapshot, action }: { snapshot: StudioSnapshot; action(request: StudioActionRequest): Promise<void> }) {
@@ -667,3 +846,14 @@ async function responseError(response: Response): Promise<string> {
   try { return ((await response.json()) as { error?: string }).error ?? `Request failed (${response.status})`; } catch { return `Request failed (${response.status})`; }
 }
 function errorText(reason: unknown): string { return reason instanceof Error ? reason.message : String(reason); }
+
+function storeInitialMessage(token: string, message: string): void {
+  window.sessionStorage.setItem(`srgical.initial-message.${token}`, message);
+}
+
+function takeInitialMessage(token: string): string | null {
+  const key = `srgical.initial-message.${token}`;
+  const message = window.sessionStorage.getItem(key);
+  if (message) window.sessionStorage.removeItem(key);
+  return message;
+}

@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { randomBytes } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { cp, readFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import path from "node:path";
 import process from "node:process";
@@ -8,6 +8,7 @@ import {
   type FinishWorkAssessment,
   type FinishWorkRequest,
   type FinishWorkResult,
+  type ConversationStartRequest,
   createStudioController,
   type LaneCreateRequest,
   type LaneOpenResponse,
@@ -52,6 +53,7 @@ type StudioSession = {
 
 type WebStudioHost = {
   getRepoSnapshot(): Promise<RepoSnapshot>;
+  startConversation(request: ConversationStartRequest): Promise<LaneOpenResponse>;
   createLane(request: LaneCreateRequest): Promise<LaneOpenResponse>;
   openLane(laneId: string, mode: StudioMode, agentSessionId?: string): Promise<LaneOpenResponse>;
   openSession(sessionId: string): Promise<LaneOpenResponse>;
@@ -126,7 +128,7 @@ export async function launchWebStudio(options: LaunchWebStudioOptions = {}): Pro
 export async function createWebStudioHost(options: LaunchWebStudioOptions = {}): Promise<WebStudioHost> {
   const repoState = await resolveWorktreeLaneRepoState(options.workspace ?? process.cwd());
   const sessions = new Map<string, StudioSession>();
-  const laneTokens = new Map<string, string>();
+  const workspaceTokens = new Map<string, string>();
   const agentSessionStore = options.agentSessionStore ?? new AgentSessionStore();
   const repoId = deriveRepositoryId(repoState.repoRoot);
 
@@ -144,7 +146,13 @@ export async function createWebStudioHost(options: LaunchWebStudioOptions = {}):
     };
   };
 
-  const openLane = async (laneId: string, mode: StudioMode, agentSessionId?: string): Promise<LaneOpenResponse> => {
+  const openLane = async (
+    laneId: string,
+    mode: StudioMode,
+    agentSessionId?: string,
+    planIdOverride?: string,
+    autoGatherOnStart = true
+  ): Promise<LaneOpenResponse> => {
     const workspace = await resolveLaneWorkspacePath(repoState.currentWorkspace, laneId);
     if (!workspace) {
       throw new Error(`Unknown worktree lane \`${laneId}\`.`);
@@ -155,14 +163,15 @@ export async function createWebStudioHost(options: LaunchWebStudioOptions = {}):
     if (!lane) {
       throw new Error(`Unknown worktree lane \`${laneId}\`.`);
     }
-    const planId = lane.planId ?? options.planId;
+    const requestedAgentSession = agentSessionId ? await agentSessionStore.load(repoId, agentSessionId) : null;
+    const planId = planIdOverride ?? lane.planId ?? requestedAgentSession?.planId ?? options.planId;
     if (!planId) {
       throw new Error(`Lane \`${laneId}\` does not have a plan id yet.`);
     }
 
-    let studioToken = laneTokens.get(laneId);
+    const workspaceKey = `${laneId}:${planId}`;
+    let studioToken = workspaceTokens.get(workspaceKey);
     let session = studioToken ? sessions.get(studioToken) ?? null : null;
-    const requestedAgentSession = agentSessionId ? await agentSessionStore.load(repoId, agentSessionId) : null;
     if (
       !session
       || session.mode !== mode
@@ -175,7 +184,7 @@ export async function createWebStudioHost(options: LaunchWebStudioOptions = {}):
         sessions.delete(session.token);
       }
       studioToken = randomBytes(24).toString("hex");
-      laneTokens.set(laneId, studioToken);
+      workspaceTokens.set(workspaceKey, studioToken);
       const controller = await createStudioController({
         workspace,
         planId,
@@ -184,12 +193,13 @@ export async function createWebStudioHost(options: LaunchWebStudioOptions = {}):
         laneId,
         agentSessionId,
         agentProviderId: requestedAgentSession?.providerId,
+        autoGatherOnStart,
         agentSessionStore
       });
       const startPromise = controller.start().catch(async () => {
         await controller.close().catch(() => undefined);
-        if (laneTokens.get(laneId) === studioToken) {
-          laneTokens.delete(laneId);
+        if (workspaceTokens.get(workspaceKey) === studioToken) {
+          workspaceTokens.delete(workspaceKey);
         }
       });
       session = {
@@ -218,6 +228,28 @@ export async function createWebStudioHost(options: LaunchWebStudioOptions = {}):
     };
   };
 
+  const startConversation = async (request: ConversationStartRequest): Promise<LaneOpenResponse> => {
+    const message = request.message.trim();
+    if (!message) throw new Error("Write a message to start the conversation.");
+    if (request.isolation !== "repository" && request.isolation !== "worktree") {
+      throw new Error("Conversation isolation must be repository or worktree.");
+    }
+    const title = deriveConversationTitle(message);
+    const planId = createConversationPlanId(title);
+    let opened: LaneOpenResponse;
+    if (request.isolation === "worktree") {
+      const created = await createWorktreeLane(repoState.currentWorkspace, { planId, mode: "prepare" });
+      opened = await openLane(created.lane.laneId, "prepare", undefined, planId, false);
+    } else {
+      opened = await openLane("current", "prepare", undefined, planId, false);
+    }
+    const studio = sessions.get(opened.studioToken);
+    if (!studio) throw new Error("The conversation could not be opened.");
+    await studio.startPromise;
+    await studio.controller.dispatch({ type: "session-rename", title });
+    return opened;
+  };
+
   const openSession = async (sessionId: string): Promise<LaneOpenResponse> => {
     const record = await agentSessionStore.load(repoId, sessionId);
     if (!record || record.lifecycle === "deleted") throw new Error("That session is no longer available.");
@@ -225,7 +257,13 @@ export async function createWebStudioHost(options: LaunchWebStudioOptions = {}):
     if (!currentBinding) {
       throw new Error("This session's worktree has been retired. Fork it into a new worktree before resuming.");
     }
-    return openLane(currentBinding.laneId, record.planId ? "prepare" : "operate", record.sessionId);
+    return openLane(
+      currentBinding.laneId,
+      record.planId ? "prepare" : "operate",
+      record.sessionId,
+      record.planId ?? undefined,
+      currentBinding.laneId !== "current"
+    );
   };
 
   const forkSessionIntoWorktree = async (sessionId: string): Promise<LaneOpenResponse> => {
@@ -238,15 +276,16 @@ export async function createWebStudioHost(options: LaunchWebStudioOptions = {}):
       mode: "prepare",
       baseRef: latestBinding?.branchName ?? undefined
     });
+    await copyConversationPlan(parent.workspace, created.workspace, parent.planId);
     const forked = await agentSessionStore.create({
       providerId: parent.providerId,
-      providerSessionId: parent.providerSessionId,
+      providerSessionId: parent.capabilities.includes("fork") ? parent.providerSessionId : null,
       parentSessionId: parent.sessionId,
       repoId,
       laneId: created.lane.laneId,
       workspace: created.workspace,
       planId: parent.planId,
-      title: `${parent.title} (continued)`,
+      title: parent.title,
       model: parent.model,
       permissionMode: parent.permissionMode,
       capabilities: parent.capabilities,
@@ -254,7 +293,7 @@ export async function createWebStudioHost(options: LaunchWebStudioOptions = {}):
       branchName: created.lane.branchName,
       startingCommit: created.lane.head
     });
-    return openLane(created.lane.laneId, "prepare", forked.sessionId);
+    return openLane(created.lane.laneId, "prepare", forked.sessionId, parent.planId, false);
   };
 
   const createLane = async (request: LaneCreateRequest): Promise<LaneOpenResponse> => {
@@ -275,14 +314,12 @@ export async function createWebStudioHost(options: LaunchWebStudioOptions = {}):
   };
 
   const removeLane = async (laneId: string): Promise<void> => {
-    const token = laneTokens.get(laneId);
-    if (token) {
+    for (const [key, token] of workspaceTokens) {
       const session = sessions.get(token);
-      if (session) {
-        await session.controller.close();
-        sessions.delete(token);
-      }
-      laneTokens.delete(laneId);
+      if (session?.laneId !== laneId) continue;
+      await session.controller.close();
+      sessions.delete(token);
+      workspaceTokens.delete(key);
     }
     await removeWorktreeLane(repoState.currentWorkspace, laneId);
   };
@@ -296,8 +333,7 @@ export async function createWebStudioHost(options: LaunchWebStudioOptions = {}):
     const snapshot = await getRepoSnapshot();
     const lane = snapshot.lanes.find((entry) => entry.laneId === laneId && !entry.removed);
     if (!lane) throw new Error(`Unknown worktree lane \`${laneId}\`.`);
-    const token = laneTokens.get(laneId);
-    const activeOperation = token ? sessions.get(token)?.controller.getSnapshot().busy === true : false;
+    const activeOperation = [...sessions.values()].some((session) => session.laneId === laneId && session.controller.getSnapshot().busy);
     return assessFinishWork(lane, snapshot.sessions, { activeOperation });
   };
 
@@ -310,12 +346,12 @@ export async function createWebStudioHost(options: LaunchWebStudioOptions = {}):
       throw new Error(assessment.removalBlockers.join(" ") || "This worktree is not safe to remove.");
     }
 
-    const token = laneTokens.get(request.laneId);
-    if (token) {
+    for (const [key, token] of workspaceTokens) {
       const live = sessions.get(token);
-      if (live) await live.controller.close();
+      if (live?.laneId !== request.laneId) continue;
+      await live.controller.close();
       sessions.delete(token);
-      laneTokens.delete(request.laneId);
+      workspaceTokens.delete(key);
     }
 
     const snapshot = await getRepoSnapshot();
@@ -382,6 +418,7 @@ export async function createWebStudioHost(options: LaunchWebStudioOptions = {}):
 
   return {
     getRepoSnapshot,
+    startConversation,
     createLane,
     openLane,
     openSession,
@@ -400,7 +437,7 @@ export async function createWebStudioHost(options: LaunchWebStudioOptions = {}):
         await session.controller.close();
       }
       sessions.clear();
-      laneTokens.clear();
+      workspaceTokens.clear();
     }
   };
 }
@@ -436,6 +473,15 @@ async function routeRequest(
     response.statusCode = 200;
     response.setHeader("content-type", "application/json");
     response.end(JSON.stringify(await context.host.getRepoSnapshot()));
+    return;
+  }
+
+  if (request.method === "POST" && url.pathname === "/api/conversations/start") {
+    if (!isDashboardAuthorized) return respondUnauthorized(response);
+    const body = await readJsonBody<ConversationStartRequest>(request);
+    response.statusCode = 202;
+    response.setHeader("content-type", "application/json");
+    response.end(JSON.stringify(await context.host.startConversation(body)));
     return;
   }
 
@@ -700,4 +746,28 @@ function openUrl(url: string): void {
     return;
   }
   spawn("xdg-open", [url], { detached: true, stdio: "ignore" }).unref();
+}
+
+export function deriveConversationTitle(message: string): string {
+  const firstLine = message.trim().split(/\r?\n/, 1)[0].replace(/\s+/g, " ");
+  if (firstLine.length <= 72) return firstLine;
+  return `${firstLine.slice(0, 69).trimEnd()}...`;
+}
+
+export function createConversationPlanId(title: string): string {
+  const slug = title.toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 42)
+    .replace(/-+$/g, "") || "conversation";
+  return `${slug}-${randomBytes(3).toString("hex")}`;
+}
+
+async function copyConversationPlan(sourceWorkspace: string, destinationWorkspace: string, planId: string): Promise<void> {
+  const source = path.join(sourceWorkspace, ".srgical", "plans", planId);
+  const destination = path.join(destinationWorkspace, ".srgical", "plans", planId);
+  await cp(source, destination, { recursive: true, force: false, errorOnExist: false }).catch((error) => {
+    if (typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT") return;
+    throw error;
+  });
 }

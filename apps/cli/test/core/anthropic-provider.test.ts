@@ -142,6 +142,49 @@ test("supported authentication detection explicitly excludes implicit subscripti
   assert.equal(detectSupportedAuthentication({ CLAUDE_CODE_USE_BEDROCK: "1" }).authenticated, true);
 });
 
+test("Anthropic provider projects MCP configuration and normalizes live status", async () => {
+  let captured: AnthropicOptions | undefined;
+  const provider = new AnthropicAgentProvider({
+    query: ({ options }) => {
+      captured = options;
+      return {
+        ...fakeQuery([]),
+        mcpServerStatus: async () => [{
+          name: "linear",
+          status: "connected" as const,
+          serverInfo: { name: "Linear MCP", version: "1.0.0" },
+          tools: [{ name: "list_issues", annotations: { readOnly: true } }]
+        }],
+        reconnectMcpServer: async () => undefined
+      };
+    }
+  });
+
+  const handle = await provider.start({
+    ...startOptions([]),
+    mcpServers: {
+      linear: { transport: "http", url: "https://mcp.linear.app/mcp" },
+      local: { transport: "stdio", command: "node", args: ["server.js"] }
+    }
+  });
+  await handle.completion;
+
+  assert.deepEqual(captured?.mcpServers?.linear, {
+    type: "http",
+    url: "https://mcp.linear.app/mcp",
+    headers: undefined,
+    timeout: undefined,
+    alwaysLoad: undefined
+  });
+  assert.equal((captured?.mcpServers?.local as { command?: string }).command, "node");
+  assert.deepEqual(await handle.getMcpStatus?.(), [{
+    connectorId: "linear",
+    status: "connected",
+    statusDetail: "Linear MCP 1.0.0",
+    tools: [{ name: "list_issues", description: undefined, readOnly: true, destructive: undefined, openWorld: undefined }]
+  }]);
+});
+
 function startOptions(emitted: AgentEventDraft[]) {
   return {
     session: sessionRecord(),

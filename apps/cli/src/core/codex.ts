@@ -296,7 +296,7 @@ async function runCodexExec(options: CodexExecOptions): Promise<CodexExecResult>
   const command = await resolveCodexCommand();
 
   if (options.allowWrite) {
-    args.push("--full-auto");
+    args.push("--sandbox", "workspace-write");
   } else {
     args.push("-s", "read-only");
   }

@@ -14,20 +14,21 @@
   },
   "bundleDependencies": [
     "@srgical/agent-runtime",
+    "@srgical/connector-registry",
     "@srgical/skill-registry",
     "@srgical/studio-core",
     "@srgical/studio-shared"
   ],
   "scripts": {
-    "prebuild": "npm --prefix ../.. run build -w @srgical/studio-shared && npm --prefix ../.. run build -w @srgical/agent-runtime && npm --prefix ../.. run build -w @srgical/skill-registry && npm --prefix ../.. run build -w @srgical/studio-core && npm --prefix ../.. run build -w @srgical/studio-web",
+    "prebuild": "npm --prefix ../.. run build -w @srgical/studio-shared && npm --prefix ../.. run build -w @srgical/agent-runtime && npm --prefix ../.. run build -w @srgical/skill-registry && npm --prefix ../.. run build -w @srgical/connector-registry && npm --prefix ../.. run build -w @srgical/studio-core && npm --prefix ../.. run build -w @srgical/studio-web",
     "build": "tsc -p tsconfig.json && node scripts/sync-web-dist.mjs",
     "dev": "tsx src/index.ts",
     "start": "node dist/index.js",
     "postinstall": "node postinstall.js",
     "status": "tsx src/index.ts status",
-    "pretest": "npm --prefix ../.. run build -w @srgical/studio-shared && npm --prefix ../.. run build -w @srgical/agent-runtime && npm --prefix ../.. run build -w @srgical/skill-registry && npm --prefix ../.. run build -w @srgical/studio-core",
+    "pretest": "npm --prefix ../.. run build -w @srgical/studio-shared && npm --prefix ../.. run build -w @srgical/agent-runtime && npm --prefix ../.. run build -w @srgical/skill-registry && npm --prefix ../.. run build -w @srgical/connector-registry && npm --prefix ../.. run build -w @srgical/studio-core",
     "test": "tsx --test test/**/*.test.ts",
-    "pretest:coverage": "npm --prefix ../.. run build -w @srgical/studio-shared && npm --prefix ../.. run build -w @srgical/agent-runtime && npm --prefix ../.. run build -w @srgical/skill-registry && npm --prefix ../.. run build -w @srgical/studio-core",
+    "pretest:coverage": "npm --prefix ../.. run build -w @srgical/studio-shared && npm --prefix ../.. run build -w @srgical/agent-runtime && npm --prefix ../.. run build -w @srgical/skill-registry && npm --prefix ../.. run build -w @srgical/connector-registry && npm --prefix ../.. run build -w @srgical/studio-core",
     "test:coverage": "tsx --test --experimental-test-coverage test/**/*.test.ts"
   },
   "engines": {
@@ -55,6 +56,7 @@
   "license": "MIT",
   "dependencies": {
     "@srgical/agent-runtime": "0.0.0",
+    "@srgical/connector-registry": "0.0.0",
     "@srgical/skill-registry": "0.0.0",
     "@srgical/studio-core": "0.0.0",
     "@srgical/studio-shared": "0.0.0",

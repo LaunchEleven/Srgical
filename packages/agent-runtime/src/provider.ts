@@ -1,8 +1,10 @@
 import type {
   AgentCapability,
+  ConnectorRecord,
   AgentEventDraft,
   AgentPermissionMode,
-  AgentSessionRecord
+  AgentSessionRecord,
+  ResolvedMcpServerDefinition
 } from "@srgical/studio-shared";
 
 export type AgentProviderStatus = {
@@ -21,6 +23,7 @@ export type AgentSessionStartOptions = {
   fork?: boolean;
   emit(event: AgentEventDraft): Promise<void>;
   signal: AbortSignal;
+  mcpServers?: Record<string, ResolvedMcpServerDefinition>;
 };
 
 export type AgentPermissionResolution = {
@@ -41,6 +44,8 @@ export interface AgentSessionHandle {
   resolvePermission?(requestId: string, resolution: AgentPermissionResolution): Promise<void>;
   resolveQuestion?(requestId: string, resolution: AgentQuestionResolution): Promise<void>;
   rewind?(checkpointId: string, dryRun?: boolean): Promise<{ changedFiles: string[] }>;
+  getMcpStatus?(): Promise<Array<Pick<ConnectorRecord, "connectorId" | "status" | "statusDetail" | "tools">>>;
+  reconnectMcpServer?(connectorId: string): Promise<void>;
 }
 
 export interface AgentProvider {

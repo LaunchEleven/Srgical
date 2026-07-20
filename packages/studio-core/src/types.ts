@@ -2,7 +2,7 @@ import type { ChatMessage } from "../../../apps/cli/src/core/prompts";
 import type { PlanningPackState } from "../../../apps/cli/src/core/planning-pack-state";
 import type { StudioUiConfig } from "../../../apps/cli/src/core/studio-ui-config";
 import type { PlanDiceOptions } from "../../../apps/cli/src/core/plan-dicing";
-import type { AgentEvent, AgentSessionRecord, SkillRegistrySnapshot, StudioMode, StudioSettings, StudioTheme } from "@srgical/studio-shared";
+import type { AgentEvent, AgentSessionRecord, ConnectorRegistrySnapshot, McpServerDefinition, SkillRegistrySnapshot, StudioMode, StudioSettings, StudioTheme } from "@srgical/studio-shared";
 import type { AgentProviderStatus } from "@srgical/agent-runtime";
 
 export type StudioActionId =
@@ -35,6 +35,12 @@ export type StudioActionId =
   | "skill-trust"
   | "skill-directory-add"
   | "skill-directory-remove"
+  | "connector-install"
+  | "connector-upsert"
+  | "connector-import"
+  | "connector-toggle"
+  | "connector-remove"
+  | "connector-reconnect"
   | "session-create"
   | "session-switch"
   | "session-fork"
@@ -71,6 +77,12 @@ export type StudioActionRequest = {
   sessionId?: string;
   title?: string;
   pinned?: boolean;
+  connectorId?: string;
+  presetId?: string;
+  connectorLabel?: string;
+  connectorDescription?: string;
+  connectorDefinition?: McpServerDefinition;
+  rawConfig?: string;
 };
 
 export type StudioActionState = {
@@ -167,6 +179,11 @@ export type LaneCreateRequest = {
   mode: StudioMode;
 };
 
+export type ConversationStartRequest = {
+  message: string;
+  isolation: "repository" | "worktree";
+};
+
 export type LaneOpenResponse = {
   laneId: string;
   studioToken: string;
@@ -197,6 +214,7 @@ export type StudioSnapshot = {
   prepareClarity: PrepareClarityView | null;
   references: ReferenceView;
   skills: SkillRegistrySnapshot;
+  connectors: ConnectorRegistrySnapshot;
   footerText: string;
 };
 

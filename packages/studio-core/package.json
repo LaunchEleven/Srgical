@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "@srgical/agent-runtime": "0.0.0",
+    "@srgical/connector-registry": "0.0.0",
     "@srgical/skill-registry": "0.0.0",
     "@srgical/studio-shared": "0.0.0"
   },

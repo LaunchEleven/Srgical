@@ -14,7 +14,8 @@ It is built around a simple loop:
 Requirements:
 
 - Node.js 20 or newer
-- A Claude Console API key or supported cloud provider for the native Claude experience; a working `codex`, `claude`, or `auggie` CLI remains available as a compatibility fallback
+- Codex authentication from `codex login` or `CODEX_API_KEY`, or Claude authentication through a Console API key or supported cloud provider
+- A working `claude` or `auggie` CLI is optional and remains available as a compatibility fallback
 
 ```bash
 npm install -g @launch11/srgical
@@ -40,11 +41,13 @@ Add `--web` for the conversation-first local Studio:
 srgical prepare release-readiness --web
 ```
 
-The Studio keeps worktrees, conversations, provider activity, approvals, questions, plan state, and skills in one window.
+The Studio keeps worktrees, conversations, provider activity, approvals, questions, plan state, and skills in one window. Once it is open, the default entry point is simply **What do you want to work on?**—no plan name, mode, branch, or worktree decision is required for each new conversation.
 
-## Native Claude provider
+## Native Codex and Claude providers
 
-The native provider uses `@anthropic-ai/claude-agent-sdk` and activates when one of these supported authentication paths is configured:
+The native Codex provider uses the official `@openai/codex-sdk` and its pinned CLI runtime. It reuses `codex login` authentication or `CODEX_API_KEY`, keeps resumable Codex thread IDs, streams structured tool/file/MCP/usage events, and applies read-only or workspace-write sandboxing from the conversation's permission mode.
+
+The native Claude provider uses `@anthropic-ai/claude-agent-sdk` and activates when one of these supported authentication paths is configured:
 
 - `ANTHROPIC_API_KEY`
 - `CLAUDE_CODE_USE_BEDROCK=1`
@@ -53,11 +56,13 @@ The native provider uses `@anthropic-ai/claude-agent-sdk` and activates when one
 
 Srgical deliberately does not reuse Claude subscription OAuth or browser credentials. If supported native authentication is unavailable, Studio explains why and uses the selected local CLI adapter.
 
-Native sessions support partial streaming, durable resume/fork, tool progress, tasks, permission prompts, questions, interrupt, usage/rate-limit events, and file checkpoints.
+Both native providers support durable sessions, resume, streaming, tool progress, tasks, interrupt, usage events, skills, and MCP servers. Claude additionally exposes provider-native session forks, interactive permission and question requests, rate-limit events, live MCP connection status, and file checkpoints. Codex worktree promotion starts a new thread with the preserved Srgical transcript and plan context because the TypeScript SDK does not currently expose thread forking.
 
 ## Sessions
 
-A session is the durable unit of conversation; a worktree is a workspace the session may use for a period of time. They intentionally are not one-to-one. Studio provides a repository-wide session library with search, recency groups, pinned and archived views, message previews, fork ancestry, and current or retired workspace context. A session can be reopened in its live worktree or forked into a fresh worktree when its previous workspace has retired.
+A session is the durable unit of conversation; a worktree is a workspace the session may use for a period of time. They intentionally are not one-to-one. New conversations start against protected repository context with planning permissions, unless **Start in a worktree** is selected. When a discussion becomes implementation work, **Create worktree** carries its provider context where supported, transcript, plan artifacts, connectors, and effective tools into an isolated branch and worktree.
+
+Studio provides a repository-wide session library with search, recency groups, pinned and archived views, message previews, fork ancestry, and current or retired workspace context. Repository conversations and worktree conversations can both be reopened from the same history.
 
 Use **Finish Work** on a lane for post-operation cleanup. Studio assesses active operations, dirty/conflicted files, divergence, locks, and primary-checkout safety before acting. Finishing archives the lane's sessions and records their terminal commit and workspace summary. Worktree removal remains separately gated and requires the lane ID as typed confirmation; the branch, transcripts, plan artifacts, and binding history are retained.
 
@@ -75,6 +80,29 @@ The global skills directory is created automatically at `~/.srgical/skills`. Stu
 - additional directories configured in the Skills inspector
 
 Skills are hashed with their supporting files and tracked by source, scope, trust, compatibility, precedence, and conflicts. They can be enabled, disabled, trusted, reviewed, or blocked per repository.
+
+## Connectors and MCP servers
+
+Studio has a **MCP** inspector for connecting external tools and context to native Codex and Claude sessions. It includes presets for Linear, Slack, and Google Drive, plus custom Streamable HTTP, SSE, and local stdio servers. Existing Claude-style JSON can be imported directly:
+
+```json
+{
+  "mcpServers": {
+    "linear": {
+      "type": "http",
+      "url": "https://mcp.linear.app/mcp"
+    },
+    "local-tools": {
+      "command": "npx",
+      "args": ["-y", "@example/mcp-server"]
+    }
+  }
+}
+```
+
+Connector definitions are repository-scoped but live under `~/.srgical/repos/<repo-id>/connectors.json`, outside Git worktrees. Use `${ENV_VAR}` placeholders for tokens, headers, process environment values, and OAuth client credentials so secrets do not need to be written to that file. Studio reports missing variables before a turn, then shows the provider's live connection state and discovered tools while the turn is active.
+
+Remote OAuth behavior depends on the MCP server and provider. Claude receives compatible OAuth client metadata; Codex uses its normal MCP OAuth credential store and callback configuration. Linear supports dynamic registration, Slack requires workspace approval, and Google's Drive MCP is currently a Developer Preview and requires a configured Google OAuth client. Connector changes take effect on the next native provider turn. Claude's normal user/project/local settings sources, including compatible `.mcp.json` configuration, and Codex's normal `config.toml` MCP sources remain enabled alongside Srgical-managed connectors.
 
 That command creates the plan pack under `.srgical/plans/release-readiness/` if it does not exist, then opens the full-screen prepare studio.
 

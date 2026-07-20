@@ -1,5 +1,7 @@
 import type {
   CanUseTool,
+  McpServerConfig,
+  McpServerStatus,
   Options as AnthropicOptions,
   PermissionResult,
   Query,
@@ -8,7 +10,9 @@ import type {
 import type {
   AgentEventDraft,
   AgentPermissionMode,
-  AgentQuestion
+  AgentQuestion,
+  ConnectorRecord,
+  ResolvedMcpServerDefinition
 } from "@srgical/studio-shared";
 import type {
   AgentPermissionResolution,
@@ -21,7 +25,8 @@ import type {
 
 type QueryFactory = (params: { prompt: string; options?: AnthropicOptions }) => QueryLike;
 
-type QueryLike = AsyncIterable<SDKMessage> & Pick<Query, "interrupt" | "setPermissionMode" | "rewindFiles">;
+type QueryLike = AsyncIterable<SDKMessage> & Pick<Query, "interrupt" | "setPermissionMode" | "rewindFiles"> &
+  Partial<Pick<Query, "mcpServerStatus" | "reconnectMcpServer">>;
 
 type PendingPermission = {
   toolUseId: string;
@@ -51,7 +56,8 @@ const CAPABILITIES: AgentProviderStatus["capabilities"] = [
   "tasks",
   "usage",
   "checkpoints",
-  "skills"
+  "skills",
+  "mcp"
 ];
 
 export class AnthropicAgentProvider implements AgentProvider {
@@ -178,6 +184,7 @@ export class AnthropicAgentProvider implements AgentProvider {
         promptSuggestions: true,
         resume: options.resumeProviderSessionId ?? undefined,
         settingSources: ["user", "project", "local"],
+        mcpServers: toSdkMcpServers(options.mcpServers ?? {}),
         toolConfig: { askUserQuestion: { previewFormat: "html" } }
       }
     });
@@ -240,9 +247,58 @@ export class AnthropicAgentProvider implements AgentProvider {
           providerPayload: result
         });
         return { changedFiles };
+      },
+      async getMcpStatus() {
+        if (!query.mcpServerStatus) return [];
+        return (await query.mcpServerStatus()).map(mapMcpStatus);
+      },
+      async reconnectMcpServer(connectorId) {
+        if (!query.reconnectMcpServer) throw new Error("This provider cannot reconnect MCP servers.");
+        await query.reconnectMcpServer(connectorId);
       }
     };
   }
+}
+
+function toSdkMcpServers(servers: Record<string, ResolvedMcpServerDefinition>): Record<string, McpServerConfig> {
+  return Object.fromEntries(Object.entries(servers).map(([name, definition]) => {
+    if (definition.transport === "stdio") {
+      return [name, {
+        type: "stdio",
+        command: definition.command!,
+        args: definition.args,
+        env: definition.env,
+        timeout: definition.timeoutMs,
+        alwaysLoad: definition.alwaysLoad
+      } satisfies McpServerConfig];
+    }
+    const config = {
+      type: definition.transport,
+      url: definition.url!,
+      headers: definition.headers,
+      timeout: definition.timeoutMs,
+      alwaysLoad: definition.alwaysLoad,
+      ...(definition.oauth ? { oauth: definition.oauth } : {})
+    };
+    // Claude's MCP config accepts OAuth metadata used by official connectors;
+    // the SDK's public transport type does not expose those optional fields yet.
+    return [name, config as McpServerConfig];
+  }));
+}
+
+function mapMcpStatus(status: McpServerStatus): Pick<ConnectorRecord, "connectorId" | "status" | "statusDetail" | "tools"> {
+  return {
+    connectorId: status.name,
+    status: status.status,
+    statusDetail: status.error ?? (status.serverInfo ? `${status.serverInfo.name} ${status.serverInfo.version}` : null),
+    tools: (status.tools ?? []).map((tool) => ({
+      name: tool.name,
+      description: tool.description,
+      readOnly: tool.annotations?.readOnly,
+      destructive: tool.annotations?.destructive,
+      openWorld: tool.annotations?.openWorld
+    }))
+  };
 }
 
 export function detectSupportedAuthentication(env: NodeJS.ProcessEnv): { authenticated: boolean; detail: string } {
