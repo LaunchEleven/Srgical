@@ -7,7 +7,7 @@ import { promisify } from "node:util";
 import test from "node:test";
 import { AgentSessionStore, deriveRepositoryId } from "@srgical/agent-runtime";
 import { createWorktreeLane, setWorktreeLaneDeleteLock } from "../../src/core/worktree-lanes";
-import { createConversationPlanId, createWebStudioHost, deriveConversationTitle } from "../../src/ui/web-studio";
+import { createConversationPlanId, createWebStudioHost, deriveConversationPlanLabel } from "../../src/ui/web-studio";
 import { createTempWorkspace } from "../helpers/workspace";
 
 const execFileAsync = promisify(execFile);
@@ -79,7 +79,7 @@ test("web host starts a repository conversation and promotes it to a worktree", 
   assert.ok(studio);
   assert.equal(opened.laneId, "current");
   assert.equal(studio.controller.getSnapshot().laneId, "current");
-  assert.equal(studio.controller.getSnapshot().agentSession.title, "Understand the authentication flow before we change anything");
+  assert.equal(studio.controller.getSnapshot().agentSession.title, "New conversation");
   assert.equal((await host.getRepoSnapshot()).lanes.filter((lane) => lane.source === "managed").length, 0);
 
   const promoted = await host.forkSessionIntoWorktree(studio.controller.getSnapshot().agentSession.sessionId);
@@ -93,8 +93,8 @@ test("web host starts a repository conversation and promotes it to a worktree", 
   await host.removeLane(promoted.laneId);
 });
 
-test("conversation titles and internal plan ids are derived without naming ceremony", () => {
-  assert.equal(deriveConversationTitle("  Investigate the flaky test\nThen propose a fix  "), "Investigate the flaky test");
+test("internal plan ids are derived without turning the first prompt into a chat title", () => {
+  assert.equal(deriveConversationPlanLabel("  Investigate the flaky test\nThen propose a fix  "), "Investigate the flaky test");
   assert.match(createConversationPlanId("Investigate the flaky test"), /^investigate-the-flaky-test-[a-f0-9]{6}$/);
 });
 

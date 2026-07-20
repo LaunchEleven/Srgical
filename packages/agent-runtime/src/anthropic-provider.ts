@@ -42,7 +42,10 @@ type PendingQuestion = {
 export type AnthropicAgentProviderOptions = {
   query?: QueryFactory;
   env?: NodeJS.ProcessEnv;
+  authMethod?: AnthropicAuthMethod;
 };
+
+export type AnthropicAuthMethod = "auto" | "api-key" | "bedrock" | "vertex" | "foundry";
 
 const CAPABILITIES: AgentProviderStatus["capabilities"] = [
   "streaming",
@@ -61,14 +64,26 @@ const CAPABILITIES: AgentProviderStatus["capabilities"] = [
 ];
 
 export class AnthropicAgentProvider implements AgentProvider {
-  readonly id = "anthropic-agent-sdk";
-  readonly label = "Claude Agent SDK";
+  readonly id: string;
+  readonly label: string;
   readonly #factory?: QueryFactory;
   readonly #env: NodeJS.ProcessEnv;
+  readonly #authMethod: AnthropicAuthMethod;
 
   constructor(options: AnthropicAgentProviderOptions = {}) {
     this.#factory = options.query;
     this.#env = options.env ?? process.env;
+    this.#authMethod = options.authMethod ?? "auto";
+    this.id = this.#authMethod === "auto" ? "anthropic-agent-sdk" : `anthropic-agent-sdk:${this.#authMethod}`;
+    this.label = this.#authMethod === "api-key"
+      ? "Claude · API key"
+      : this.#authMethod === "bedrock"
+        ? "Claude · Amazon Bedrock"
+        : this.#authMethod === "vertex"
+          ? "Claude · Google Vertex AI"
+          : this.#authMethod === "foundry"
+            ? "Claude · Microsoft Foundry"
+            : "Claude Agent SDK";
   }
 
   async detect(): Promise<AgentProviderStatus> {
@@ -76,7 +91,7 @@ export class AnthropicAgentProvider implements AgentProvider {
       if (!this.#factory) {
         await loadQueryFactory();
       }
-      const authentication = detectSupportedAuthentication(this.#env);
+      const authentication = detectSupportedAuthentication(this.#env, this.#authMethod);
       return {
         providerId: this.id,
         label: this.label,
@@ -175,6 +190,7 @@ export class AnthropicAgentProvider implements AgentProvider {
       options: {
         abortController,
         cwd: options.session.workspace,
+        env: buildAnthropicProviderEnvironment(this.#env, this.#authMethod),
         canUseTool,
         enableFileCheckpointing: true,
         forkSession: options.fork ?? false,
@@ -301,23 +317,53 @@ function mapMcpStatus(status: McpServerStatus): Pick<ConnectorRecord, "connector
   };
 }
 
-export function detectSupportedAuthentication(env: NodeJS.ProcessEnv): { authenticated: boolean; detail: string } {
-  if (env.ANTHROPIC_API_KEY?.trim()) {
+export function detectSupportedAuthentication(
+  env: NodeJS.ProcessEnv,
+  authMethod: AnthropicAuthMethod = "auto"
+): { authenticated: boolean; detail: string } {
+  if ((authMethod === "auto" || authMethod === "api-key") && env.ANTHROPIC_API_KEY?.trim()) {
     return { authenticated: true, detail: "Claude Console API key configured" };
   }
-  if (truthy(env.CLAUDE_CODE_USE_BEDROCK)) {
+  if ((authMethod === "auto" || authMethod === "bedrock") && truthy(env.CLAUDE_CODE_USE_BEDROCK)) {
     return { authenticated: true, detail: "Amazon Bedrock authentication selected" };
   }
-  if (truthy(env.CLAUDE_CODE_USE_VERTEX)) {
+  if ((authMethod === "auto" || authMethod === "vertex") && truthy(env.CLAUDE_CODE_USE_VERTEX)) {
     return { authenticated: true, detail: "Google Vertex AI authentication selected" };
   }
-  if (truthy(env.CLAUDE_CODE_USE_FOUNDRY)) {
+  if ((authMethod === "auto" || authMethod === "foundry") && truthy(env.CLAUDE_CODE_USE_FOUNDRY)) {
     return { authenticated: true, detail: "Microsoft Foundry authentication selected" };
   }
+  const setup = authMethod === "api-key"
+    ? "Set ANTHROPIC_API_KEY."
+    : authMethod === "bedrock"
+      ? "Set CLAUDE_CODE_USE_BEDROCK=1 and configure AWS credentials."
+      : authMethod === "vertex"
+        ? "Set CLAUDE_CODE_USE_VERTEX=1 and configure Google Cloud credentials."
+        : authMethod === "foundry"
+          ? "Set CLAUDE_CODE_USE_FOUNDRY=1 and configure Microsoft Foundry credentials."
+          : "Configure a Claude Console API key or supported cloud provider. Srgical does not reuse Claude subscription OAuth.";
   return {
     authenticated: false,
-    detail: "Configure a Claude Console API key or supported cloud provider. Srgical does not reuse Claude subscription OAuth."
+    detail: setup
   };
+}
+
+export function buildAnthropicProviderEnvironment(
+  sourceEnv: NodeJS.ProcessEnv,
+  authMethod: AnthropicAuthMethod
+): Record<string, string | undefined> {
+  const env = { ...sourceEnv };
+  if (authMethod === "auto") return env;
+
+  delete env.ANTHROPIC_API_KEY;
+  delete env.CLAUDE_CODE_USE_BEDROCK;
+  delete env.CLAUDE_CODE_USE_VERTEX;
+  delete env.CLAUDE_CODE_USE_FOUNDRY;
+  if (authMethod === "api-key") env.ANTHROPIC_API_KEY = sourceEnv.ANTHROPIC_API_KEY;
+  if (authMethod === "bedrock") env.CLAUDE_CODE_USE_BEDROCK = "1";
+  if (authMethod === "vertex") env.CLAUDE_CODE_USE_VERTEX = "1";
+  if (authMethod === "foundry") env.CLAUDE_CODE_USE_FOUNDRY = "1";
+  return env;
 }
 
 function mapSdkMessage(message: SDKMessage, streamedMessages: Map<string, string>): AgentEventDraft[] {

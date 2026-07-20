@@ -18,8 +18,14 @@ import {
   type StudioEvent,
   type StudioSnapshot
 } from "@srgical/studio-core";
-import { AgentSessionStore, deriveRepositoryId } from "@srgical/agent-runtime";
-import type { StudioMode } from "@srgical/studio-shared";
+import { AgentSessionStore, deriveRepositoryId, detectAgentAuthOptions } from "@srgical/agent-runtime";
+import type { StudioAuthOptionId, StudioMode } from "@srgical/studio-shared";
+import {
+  installConnectorPreset as installRepoConnectorPreset,
+  loadConnectorRegistry,
+  removeConnector as removeRepoConnector,
+  setConnectorEnabled as setRepoConnectorEnabled
+} from "@srgical/connector-registry";
 import { fileExists } from "../core/workspace";
 import {
   archiveWorktreeLane,
@@ -32,6 +38,7 @@ import {
 } from "../core/worktree-lanes";
 import { listReferenceDirectoryOptions } from "../core/reference-library";
 import { assessFinishWork } from "../core/finish-work";
+import { loadStudioSettings, saveStudioSettings } from "../core/studio-settings";
 
 export type LaunchWebStudioOptions = {
   workspace?: string;
@@ -53,6 +60,10 @@ type StudioSession = {
 
 type WebStudioHost = {
   getRepoSnapshot(): Promise<RepoSnapshot>;
+  selectAuthOption(authOptionId: StudioAuthOptionId): Promise<RepoSnapshot>;
+  installConnector(presetId: string): Promise<RepoSnapshot>;
+  setConnectorEnabled(connectorId: string, enabled: boolean): Promise<RepoSnapshot>;
+  removeConnector(connectorId: string): Promise<RepoSnapshot>;
   startConversation(request: ConversationStartRequest): Promise<LaneOpenResponse>;
   createLane(request: LaneCreateRequest): Promise<LaneOpenResponse>;
   openLane(laneId: string, mode: StudioMode, agentSessionId?: string): Promise<LaneOpenResponse>;
@@ -135,6 +146,9 @@ export async function createWebStudioHost(options: LaunchWebStudioOptions = {}):
   const getRepoSnapshot = async (): Promise<RepoSnapshot> => {
     const nextRepoState = await resolveWorktreeLaneRepoState(repoState.currentWorkspace);
     const agentSessions = (await agentSessionStore.list(repoId)).filter((session) => session.lifecycle !== "deleted");
+    const settings = await loadStudioSettings();
+    const authOptions = await detectAgentAuthOptions(settings.preferredAuthOptionId);
+    const connectors = await loadConnectorRegistry(repoId);
     return {
       repoRoot: nextRepoState.repoRoot,
       repoLabel: path.basename(nextRepoState.repoRoot) || nextRepoState.repoRoot,
@@ -142,8 +156,37 @@ export async function createWebStudioHost(options: LaunchWebStudioOptions = {}):
       requestedPlanId: options.planId ?? null,
       requestedMode: options.mode ?? null,
       lanes: nextRepoState.lanes,
-      sessions: agentSessions
+      sessions: agentSessions,
+      settings,
+      authOptions,
+      connectors
     };
+  };
+
+  const selectAuthOption = async (authOptionId: StudioAuthOptionId): Promise<RepoSnapshot> => {
+    const authOptions = await detectAgentAuthOptions(null);
+    const requested = authOptions.find((item) => item.id === authOptionId);
+    if (!requested) throw new Error("Choose a supported authentication option.");
+    if (!requested.authenticated) {
+      throw new Error(`${requested.providerLabel} · ${requested.label} is not connected. ${requested.setupHint}`);
+    }
+    await saveStudioSettings({ preferredAuthOptionId: authOptionId });
+    return getRepoSnapshot();
+  };
+
+  const installConnector = async (presetId: string): Promise<RepoSnapshot> => {
+    await installRepoConnectorPreset(repoId, presetId);
+    return getRepoSnapshot();
+  };
+
+  const setConnectorEnabled = async (connectorId: string, enabled: boolean): Promise<RepoSnapshot> => {
+    await setRepoConnectorEnabled(repoId, connectorId, enabled);
+    return getRepoSnapshot();
+  };
+
+  const removeConnector = async (connectorId: string): Promise<RepoSnapshot> => {
+    await removeRepoConnector(repoId, connectorId);
+    return getRepoSnapshot();
   };
 
   const openLane = async (
@@ -234,8 +277,8 @@ export async function createWebStudioHost(options: LaunchWebStudioOptions = {}):
     if (request.isolation !== "repository" && request.isolation !== "worktree") {
       throw new Error("Conversation isolation must be repository or worktree.");
     }
-    const title = deriveConversationTitle(message);
-    const planId = createConversationPlanId(title);
+    const planLabel = deriveConversationPlanLabel(message);
+    const planId = createConversationPlanId(planLabel);
     let opened: LaneOpenResponse;
     if (request.isolation === "worktree") {
       const created = await createWorktreeLane(repoState.currentWorkspace, { planId, mode: "prepare" });
@@ -246,7 +289,7 @@ export async function createWebStudioHost(options: LaunchWebStudioOptions = {}):
     const studio = sessions.get(opened.studioToken);
     if (!studio) throw new Error("The conversation could not be opened.");
     await studio.startPromise;
-    await studio.controller.dispatch({ type: "session-rename", title });
+    await studio.controller.dispatch({ type: "session-rename", title: "New conversation" });
     return opened;
   };
 
@@ -418,6 +461,10 @@ export async function createWebStudioHost(options: LaunchWebStudioOptions = {}):
 
   return {
     getRepoSnapshot,
+    selectAuthOption,
+    installConnector,
+    setConnectorEnabled,
+    removeConnector,
     startConversation,
     createLane,
     openLane,
@@ -473,6 +520,48 @@ async function routeRequest(
     response.statusCode = 200;
     response.setHeader("content-type", "application/json");
     response.end(JSON.stringify(await context.host.getRepoSnapshot()));
+    return;
+  }
+
+  if (request.method === "POST" && url.pathname === "/api/settings/provider") {
+    if (!isDashboardAuthorized) return respondUnauthorized(response);
+    const body = await readJsonBody<{ authOptionId?: StudioAuthOptionId }>(request);
+    if (!body.authOptionId) throw new Error("Authentication option id is required.");
+    response.statusCode = 200;
+    response.setHeader("content-type", "application/json");
+    response.end(JSON.stringify(await context.host.selectAuthOption(body.authOptionId)));
+    return;
+  }
+
+  if (request.method === "POST" && url.pathname === "/api/settings/connectors/install") {
+    if (!isDashboardAuthorized) return respondUnauthorized(response);
+    const body = await readJsonBody<{ presetId?: string }>(request);
+    if (!body.presetId) throw new Error("Connector preset id is required.");
+    response.statusCode = 200;
+    response.setHeader("content-type", "application/json");
+    response.end(JSON.stringify(await context.host.installConnector(body.presetId)));
+    return;
+  }
+
+  if (request.method === "POST" && url.pathname === "/api/settings/connectors/toggle") {
+    if (!isDashboardAuthorized) return respondUnauthorized(response);
+    const body = await readJsonBody<{ connectorId?: string; enabled?: boolean }>(request);
+    if (!body.connectorId || typeof body.enabled !== "boolean") {
+      throw new Error("Connector id and enabled state are required.");
+    }
+    response.statusCode = 200;
+    response.setHeader("content-type", "application/json");
+    response.end(JSON.stringify(await context.host.setConnectorEnabled(body.connectorId, body.enabled)));
+    return;
+  }
+
+  if (request.method === "POST" && url.pathname === "/api/settings/connectors/remove") {
+    if (!isDashboardAuthorized) return respondUnauthorized(response);
+    const body = await readJsonBody<{ connectorId?: string }>(request);
+    if (!body.connectorId) throw new Error("Connector id is required.");
+    response.statusCode = 200;
+    response.setHeader("content-type", "application/json");
+    response.end(JSON.stringify(await context.host.removeConnector(body.connectorId)));
     return;
   }
 
@@ -748,7 +837,7 @@ function openUrl(url: string): void {
   spawn("xdg-open", [url], { detached: true, stdio: "ignore" }).unref();
 }
 
-export function deriveConversationTitle(message: string): string {
+export function deriveConversationPlanLabel(message: string): string {
   const firstLine = message.trim().split(/\r?\n/, 1)[0].replace(/\s+/g, " ");
   if (firstLine.length <= 72) return firstLine;
   return `${firstLine.slice(0, 69).trimEnd()}...`;

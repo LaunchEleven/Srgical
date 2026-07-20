@@ -27,6 +27,17 @@ test("connector registry installs verified presets outside the repository", asyn
   assert.equal(stored.version, 1);
 });
 
+test("connector catalog includes the hosted Notion OAuth service", async () => {
+  const home = await createTempHome();
+  await installConnectorPreset("repo-notion", "notion", home);
+
+  const snapshot = await loadConnectorRegistry("repo-notion", { homeDir: home, env: {} });
+  const notion = snapshot.connectors.find((connector) => connector.presetId === "notion");
+  assert.equal(notion?.definition.transport, "http");
+  assert.equal(notion?.definition.url, "https://mcp.notion.com/mcp");
+  assert.equal(notion?.status, "ready");
+});
+
 test("connector registry resolves environment references without persisting resolved secrets", async () => {
   const home = await createTempHome();
   await upsertConnector("repo-2", {

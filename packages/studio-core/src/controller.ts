@@ -4,8 +4,12 @@ import {
   AgentSessionStore,
   AnthropicAgentProvider,
   CodexAgentProvider,
+  authOptionIdFromProviderId,
+  createAgentProviderForAuthOption,
+  detectAgentAuthOptions,
   deriveRepositoryId,
   runLegacyTextTurn,
+  selectAgentAuthOption,
   type AgentProvider,
   type AgentProviderStatus,
   type AgentSessionHandle
@@ -62,7 +66,7 @@ import {
   saveSelectedReferenceIds,
   toggleReferenceSelection
 } from "../../../apps/cli/src/core/reference-library";
-import { getStudioTheme, type AgentEventDraft, type AgentSessionRecord, type StudioMode } from "@srgical/studio-shared";
+import { getStudioTheme, type AgentEventDraft, type AgentSessionRecord, type StudioAuthOptionStatus, type StudioMode } from "@srgical/studio-shared";
 import {
   importMcpJson,
   installConnectorPreset,
@@ -151,16 +155,25 @@ export async function createStudioController(options: StudioControllerOptions = 
   let messages = await loadStudioSession(workspace, { planId });
   let state = await readPlanningPackState(workspace, { planId });
   let agent = await resolveAgent(workspace, { planId });
-  const nativeProvider = options.agentProvider ?? (
-    options.agentProviderId === "anthropic-agent-sdk"
-      ? new AnthropicAgentProvider()
-      : options.agentProviderId === "codex-sdk" || agent.status.id === "codex"
-        ? new CodexAgentProvider()
-        : new AnthropicAgentProvider()
-  );
+  let settings = await loadStudioSettings();
+  let authOptions = await detectAgentAuthOptions(settings.preferredAuthOptionId);
+  const sessionAuthOptionId = authOptionIdFromProviderId(options.agentProviderId);
+  const preferredStatus = options.agentProvider || (options.agentProviderId && !sessionAuthOptionId)
+    ? null
+    : selectAgentAuthOption(authOptions, sessionAuthOptionId ?? settings.preferredAuthOptionId);
+  const nativeProvider = options.agentProvider
+    ?? (preferredStatus
+      ? createAgentProviderForAuthOption(preferredStatus.id)
+      : options.agentProviderId === "anthropic-agent-sdk"
+        ? new AnthropicAgentProvider()
+        : options.agentProviderId === "codex-sdk" || agent.status.id === "codex"
+          ? new CodexAgentProvider()
+          : new AnthropicAgentProvider());
   const nativeProviderStatus = await nativeProvider.detect();
   const nativeProviderSelected = options.agentProvider
     ? true
+    : preferredStatus
+      ? preferredStatus.providerId === nativeProvider.id
     : options.agentProviderId
       ? options.agentProviderId === nativeProvider.id
       : (agent.status.id === "codex" && nativeProvider.id === "codex-sdk")
@@ -209,7 +222,6 @@ export async function createStudioController(options: StudioControllerOptions = 
   let recentAgentEvents = (await agentSessionStore.readEvents(repoId, agentSession.sessionId)).slice(-250);
   let unsubscribeAgentEvents: () => void = () => undefined;
   let uiConfig = await loadStudioUiConfig(workspace, { planId });
-  let settings = await loadStudioSettings();
   let branchName = await getWorkspaceBranchName(workspace).catch(() => null);
   let prepareClarity = await loadPrepareClarityView(workspace, planId, state, messages);
   let references = await loadReferenceView(workspace, planId, state, messages);
@@ -235,6 +247,7 @@ export async function createStudioController(options: StudioControllerOptions = 
     busyStatus,
     agentLabel: activeProviderStatus.label,
     agentProvider: activeProviderStatus,
+    authOptions,
     agentSession,
     agentSessions,
     recentAgentEvents,
@@ -311,6 +324,7 @@ export async function createStudioController(options: StudioControllerOptions = 
     }
     uiConfig = await loadStudioUiConfig(workspace, { planId });
     settings = await loadStudioSettings();
+    authOptions = await detectAgentAuthOptions(settings.preferredAuthOptionId);
     skills = await discoverSkills(workspace, { repoId });
     connectors = await loadConnectorRegistry(repoId);
     agentSession = await agentSessionStore.update(repoId, agentSession.sessionId, {
@@ -902,6 +916,23 @@ export async function createStudioController(options: StudioControllerOptions = 
     }
   };
 
+  const setPreferredAuthOption = async (authOptionId?: string) => {
+    const nextOptions = await detectAgentAuthOptions(null);
+    const requested = nextOptions.find((item) => item.id === authOptionId);
+    if (!requested) {
+      throw new Error("Choose a supported authentication option.");
+    }
+    if (!requested.authenticated) {
+      throw new Error(`${requested.providerLabel} · ${requested.label} is not connected. ${requested.setupHint}`);
+    }
+    settings = await saveStudioSettings({ preferredAuthOptionId: requested.id });
+    authOptions = markSelectedAuthOption(nextOptions, requested.id);
+    publishSnapshot();
+    await system(
+      `${requested.providerLabel} · ${requested.label} selected for new conversations. This conversation remains on ${activeProviderStatus.label}.`
+    );
+  };
+
   const resolveBlocker = async () => {
     const before = await readPackSnapshot(workspace, { planId });
     try {
@@ -1203,6 +1234,9 @@ export async function createStudioController(options: StudioControllerOptions = 
           break;
         case "theme":
           await setTheme(request.themeId, request.announce !== false);
+          break;
+        case "provider-auth-select":
+          await setPreferredAuthOption(request.authOptionId);
           break;
         case "reference-toggle":
           if (!request.referenceId) {
@@ -1512,6 +1546,7 @@ function buildActionStates(mode: StudioMode, state: PlanningPackState): Record<S
     import: { enabled: prepareOnly, blockedReason: prepareOnly ? null : "Import is only available in prepare mode." },
     wheel: { enabled: true, blockedReason: null },
     theme: { enabled: true, blockedReason: null },
+    "provider-auth-select": { enabled: true, blockedReason: null },
     command: { enabled: true, blockedReason: null },
     "reference-toggle": { enabled: true, blockedReason: null },
     "reference-autoselect": { enabled: true, blockedReason: null },
@@ -1783,4 +1818,11 @@ async function listLaneSessions(
     && session.providerId === providerId
     && path.resolve(session.workspace) === path.resolve(workspace)
   );
+}
+
+function markSelectedAuthOption(
+  options: StudioAuthOptionStatus[],
+  selectedId: StudioAuthOptionStatus["id"]
+): StudioAuthOptionStatus[] {
+  return options.map((option) => ({ ...option, selected: option.id === selectedId }));
 }

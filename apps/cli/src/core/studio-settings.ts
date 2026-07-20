@@ -1,12 +1,13 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import type { StudioSettings } from "@srgical/studio-shared";
+import type { StudioAuthOptionId, StudioSettings } from "@srgical/studio-shared";
 
 type StoredStudioSettings = {
   version: 1;
   updatedAt: string;
   themeId: string;
+  preferredAuthOptionId?: StudioAuthOptionId | null;
 };
 
 export function getGlobalStudioSettingsPath(homeDir = os.homedir()): string {
@@ -23,6 +24,7 @@ export async function loadStudioSettings(homeDir?: string): Promise<StudioSettin
 
     return {
       themeId,
+      preferredAuthOptionId: sanitizeAuthOptionId(parsed.preferredAuthOptionId),
       updatedAt: typeof parsed.updatedAt === "string" && parsed.updatedAt.trim().length > 0
         ? parsed.updatedAt
         : createDefaultSettings().updatedAt
@@ -33,14 +35,17 @@ export async function loadStudioSettings(homeDir?: string): Promise<StudioSettin
 }
 
 export async function saveStudioSettings(
-  updates: Partial<Pick<StudioSettings, "themeId">>,
+  updates: Partial<Pick<StudioSettings, "themeId" | "preferredAuthOptionId">>,
   homeDir?: string
 ): Promise<StudioSettings> {
   const current = await loadStudioSettings(homeDir);
   const next: StoredStudioSettings = {
     version: 1,
     updatedAt: new Date().toISOString(),
-    themeId: sanitizeThemeId(updates.themeId ?? current.themeId)
+    themeId: sanitizeThemeId(updates.themeId ?? current.themeId),
+    preferredAuthOptionId: updates.preferredAuthOptionId === undefined
+      ? current.preferredAuthOptionId
+      : sanitizeAuthOptionId(updates.preferredAuthOptionId)
   };
   const settingsPath = getGlobalStudioSettingsPath(homeDir);
 
@@ -49,6 +54,7 @@ export async function saveStudioSettings(
 
   return {
     themeId: next.themeId,
+    preferredAuthOptionId: next.preferredAuthOptionId ?? null,
     updatedAt: next.updatedAt
   };
 }
@@ -56,10 +62,26 @@ export async function saveStudioSettings(
 function createDefaultSettings(): StudioSettings {
   return {
     themeId: "neon-command",
+    preferredAuthOptionId: null,
     updatedAt: "1970-01-01T00:00:00.000Z"
   };
 }
 
 function sanitizeThemeId(value: unknown): string {
   return value === "amber-grid" ? "amber-grid" : "neon-command";
+}
+
+const AUTH_OPTION_IDS = new Set<StudioAuthOptionId>([
+  "codex-chatgpt",
+  "codex-api-key",
+  "claude-api-key",
+  "claude-bedrock",
+  "claude-vertex",
+  "claude-foundry"
+]);
+
+function sanitizeAuthOptionId(value: unknown): StudioAuthOptionId | null {
+  return typeof value === "string" && AUTH_OPTION_IDS.has(value as StudioAuthOptionId)
+    ? value as StudioAuthOptionId
+    : null;
 }

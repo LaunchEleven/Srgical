@@ -97,8 +97,13 @@ test("Codex authentication recognizes API keys and saved CLI login state", async
   assert.equal((await detectCodexAuthentication({ CODEX_API_KEY: "key" }, "missing")).authenticated, true);
   assert.deepEqual(await detectCodexAuthentication({}, "definitely-missing-auth-file"), {
     authenticated: false,
-    detail: "Run `codex login` or set CODEX_API_KEY."
+    detail: "Run `codex login` or configure a Codex API key."
   });
+  assert.deepEqual(await detectCodexAuthentication({ OPENAI_API_KEY: "key" }, "missing", "chatgpt"), {
+    authenticated: false,
+    detail: "Run `codex login` and choose Sign in with ChatGPT."
+  });
+  assert.equal((await detectCodexAuthentication({ OPENAI_API_KEY: "key" }, "missing", "api-key")).authenticated, true);
 });
 
 test("Codex MCP and failure events map to shared Studio events", () => {

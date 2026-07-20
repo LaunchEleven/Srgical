@@ -11,6 +11,25 @@ test("studio-settings defaults to the primary theme when no global file exists",
   const settings = await loadStudioSettings(home);
 
   assert.equal(settings.themeId, "neon-command");
+  assert.equal(settings.preferredAuthOptionId, null);
+});
+
+test("save-studio-settings persists and sanitizes the preferred authentication option", async () => {
+  const home = await createTempHome();
+
+  const selected = await saveStudioSettings({ preferredAuthOptionId: "codex-chatgpt" }, home);
+  assert.equal(selected.preferredAuthOptionId, "codex-chatgpt");
+
+  const stored = await readFile(getGlobalStudioSettingsPath(home), "utf8");
+  assert.match(stored, /"preferredAuthOptionId":\s*"codex-chatgpt"/);
+
+  const settingsPath = getGlobalStudioSettingsPath(home);
+  await import("node:fs/promises").then(({ writeFile }) => writeFile(settingsPath, JSON.stringify({
+    version: 1,
+    themeId: "neon-command",
+    preferredAuthOptionId: "unknown-provider"
+  }), "utf8"));
+  assert.equal((await loadStudioSettings(home)).preferredAuthOptionId, null);
 });
 
 test("save-studio-settings persists the selected global theme and sanitizes unknown ids", async () => {

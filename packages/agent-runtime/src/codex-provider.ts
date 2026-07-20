@@ -1,4 +1,4 @@
-import { access } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import type {
@@ -34,7 +34,10 @@ export type CodexAgentProviderOptions = {
   createCodex?: CodexFactory;
   env?: NodeJS.ProcessEnv;
   authFilePath?: string;
+  authMethod?: CodexAuthMethod;
 };
+
+export type CodexAuthMethod = "auto" | "chatgpt" | "api-key";
 
 const CAPABILITIES: AgentProviderStatus["capabilities"] = [
   "streaming",
@@ -49,24 +52,36 @@ const CAPABILITIES: AgentProviderStatus["capabilities"] = [
 ];
 
 export class CodexAgentProvider implements AgentProvider {
-  readonly id = "codex-sdk";
-  readonly label = "Codex";
+  readonly id: string;
+  readonly label: string;
   readonly #factory?: CodexFactory;
   readonly #env: NodeJS.ProcessEnv;
   readonly #authFilePath: string;
+  readonly #authMethod: CodexAuthMethod;
 
   constructor(options: CodexAgentProviderOptions = {}) {
     this.#factory = options.createCodex;
     this.#env = options.env ?? process.env;
     const codexHome = this.#env.CODEX_HOME?.trim() || path.join(os.homedir(), ".codex");
     this.#authFilePath = options.authFilePath ?? path.join(codexHome, "auth.json");
+    this.#authMethod = options.authMethod ?? "auto";
+    this.id = this.#authMethod === "chatgpt"
+      ? "codex-sdk:chatgpt"
+      : this.#authMethod === "api-key"
+        ? "codex-sdk:api-key"
+        : "codex-sdk";
+    this.label = this.#authMethod === "chatgpt"
+      ? "Codex · ChatGPT subscription"
+      : this.#authMethod === "api-key"
+        ? "Codex · API key"
+        : "Codex";
   }
 
   async detect(): Promise<AgentProviderStatus> {
     try {
       const factory = this.#factory ?? await loadCodexFactory();
       factory();
-      const authentication = await detectCodexAuthentication(this.#env, this.#authFilePath);
+      const authentication = await detectCodexAuthentication(this.#env, this.#authFilePath, this.#authMethod);
       return {
         providerId: this.id,
         label: this.label,
@@ -94,7 +109,8 @@ export class CodexAgentProvider implements AgentProvider {
     if (options.signal.aborted) abort();
     else options.signal.addEventListener("abort", abort, { once: true });
 
-    const mcp = toCodexMcpConfiguration(options.mcpServers ?? {}, this.#env);
+    const providerEnv = buildCodexProviderEnvironment(this.#env, this.#authMethod);
+    const mcp = toCodexMcpConfiguration(options.mcpServers ?? {}, providerEnv);
     const client = factory({ config: mcp.config, env: mcp.env });
     const threadOptions: ThreadOptions = {
       workingDirectory: options.session.workspace,
@@ -147,17 +163,55 @@ export class CodexAgentProvider implements AgentProvider {
 
 export async function detectCodexAuthentication(
   env: NodeJS.ProcessEnv,
-  authFilePath = path.join(env.CODEX_HOME?.trim() || path.join(os.homedir(), ".codex"), "auth.json")
+  authFilePath = path.join(env.CODEX_HOME?.trim() || path.join(os.homedir(), ".codex"), "auth.json"),
+  authMethod: CodexAuthMethod = "auto"
 ): Promise<{ authenticated: boolean; detail: string }> {
+  if (authMethod === "api-key") {
+    const keyName = env.CODEX_API_KEY?.trim()
+      ? "CODEX_API_KEY"
+      : env.OPENAI_API_KEY?.trim()
+        ? "OPENAI_API_KEY"
+        : null;
+    return keyName
+      ? { authenticated: true, detail: `${keyName} is ready for Codex API billing` }
+      : { authenticated: false, detail: "Set CODEX_API_KEY or OPENAI_API_KEY to use API billing." };
+  }
+
+  try {
+    const parsed = JSON.parse(await readFile(authFilePath, "utf8")) as { auth_mode?: unknown; tokens?: unknown };
+    if (parsed.auth_mode === "chatgpt" && parsed.tokens) {
+      return { authenticated: true, detail: "Signed in with ChatGPT; Codex plan usage is available" };
+    }
+    if (authMethod === "chatgpt") {
+      return { authenticated: false, detail: "Run `codex login` and choose Sign in with ChatGPT." };
+    }
+  } catch {
+    if (authMethod === "chatgpt") {
+      return { authenticated: false, detail: "Run `codex login` and choose Sign in with ChatGPT." };
+    }
+  }
+
+
   if (env.CODEX_API_KEY?.trim() || env.OPENAI_API_KEY?.trim()) {
     return { authenticated: true, detail: "Codex API key configured" };
   }
-  try {
-    await access(authFilePath);
-    return { authenticated: true, detail: "Codex CLI login available" };
-  } catch {
-    return { authenticated: false, detail: "Run `codex login` or set CODEX_API_KEY." };
+  return { authenticated: false, detail: "Run `codex login` or configure a Codex API key." };
+}
+
+export function buildCodexProviderEnvironment(
+  sourceEnv: NodeJS.ProcessEnv,
+  authMethod: CodexAuthMethod
+): NodeJS.ProcessEnv {
+  const env = { ...sourceEnv };
+  if (authMethod === "chatgpt") {
+    delete env.CODEX_API_KEY;
+    delete env.OPENAI_API_KEY;
+  } else if (authMethod === "api-key") {
+    const apiKey = env.CODEX_API_KEY?.trim() || env.OPENAI_API_KEY?.trim();
+    delete env.OPENAI_API_KEY;
+    if (apiKey) env.CODEX_API_KEY = apiKey;
   }
+  return env;
 }
 
 export function toCodexMcpConfiguration(

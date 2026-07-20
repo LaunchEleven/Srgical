@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import type {
   ConversationStartRequest,
   LaneOpenResponse,
@@ -10,7 +12,8 @@ import type {
   StudioEvent,
   StudioSnapshot
 } from "@srgical/studio-core";
-import type { AgentEvent, AgentSessionRecord, ConnectorRecord, McpServerDefinition, McpTransport, SkillRecord } from "@srgical/studio-shared";
+import { STUDIO_THEMES } from "@srgical/studio-shared";
+import type { AgentEvent, AgentSessionRecord, ConnectorRecord, ConnectorRegistrySnapshot, McpServerDefinition, McpTransport, SkillRecord, StudioAuthOptionId, StudioAuthOptionStatus } from "@srgical/studio-shared";
 
 declare global {
   interface Window {
@@ -39,6 +42,7 @@ function RepositoryHome({ token }: { token: string }) {
   const [finishAssessment, setFinishAssessment] = useState<FinishWorkAssessment | null>(null);
   const [finishConfirmation, setFinishConfirmation] = useState("");
   const [removeAfterFinish, setRemoveAfterFinish] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   const refresh = async () => setSnapshot(await getJson<RepoSnapshot>(`/api/repo?token=${encodeURIComponent(token)}`));
   useEffect(() => {
@@ -121,6 +125,32 @@ function RepositoryHome({ token }: { token: string }) {
     await mutateLane("/api/sessions/update", { sessionId, action });
   };
 
+  const selectAuthOption = async (authOptionId: StudioAuthOptionId) => {
+    setBusy(true);
+    setError(null);
+    try {
+      const next = await postJson<RepoSnapshot, { authOptionId: StudioAuthOptionId }>("/api/settings/provider", token, { authOptionId });
+      setSnapshot(next);
+    } catch (reason) {
+      setError(errorText(reason));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const mutateConnector = async (path: string, body: object) => {
+    setBusy(true);
+    setError(null);
+    try {
+      const next = await postJson<RepoSnapshot, object>(path, token, body);
+      setSnapshot(next);
+    } catch (reason) {
+      setError(errorText(reason));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const beginFinish = async (laneId: string) => {
     setBusy(true);
     setError(null);
@@ -171,7 +201,7 @@ function RepositoryHome({ token }: { token: string }) {
     <div className="home-page">
       <header className="home-header">
         <Brand />
-        <div className="repo-path" title={snapshot.repoRoot}>{snapshot.repoRoot}</div>
+        <div className="home-header-actions"><div className="repo-path" title={snapshot.repoRoot}>{snapshot.repoRoot}</div><button className="quiet settings-trigger" onClick={() => setSettingsOpen(true)}>Settings</button></div>
       </header>
       <main className="home-main">
         <section className="home-intro">
@@ -276,6 +306,16 @@ function RepositoryHome({ token }: { token: string }) {
           onFinish={() => void finishWork()}
         />
       ) : null}
+      {settingsOpen ? <SettingsDialog
+        authOptions={snapshot.authOptions}
+        connectors={snapshot.connectors}
+        busy={busy}
+        onSelect={selectAuthOption}
+        onInstallConnector={(presetId) => mutateConnector("/api/settings/connectors/install", { presetId })}
+        onToggleConnector={(connectorId, enabled) => mutateConnector("/api/settings/connectors/toggle", { connectorId, enabled })}
+        onRemoveConnector={(connectorId) => mutateConnector("/api/settings/connectors/remove", { connectorId })}
+        onClose={() => setSettingsOpen(false)}
+      /> : null}
     </div>
   );
 }
@@ -398,8 +438,9 @@ function Studio({ token, dashboardToken: homeToken }: { token: string; dashboard
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [promoting, setPromoting] = useState(false);
-  const [inspector, setInspector] = useState<"worktree" | "connectors" | "skills" | "plan">("worktree");
-  const transcriptEnd = useRef<HTMLDivElement>(null);
+  const [inspector, setInspector] = useState<"worktree" | "connectors" | "skills" | "plan" | "settings">("worktree");
+  const transcriptScroll = useRef<HTMLElement>(null);
+  const stickTranscriptToBottom = useRef(true);
 
   useEffect(() => {
     void getJson<StudioSnapshot>(`/api/studio/session?token=${encodeURIComponent(token)}`).then((next) => {
@@ -428,8 +469,13 @@ function Studio({ token, dashboardToken: homeToken }: { token: string; dashboard
   }, [token]);
 
   useEffect(() => {
-    transcriptEnd.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [snapshot?.messages.length, snapshot?.recentAgentEvents.length]);
+    const scrollRegion = transcriptScroll.current;
+    if (!scrollRegion || !stickTranscriptToBottom.current) return;
+    const frame = window.requestAnimationFrame(() => {
+      scrollRegion.scrollTop = scrollRegion.scrollHeight;
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [snapshot?.messages.length, snapshot?.messages.at(-1)?.content.length, snapshot?.recentAgentEvents.length]);
 
   const action = async (request: StudioActionRequest) => {
     await postJson("/api/studio/action", token, request);
@@ -461,7 +507,7 @@ function Studio({ token, dashboardToken: homeToken }: { token: string; dashboard
   const pendingPermissions = unresolvedEvents(snapshot.recentAgentEvents, "permission.requested", "permission.resolved");
   const pendingQuestions = unresolvedEvents(snapshot.recentAgentEvents, "question.requested", "question.resolved");
   const activity = latestActivity(snapshot.recentAgentEvents);
-  const displayMessages = structuredConversation(snapshot);
+  const displayMessages = snapshot.messages;
 
   return (
     <div className="studio-layout">
@@ -482,7 +528,7 @@ function Studio({ token, dashboardToken: homeToken }: { token: string; dashboard
 
       <main className="conversation-pane">
         <header className="conversation-header">
-          <div><strong>{snapshot.workspaceLabel}</strong><span>{snapshot.laneId === "current" ? "repository chat · planning permissions" : `${snapshot.mode} · ${snapshot.agentSession.permissionMode} permissions`}</span></div>
+          <div><strong>{snapshot.agentSession.title}</strong><span>{snapshot.workspaceLabel} · {snapshot.laneId === "current" ? "repository chat · planning permissions" : `${snapshot.mode} · ${snapshot.agentSession.permissionMode} permissions`}</span></div>
           <div className="header-actions">
             {snapshot.busy ? <button className="stop" onClick={() => void action({ type: "interrupt-agent" })}>■ Stop</button> : null}
             <button className="quiet" onClick={() => void action({ type: "session-pin", pinned: !snapshot.agentSession.pinnedAt })}>{snapshot.agentSession.pinnedAt ? "Unpin" : "Pin"}</button>
@@ -495,30 +541,36 @@ function Studio({ token, dashboardToken: homeToken }: { token: string; dashboard
           </div>
         </header>
 
-        <section className="conversation-scroll">
+        <section
+          className="conversation-scroll"
+          ref={transcriptScroll}
+          tabIndex={0}
+          aria-label="Conversation transcript"
+          onScroll={(event) => {
+            const region = event.currentTarget;
+            stickTranscriptToBottom.current = region.scrollHeight - region.scrollTop - region.clientHeight < 96;
+          }}
+        >
           <div className="conversation-inner">
-            <div className="conversation-intro">
-              <div className="claude-mark">S</div>
-              <h1>{snapshot.agentSession.title}</h1>
-              <p>{snapshot.laneId === "current" ? "Explore the repository freely. Create a worktree when you are ready to change files." : snapshot.prepareClarity?.coachHeadline ?? snapshot.state.nextAction}</p>
+            <div className="conversation-context">
               <div className="context-pills">
                 <span>{snapshot.skills.effectiveSkillHashes.length} skills</span>
                 <span>{snapshot.agentProvider.label}</span>
                 <span>{snapshot.laneId === "current" ? "repository context" : snapshot.branchName ?? "detached"}</span>
               </div>
+              <p>{snapshot.laneId === "current" ? "Primary checkout is protected. Create a worktree when the conversation is ready for file changes." : snapshot.prepareClarity?.coachHeadline ?? snapshot.state.nextAction}</p>
             </div>
 
             {displayMessages.map((message, index) => (
               <article className={`chat-message ${message.role}`} key={`${index}-${message.role}`}>
                 <div className="avatar">{message.role === "user" ? "Y" : message.role === "assistant" ? "S" : "i"}</div>
-                <div><div className="message-author">{message.role === "user" ? "You" : message.role === "assistant" ? snapshot.agentLabel : "Srgical"}</div><pre>{message.content}</pre></div>
+                <div><div className="message-author">{message.role === "user" ? "You" : message.role === "assistant" ? snapshot.agentLabel : "Srgical"}</div><MessageContent role={message.role} content={message.content} /></div>
               </article>
             ))}
 
             {activity.map((event) => <Activity event={event} key={event.eventId} />)}
             {pendingPermissions.map((event) => <PermissionPrompt event={event} action={action} key={event.eventId} />)}
             {pendingQuestions.map((event) => <QuestionPrompt event={event} action={action} key={event.eventId} />)}
-            <div ref={transcriptEnd} />
           </div>
         </section>
 
@@ -543,17 +595,168 @@ function Studio({ token, dashboardToken: homeToken }: { token: string; dashboard
 
       <aside className="inspector-pane">
         <div className="inspector-tabs">
-          {(["worktree", "connectors", "skills", "plan"] as const).map((tab) => <button className={inspector === tab ? "active" : ""} onClick={() => setInspector(tab)} key={tab}>{tab === "connectors" ? "MCP" : tab}</button>)}
+          {(["worktree", "connectors", "skills", "plan", "settings"] as const).map((tab) => <button className={inspector === tab ? "active" : ""} onClick={() => setInspector(tab)} key={tab}>{tab === "connectors" ? "MCP" : tab}</button>)}
         </div>
         <div className="inspector-body">
           {inspector === "worktree" ? <WorktreeInspector snapshot={snapshot} /> : null}
           {inspector === "connectors" ? <ConnectorsInspector snapshot={snapshot} action={action} /> : null}
           {inspector === "skills" ? <SkillsInspector snapshot={snapshot} action={action} /> : null}
           {inspector === "plan" ? <PlanInspector snapshot={snapshot} action={action} /> : null}
+          {inspector === "settings" ? <SettingsInspector snapshot={snapshot} action={action} /> : null}
         </div>
       </aside>
     </div>
   );
+}
+
+function SettingsDialog(props: {
+  authOptions: StudioAuthOptionStatus[];
+  connectors: ConnectorRegistrySnapshot;
+  busy: boolean;
+  onSelect(authOptionId: StudioAuthOptionId): Promise<void>;
+  onInstallConnector(presetId: string): Promise<void>;
+  onToggleConnector(connectorId: string, enabled: boolean): Promise<void>;
+  onRemoveConnector(connectorId: string): Promise<void>;
+  onClose(): void;
+}) {
+  const [section, setSection] = useState<"providers" | "connectors">("providers");
+  return <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) props.onClose(); }}>
+    <section className="settings-dialog" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+      <header><div><div className="overline">Studio settings</div><h2 id="settings-title">Settings</h2><p>Choose how Studio talks to models and which workspace services agents may access.</p></div><button className="quiet" onClick={props.onClose}>Close</button></header>
+      <div className="settings-layout">
+        <nav className="settings-nav" aria-label="Settings sections">
+          <button className={section === "providers" ? "active" : ""} onClick={() => setSection("providers")}><strong>Models</strong><small>Providers and billing</small></button>
+          <button className={section === "connectors" ? "active" : ""} onClick={() => setSection("connectors")}><strong>Connectors</strong><small>Slack, Linear, Notion</small></button>
+        </nav>
+        <div className="settings-content">
+          {section === "providers" ? <>
+            <div className="settings-page-heading"><h3>Provider & billing path</h3><p>Choose the authenticated route new conversations will use. Existing conversations keep the route they started with.</p></div>
+            <ProviderOptions authOptions={props.authOptions} busy={props.busy} onSelect={props.onSelect} />
+          </> : <>
+            <div className="settings-page-heading"><h3>Connected services</h3><p>Add trusted MCP services to this repository. OAuth opens when the selected agent first uses a configured service.</p></div>
+            <ConnectorSettings
+              connectors={props.connectors}
+              busy={props.busy}
+              onInstall={props.onInstallConnector}
+              onToggle={props.onToggleConnector}
+              onRemove={props.onRemoveConnector}
+            />
+          </>}
+        </div>
+      </div>
+    </section>
+  </div>;
+}
+
+function SettingsInspector({ snapshot, action }: { snapshot: StudioSnapshot; action(request: StudioActionRequest): Promise<void> }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const run = async (request: StudioActionRequest) => {
+    setBusy(true);
+    setError(null);
+    try {
+      await action(request);
+    } catch (reason) {
+      setError(errorText(reason));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return <>
+    <InspectorTitle title="Settings" subtitle="Global Studio preferences" />
+    <div className="settings-section">
+      <div className="settings-section-heading"><strong>Provider & billing path</strong><p>Selection applies to new conversations. This conversation remains on <b>{snapshot.agentProvider.label}</b>.</p></div>
+      {error ? <div className="inline-error">{error}</div> : null}
+      <ProviderOptions
+        authOptions={snapshot.authOptions}
+        currentProviderId={snapshot.agentProvider.providerId}
+        busy={busy}
+        compact
+        onSelect={(authOptionId) => run({ type: "provider-auth-select", authOptionId })}
+      />
+    </div>
+    <div className="settings-section">
+      <div className="settings-section-heading"><strong>Connected services</strong><p>Repository-scoped MCP access. Authentication completes when the agent first connects.</p></div>
+      <ConnectorSettings
+        connectors={snapshot.connectors}
+        busy={busy}
+        compact
+        onInstall={(presetId) => run({ type: "connector-install", presetId })}
+        onToggle={(connectorId, enabled) => run({ type: "connector-toggle", connectorId, selected: enabled })}
+        onRemove={(connectorId) => run({ type: "connector-remove", connectorId })}
+      />
+    </div>
+    <div className="settings-section">
+      <div className="settings-section-heading"><strong>Theme</strong><p>Applied immediately across Studio.</p></div>
+      <div className="theme-options">{STUDIO_THEMES.map((theme) => <button className={snapshot.settings.themeId === theme.id ? "selected" : ""} disabled={busy} onClick={() => void run({ type: "theme", themeId: theme.id, announce: false })} key={theme.id}><strong>{theme.label}</strong><small>{theme.description}</small></button>)}</div>
+    </div>
+  </>;
+}
+
+const FEATURED_CONNECTOR_IDS = ["slack", "linear", "notion"];
+
+function ConnectorSettings(props: {
+  connectors: ConnectorRegistrySnapshot;
+  busy: boolean;
+  compact?: boolean;
+  onInstall(presetId: string): Promise<void>;
+  onToggle(connectorId: string, enabled: boolean): Promise<void>;
+  onRemove(connectorId: string): Promise<void>;
+}) {
+  const presets = FEATURED_CONNECTOR_IDS.flatMap((presetId) => {
+    const preset = props.connectors.catalog.find((item) => item.presetId === presetId);
+    return preset ? [preset] : [];
+  });
+  return <div className={`settings-connectors ${props.compact ? "compact" : ""}`}>
+    {presets.map((preset) => {
+      const connector = props.connectors.connectors.find((item) => item.presetId === preset.presetId);
+      const connected = connector?.status === "connected";
+      const configured = Boolean(connector?.enabled && ["ready", "needs-auth", "pending"].includes(connector.status));
+      const state = connected ? "Connected" : configured ? "Configured" : connector?.enabled === false ? "Disabled" : connector ? "Needs attention" : "Not connected";
+      return <article className={`settings-connector ${connected ? "connected" : configured ? "configured" : "offline"}`} key={preset.presetId}>
+        <div className="settings-connector-heading"><span className="connector-brand-mark">{preset.label.slice(0, 1)}</span><div><strong>{preset.label}</strong><small>{preset.category}</small></div><span className="settings-connector-state"><i />{state}</span></div>
+        <p>{preset.description}</p>
+        <small>{connected ? connector?.statusDetail ?? "Authenticated and available to the current provider." : connector ? connector.statusDetail ?? "The OAuth window will open on the next agent turn that connects to this service." : preset.authDescription}</small>
+        <footer>
+          <a href={preset.setupUrl} target="_blank" rel="noreferrer">Setup guide</a>
+          <div>{connector ? <><button disabled={props.busy} onClick={() => void props.onToggle(connector.connectorId, !connector.enabled)}>{connector.enabled ? "Disable" : "Enable"}</button><button className="quiet" disabled={props.busy} onClick={() => void props.onRemove(connector.connectorId)}>Remove</button></> : <button className="primary" disabled={props.busy} onClick={() => void props.onInstall(preset.presetId)}>Connect</button>}</div>
+        </footer>
+      </article>;
+    })}
+    <p className="connector-privacy-note">Connector definitions are stored outside the repository. OAuth credentials remain in the selected provider's credential store.</p>
+  </div>;
+}
+
+function ProviderOptions(props: {
+  authOptions: StudioAuthOptionStatus[];
+  currentProviderId?: string;
+  busy: boolean;
+  compact?: boolean;
+  onSelect(authOptionId: StudioAuthOptionId): Promise<void>;
+}) {
+  const groups = ["Codex", "Claude"].map((provider) => ({
+    provider,
+    options: props.authOptions.filter((option) => option.providerLabel === provider)
+  }));
+  return <div className={`provider-options ${props.compact ? "compact" : ""}`}>
+    {groups.map((group) => <section className="provider-option-group" key={group.provider}>
+      <div className="provider-group-heading"><strong>{group.provider}</strong><span>{group.options.filter((option) => option.authenticated).length} live</span></div>
+      {group.options.map((option) => {
+        const current = props.currentProviderId === option.providerId;
+        return <button
+          className={`provider-option ${option.authenticated ? "live" : "offline"} ${option.selected ? "selected" : ""} ${current ? "current" : ""}`}
+          disabled={props.busy || !option.authenticated || option.selected}
+          onClick={() => void props.onSelect(option.id)}
+          key={option.id}
+        >
+          <span className="provider-option-light" aria-hidden="true" />
+          <span className="provider-option-copy"><span><strong>{option.label}</strong><em>{option.authenticationType.replace("-", " ")}</em></span><small>{option.description}</small><small className="provider-option-detail">{option.authenticated ? option.detail : option.setupHint}</small></span>
+          <span className="provider-option-state">{current ? "Current session" : option.selected ? option.authenticated ? "Selected" : "Selected · offline" : option.authenticated ? "Use" : "Not connected"}</span>
+        </button>;
+      })}
+      {group.provider === "Claude" ? <p className="provider-auth-note">Claude subscription OAuth is not exposed by the native Agent SDK. Console API key and supported cloud-provider routes are shown instead.</p> : null}
+    </section>)}
+  </div>;
 }
 
 function Activity({ event }: { event: AgentEvent }) {
@@ -813,13 +1016,11 @@ function formatRelativeTime(timestamp: string): string {
   return `${Math.floor(hours / 24)}d`;
 }
 
-function structuredConversation(snapshot: StudioSnapshot): StudioSnapshot["messages"] {
-  const roles = new Map(snapshot.recentAgentEvents.filter((event) => event.kind === "message.started").map((event) => [event.payload.messageId, event.payload.role]));
-  const completed = snapshot.recentAgentEvents.filter((event) => event.kind === "message.completed").map((event) => ({
-    role: roles.get(event.payload.messageId) ?? "assistant",
-    content: event.payload.text
-  }));
-  return completed.length > 0 ? completed : snapshot.messages;
+function MessageContent({ role, content }: { role: "user" | "assistant" | "system"; content: string }) {
+  if (role !== "assistant") return <div className="message-plain">{content}</div>;
+  return <div className="message-markdown"><ReactMarkdown remarkPlugins={[remarkGfm]} components={{
+    a: ({ children, ...props }) => <a {...props} target="_blank" rel="noreferrer">{children}</a>
+  }}>{content}</ReactMarkdown></div>;
 }
 
 function Brand({ compact = false }: { compact?: boolean }) { return <div className={`brand ${compact ? "compact" : ""}`}><span>S</span><strong>srgical</strong></div>; }

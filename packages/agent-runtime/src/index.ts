@@ -1,4 +1,5 @@
 export * from "./anthropic-provider";
+export * from "./auth-options";
 export * from "./codex-provider";
 export * from "./legacy-bridge";
 export * from "./provider";

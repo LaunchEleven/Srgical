@@ -58,6 +58,19 @@ Srgical deliberately does not reuse Claude subscription OAuth or browser credent
 
 Both native providers support durable sessions, resume, streaming, tool progress, tasks, interrupt, usage events, skills, and MCP servers. Claude additionally exposes provider-native session forks, interactive permission and question requests, rate-limit events, live MCP connection status, and file checkpoints. Codex worktree promotion starts a new thread with the preserved Srgical transcript and plan context because the TypeScript SDK does not currently expose thread forking.
 
+### Provider and billing path
+
+Open **Settings** from the repository home or the conversation inspector to choose the authentication route used by new conversations. Studio detects each route independently, enables only configured routes, and stores the preference without storing secrets.
+
+Supported routes are:
+
+- Codex through a ChatGPT subscription login
+- Codex through `CODEX_API_KEY` or `OPENAI_API_KEY`
+- Claude through `ANTHROPIC_API_KEY`
+- Claude through Amazon Bedrock, Google Vertex AI, or Microsoft Foundry
+
+Existing conversations keep the provider and authentication route they started with. When a route is selected, Srgical removes competing provider credentials from that provider's child-process environment so a subscription conversation cannot silently switch to API-key billing. Claude subscription OAuth is not exposed through the native Claude Agent SDK and is therefore not offered as a native route.
+
 ## Sessions
 
 A session is the durable unit of conversation; a worktree is a workspace the session may use for a period of time. They intentionally are not one-to-one. New conversations start against protected repository context with planning permissions, unless **Start in a worktree** is selected. When a discussion becomes implementation work, **Create worktree** carries its provider context where supported, transcript, plan artifacts, connectors, and effective tools into an isolated branch and worktree.
@@ -83,7 +96,7 @@ Skills are hashed with their supporting files and tracked by source, scope, trus
 
 ## Connectors and MCP servers
 
-Studio has a **MCP** inspector for connecting external tools and context to native Codex and Claude sessions. It includes presets for Linear, Slack, and Google Drive, plus custom Streamable HTTP, SSE, and local stdio servers. Existing Claude-style JSON can be imported directly:
+Studio Settings includes guided connection cards for Slack, Linear, and Notion. Installing a card adds the official hosted MCP endpoint to the repository; its OAuth flow opens when the selected native Codex or Claude provider first connects. The advanced **MCP** inspector also includes Google Drive, custom Streamable HTTP, SSE, and local stdio servers. Existing Claude-style JSON can be imported directly:
 
 ```json
 {

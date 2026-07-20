@@ -2,7 +2,7 @@ import type { ChatMessage } from "../../../apps/cli/src/core/prompts";
 import type { PlanningPackState } from "../../../apps/cli/src/core/planning-pack-state";
 import type { StudioUiConfig } from "../../../apps/cli/src/core/studio-ui-config";
 import type { PlanDiceOptions } from "../../../apps/cli/src/core/plan-dicing";
-import type { AgentEvent, AgentSessionRecord, ConnectorRegistrySnapshot, McpServerDefinition, SkillRegistrySnapshot, StudioMode, StudioSettings, StudioTheme } from "@srgical/studio-shared";
+import type { AgentEvent, AgentSessionRecord, ConnectorRegistrySnapshot, McpServerDefinition, SkillRegistrySnapshot, StudioAuthOptionId, StudioAuthOptionStatus, StudioMode, StudioSettings, StudioTheme } from "@srgical/studio-shared";
 import type { AgentProviderStatus } from "@srgical/agent-runtime";
 
 export type StudioActionId =
@@ -21,6 +21,7 @@ export type StudioActionId =
   | "import"
   | "wheel"
   | "theme"
+  | "provider-auth-select"
   | "command"
   | "reference-toggle"
   | "reference-autoselect"
@@ -58,6 +59,7 @@ export type StudioActionRequest = {
   maxSteps?: number;
   wheelSensitivity?: number;
   themeId?: string;
+  authOptionId?: StudioAuthOptionId;
   diceOptions?: PlanDiceOptions;
   label?: string;
   referenceId?: string;
@@ -170,6 +172,9 @@ export type RepoSnapshot = {
   requestedMode: StudioMode | null;
   lanes: LaneSummary[];
   sessions: AgentSessionRecord[];
+  settings: StudioSettings;
+  authOptions: StudioAuthOptionStatus[];
+  connectors: ConnectorRegistrySnapshot;
 };
 
 export type { FinishWorkAssessment, FinishWorkRequest, FinishWorkResult } from "@srgical/studio-shared";
@@ -204,6 +209,7 @@ export type StudioSnapshot = {
   busyStatus: string;
   agentLabel: string;
   agentProvider: AgentProviderStatus;
+  authOptions: StudioAuthOptionStatus[];
   agentSession: AgentSessionRecord;
   agentSessions: AgentSessionRecord[];
   recentAgentEvents: AgentEvent[];

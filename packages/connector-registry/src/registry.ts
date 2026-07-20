@@ -57,6 +57,15 @@ export const CONNECTOR_CATALOG: ConnectorPreset[] = [
     }
   },
   {
+    presetId: "notion",
+    label: "Notion",
+    description: "Search, read, create, and update pages across your Notion workspace.",
+    category: "Files and knowledge",
+    authDescription: "Uses Notion's hosted OAuth flow. Authentication opens when the selected agent first connects.",
+    setupUrl: "https://developers.notion.com/guides/mcp/get-started-with-mcp",
+    definition: { transport: "http", url: "https://mcp.notion.com/mcp" }
+  },
+  {
     presetId: "google-drive",
     label: "Google Drive",
     description: "Search, read, create, and download files through Google's hosted Drive MCP server.",

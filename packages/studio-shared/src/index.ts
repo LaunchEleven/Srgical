@@ -50,7 +50,30 @@ export type StudioTheme = {
 
 export type StudioSettings = {
   themeId: string;
+  preferredAuthOptionId: StudioAuthOptionId | null;
   updatedAt: string;
+};
+
+export type StudioAuthOptionId =
+  | "codex-chatgpt"
+  | "codex-api-key"
+  | "claude-api-key"
+  | "claude-bedrock"
+  | "claude-vertex"
+  | "claude-foundry";
+
+export type StudioAuthOptionStatus = {
+  id: StudioAuthOptionId;
+  providerId: string;
+  providerLabel: string;
+  label: string;
+  description: string;
+  authenticationType: "subscription" | "api-key" | "cloud";
+  available: boolean;
+  authenticated: boolean;
+  selected: boolean;
+  detail: string;
+  setupHint: string;
 };
 
 export const DEFAULT_STUDIO_THEME_ID = "neon-command";
@@ -137,6 +160,7 @@ export function getStudioTheme(themeId: string | null | undefined): StudioTheme 
 export function createDefaultStudioSettings(now = new Date().toISOString()): StudioSettings {
   return {
     themeId: DEFAULT_STUDIO_THEME_ID,
+    preferredAuthOptionId: null,
     updatedAt: now
   };
 }
