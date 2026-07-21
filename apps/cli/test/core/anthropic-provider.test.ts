@@ -142,6 +142,33 @@ test("supported authentication detection explicitly excludes implicit subscripti
   assert.equal(detectSupportedAuthentication({ CLAUDE_CODE_USE_BEDROCK: "1" }).authenticated, true);
 });
 
+test("Anthropic provider discovers account models and applies a conversation model", async () => {
+  let captured: AnthropicOptions | undefined;
+  const provider = new AnthropicAgentProvider({
+    query: ({ options }) => {
+      captured = options;
+      return {
+        ...fakeQuery([]),
+        supportedModels: async () => [{
+          value: "sonnet",
+          resolvedModel: "claude-sonnet-test",
+          displayName: "Claude Sonnet",
+          description: "Balanced"
+        }]
+      };
+    }
+  });
+
+  const catalog = await provider.listModels({ workspace: process.cwd() });
+  assert.deepEqual(catalog.models.map((model) => model.id), ["sonnet"]);
+
+  const options = startOptions([]);
+  options.session.model = "sonnet";
+  const handle = await provider.start(options);
+  await handle.completion;
+  assert.equal(captured?.model, "sonnet");
+});
+
 test("Anthropic provider projects MCP configuration and normalizes live status", async () => {
   let captured: AnthropicOptions | undefined;
   const provider = new AnthropicAgentProvider({

@@ -1,7 +1,7 @@
 {
   "name": "@launcheleven/srgical",
   "version": "0.0.0",
-  "description": "A polished local-first CLI for planning and executing long AI-driven delivery sequences.",
+  "description": "A browser-first local workspace for AI-assisted planning and delivery.",
   "files": [
     "dist",
     "README.md",
@@ -21,11 +21,10 @@
   ],
   "scripts": {
     "prebuild": "npm --prefix ../.. run build -w @srgical/studio-shared && npm --prefix ../.. run build -w @srgical/agent-runtime && npm --prefix ../.. run build -w @srgical/skill-registry && npm --prefix ../.. run build -w @srgical/connector-registry && npm --prefix ../.. run build -w @srgical/studio-core && npm --prefix ../.. run build -w @srgical/studio-web",
-    "build": "tsc -p tsconfig.json && node scripts/sync-web-dist.mjs",
+    "build": "node scripts/clean-dist.mjs && tsc -p tsconfig.json && node scripts/sync-web-dist.mjs",
     "dev": "tsx src/index.ts",
     "start": "node dist/index.js",
     "postinstall": "node postinstall.js",
-    "status": "tsx src/index.ts status",
     "pretest": "npm --prefix ../.. run build -w @srgical/studio-shared && npm --prefix ../.. run build -w @srgical/agent-runtime && npm --prefix ../.. run build -w @srgical/skill-registry && npm --prefix ../.. run build -w @srgical/connector-registry && npm --prefix ../.. run build -w @srgical/studio-core",
     "test": "tsx --test test/**/*.test.ts",
     "pretest:coverage": "npm --prefix ../.. run build -w @srgical/studio-shared && npm --prefix ../.. run build -w @srgical/agent-runtime && npm --prefix ../.. run build -w @srgical/skill-registry && npm --prefix ../.. run build -w @srgical/connector-registry && npm --prefix ../.. run build -w @srgical/studio-core",
@@ -47,7 +46,7 @@
   },
   "keywords": [
     "ai",
-    "cli",
+    "browser",
     "codex",
     "agent",
     "orchestration",
@@ -60,11 +59,9 @@
     "@srgical/skill-registry": "0.0.0",
     "@srgical/studio-core": "0.0.0",
     "@srgical/studio-shared": "0.0.0",
-    "blessed": "^0.1.81",
     "commander": "^14.0.3"
   },
   "devDependencies": {
-    "@types/blessed": "^0.1.27",
     "@types/node": "^25.5.0",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3"

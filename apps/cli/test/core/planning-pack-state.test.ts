@@ -160,7 +160,7 @@ test("readPlanningPackState uses manifest stage, evidence, and unknowns as the s
     stage: "ready",
     nextAction: "Open operate and run the next step.",
     nextStepId: "SPIKE-001",
-    evidence: ["src/ui/studio.ts", "docs/studio-plan-tutorial.md"],
+    evidence: ["apps/studio-web/src/App.tsx", "docs/hooks.md"],
     unknowns: ["Need one more spike validation result before rollout."],
     contextReady: true,
     approvedAt: "2026-04-05T00:01:00.000Z"
@@ -170,7 +170,7 @@ test("readPlanningPackState uses manifest stage, evidence, and unknowns as the s
 
   assert.equal(state.mode, "Ready");
   assert.equal(state.nextAction, "Open operate and run the next step.");
-  assert.deepEqual(state.evidence, ["src/ui/studio.ts", "docs/studio-plan-tutorial.md"]);
+  assert.deepEqual(state.evidence, ["apps/studio-web/src/App.tsx", "docs/hooks.md"]);
   assert.deepEqual(state.unknowns, ["Need one more spike validation result before rollout."]);
 });
 

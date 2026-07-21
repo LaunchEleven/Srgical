@@ -87,6 +87,45 @@ test("studio reopens the same structured session and replays its event history",
   await reopened.close();
 });
 
+test("studio validates and persists the selected model per conversation", async (t) => {
+  const workspace = await createTempWorkspace("srgical-model-session-");
+  const homeDir = await mkdtemp(path.join(os.tmpdir(), "srgical-model-home-"));
+  t.after(() => rm(homeDir, { recursive: true, force: true }));
+  const store = new AgentSessionStore({ homeDir });
+  const provider = {
+    id: "test-native",
+    label: "Test Native",
+    async detect() {
+      return { providerId: this.id, label: this.label, available: true, authenticated: true, capabilities: [] };
+    },
+    async listModels() {
+      return {
+        models: [{ id: "test-fast", label: "Test Fast", description: "Fast model" }],
+        defaultModelId: "test-fast"
+      };
+    },
+    async start(): Promise<never> {
+      throw new Error("not used in this test");
+    }
+  };
+  const controller = await createStudioController({
+    workspace,
+    planId: "model-choice",
+    laneId: "current",
+    agentSessionStore: store,
+    agentProvider: provider,
+    autoGatherOnStart: false
+  });
+  await controller.start();
+  assert.equal(controller.getSnapshot().agentModels.defaultModelId, "test-fast");
+  await controller.dispatch({ type: "model-select", modelId: "test-fast" });
+  assert.equal(controller.getSnapshot().agentSession.model, "test-fast");
+  await assert.rejects(() => controller.dispatch({ type: "model-select", modelId: "made-up" }), /not available/);
+  const persisted = await store.load(deriveRepositoryId(workspace), controller.getSnapshot().agentSession.sessionId);
+  assert.equal(persisted?.model, "test-fast");
+  await controller.close();
+});
+
 function countStudioStartMessages(messages: Array<{ role: string; content: string }>): number {
   return messages.filter((message) =>
     message.role === "system"

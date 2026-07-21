@@ -6,9 +6,9 @@ The current production release channels are GitHub Packages for npm, the public 
 Versioning is tag-driven from git history, which means the repo carries a base major/minor line and CI computes the
 next patch version during release instead of committing a version bump back to `main`.
 
-The npm package does not bundle `codex`, `claude`, or `auggie`. Users still need at least one supported local agent CLI
-installed separately and available on `PATH`, and `srgical doctor` remains the truthful way to confirm which agents are
-usable on the current machine.
+The npm package bundles the native Codex and Claude SDK runtimes used by Studio. Users configure a supported provider
+authentication route in the browser settings. Optional legacy agent adapters may still be detected by the backend, but
+they are not a separate terminal product surface.
 
 ## Release Flow
 
@@ -35,8 +35,8 @@ npm run release:pack
 
 That command:
 
-- builds the TypeScript CLI,
-- runs `node dist/index.js doctor`,
+- builds the local browser host and Studio assets,
+- runs the automated test suite,
 - computes the next release version from git tags,
 - creates GitHub Packages and npm tarballs under `.artifacts/release/`,
 - writes `release-manifest.json` and `release-manifest.md` with the artifact paths and SHA256 hashes.
@@ -73,11 +73,11 @@ still require authentication in the user's own npm config:
 After installing the package, run:
 
 ```bash
-srgical doctor
+srgical
 ```
 
-That verifies the workspace state, shows the active agent, and reports whether `codex`, `claude`, and `auggie` are
-locally available or missing.
+Studio opens the last working directory. Its settings page reports provider authentication and connector readiness;
+the conversation header reports the selected provider model.
 
 ## Artifact Strategy
 
@@ -96,8 +96,7 @@ npm install -g @launch11/srgical
 
 - Required local prerequisites after install:
   - authenticated access to GitHub Packages
-  - `codex`, `claude`, and/or `auggie` installed separately
-  - available on `PATH` for the current shell session
+  - a supported Codex or Claude authentication route configured in Studio
 
 - Local install smoke test from a generated tarball:
 

@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted on 2026-03-23
+Superseded by [ADR 0002](0002-browser-only-product-surface.md) on 2026-07-21
 
 ## Decision
 

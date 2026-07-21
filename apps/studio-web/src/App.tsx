@@ -13,7 +13,7 @@ import type {
   StudioSnapshot
 } from "@srgical/studio-core";
 import { STUDIO_THEMES } from "@srgical/studio-shared";
-import type { AgentEvent, AgentSessionRecord, ConnectorPreset, ConnectorRecord, ConnectorRegistrySnapshot, McpServerDefinition, McpTransport, SkillRecord, StudioAuthOptionId, StudioAuthOptionStatus } from "@srgical/studio-shared";
+import type { AgentEvent, AgentSessionRecord, ConnectorPreset, ConnectorRecord, ConnectorRegistrySnapshot, HookDefinition, HookTrigger, McpServerDefinition, McpTransport, SkillRecord, StudioAuthOptionId, StudioAuthOptionStatus } from "@srgical/studio-shared";
 
 declare global {
   interface Window {
@@ -551,7 +551,7 @@ function Studio({ token, dashboardToken: homeToken }: { token: string; dashboard
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [promoting, setPromoting] = useState(false);
-  const [inspector, setInspector] = useState<"worktree" | "connectors" | "skills" | "plan" | "settings">("worktree");
+  const [inspector, setInspector] = useState<"worktree" | "connectors" | "hooks" | "skills" | "plan" | "settings">("worktree");
   const [skillMenuIndex, setSkillMenuIndex] = useState(0);
   const [skillMenuDismissed, setSkillMenuDismissed] = useState(false);
   const composerInput = useRef<HTMLTextAreaElement>(null);
@@ -631,6 +631,10 @@ function Studio({ token, dashboardToken: homeToken }: { token: string; dashboard
   const skillMenuItems = skillQuery === null ? [] : filterSkillMenuItems(effectiveSkills, skillQuery);
   const activeSkillMenuIndex = skillMenuItems.length ? Math.min(skillMenuIndex, skillMenuItems.length - 1) : 0;
   const invokedSkill = resolveComposedSkill(input, effectiveSkills);
+  const defaultModel = snapshot.agentModels.models.find((model) => model.id === snapshot.agentModels.defaultModelId);
+  const selectedModel = snapshot.agentSession.model
+    ? snapshot.agentModels.models.find((model) => model.id === snapshot.agentSession.model || model.resolvedId === snapshot.agentSession.model)
+    : defaultModel;
   const chooseSkill = (skill: SkillRecord) => {
     setInput(`/${skill.id} `);
     setSkillMenuDismissed(true);
@@ -657,16 +661,29 @@ function Studio({ token, dashboardToken: homeToken }: { token: string; dashboard
 
       <main className="conversation-pane">
         <header className="conversation-header">
-          <div><strong>{snapshot.agentSession.title}</strong><span>{snapshot.workspaceLabel} · {!snapshot.isGitRepository ? `working directory · ${snapshot.agentSession.permissionMode} permissions` : snapshot.laneId === "current" ? "repository chat · planning permissions" : `${snapshot.mode} · ${snapshot.agentSession.permissionMode} permissions`}</span></div>
+          <div><strong>{snapshot.agentSession.title}</strong><span>{snapshot.workspaceLabel} · {!snapshot.isGitRepository ? `working directory · ${snapshot.agentSession.permissionMode} permissions` : snapshot.laneId === "current" ? "repository chat · planning permissions" : `isolated worktree · ${snapshot.agentSession.permissionMode} permissions`}</span></div>
           <div className="header-actions">
+            <label className="model-selector" title={snapshot.agentModels.detail ?? "Choose the model for this conversation."}>
+              <span>Model</span>
+              <select
+                aria-label="Conversation model"
+                value={snapshot.agentSession.model ?? ""}
+                disabled={snapshot.busy || (snapshot.agentModels.models.length === 0 && !snapshot.agentSession.model)}
+                onChange={(event) => void action({ type: "model-select", modelId: event.target.value || null })}
+              >
+                <option value="">{defaultModel ? `Auto · ${defaultModel.label}` : "Provider default"}</option>
+                {snapshot.agentSession.model && !snapshot.agentModels.models.some((model) => model.id === snapshot.agentSession.model)
+                  ? <option value={snapshot.agentSession.model}>{selectedModel?.label ?? snapshot.agentSession.model} · current</option>
+                  : null}
+                {snapshot.agentModels.models.map((model) => <option value={model.id} key={model.id}>{model.label}</option>)}
+              </select>
+            </label>
             {snapshot.busy ? <button className="stop" onClick={() => void action({ type: "interrupt-agent" })}>■ Stop</button> : null}
             <button className="quiet" onClick={() => void action({ type: "session-pin", pinned: !snapshot.agentSession.pinnedAt })}>{snapshot.agentSession.pinnedAt ? "Unpin" : "Pin"}</button>
             <button className="quiet" onClick={() => void action({ type: "session-archive" })}>Archive</button>
             <button className="quiet" onClick={() => void action({ type: "session-fork" })}>Fork</button>
             <button className="quiet" onClick={() => { const title = window.prompt("Conversation title", snapshot.agentSession.title); if (title?.trim()) void action({ type: "session-rename", title }); }}>Rename</button>
-            {snapshot.isGitRepository && snapshot.laneId === "current" ? <button className="primary promote-worktree" disabled={snapshot.busy || promoting} onClick={() => void promoteToWorktree()}>{promoting ? "Creating..." : "Create worktree"}</button> : <button className="quiet" onClick={() => void action({ type: "switch-mode", mode: snapshot.mode === "prepare" ? "operate" : "prepare" })}>
-              {snapshot.mode === "prepare" ? "Switch to operate" : "Return to prepare"}
-            </button>}
+            {snapshot.isGitRepository && snapshot.laneId === "current" ? <button className="primary promote-worktree" disabled={snapshot.busy || promoting} onClick={() => void promoteToWorktree()}>{promoting ? "Creating..." : "Create worktree"}</button> : <button className="quiet" onClick={() => setInspector("plan")}>Planning tools</button>}
           </div>
         </header>
 
@@ -684,7 +701,7 @@ function Studio({ token, dashboardToken: homeToken }: { token: string; dashboard
             <div className="conversation-context">
               <div className="context-pills">
                 <span>{snapshot.skills.effectiveSkillHashes.length} skills</span>
-                <span>{snapshot.agentProvider.label}</span>
+                <span>{selectedModel?.label ?? snapshot.agentSession.model ?? snapshot.agentProvider.label}</span>
                 <span>{!snapshot.isGitRepository ? "working directory" : snapshot.laneId === "current" ? "repository context" : snapshot.branchName ?? "detached"}</span>
               </div>
               <p>{!snapshot.isGitRepository ? "This folder is the session's working directory. Srgical can inspect and modify files here." : snapshot.laneId === "current" ? "Primary checkout is protected. Create a worktree when the conversation is ready for file changes." : snapshot.prepareClarity?.coachHeadline ?? snapshot.state.nextAction}</p>
@@ -748,7 +765,7 @@ function Studio({ token, dashboardToken: homeToken }: { token: string; dashboard
                   void send();
                 }
               }}
-              placeholder={!snapshot.isGitRepository ? "Ask about this folder or describe a change…" : snapshot.laneId === "current" ? "Ask about the repository, explore an idea, or describe a change…" : snapshot.mode === "prepare" ? "Ask Srgical to explore, plan, or implement…" : "Describe the next change or use an action…"}
+              placeholder={!snapshot.isGitRepository ? "Ask about this folder or describe a change…" : snapshot.laneId === "current" ? "Ask about the repository, explore an idea, or describe a change…" : "Ask Srgical to explore, plan, or implement a change…"}
               rows={2}
               role="combobox"
               aria-autocomplete="list"
@@ -763,11 +780,12 @@ function Studio({ token, dashboardToken: homeToken }: { token: string; dashboard
 
       <aside className="inspector-pane">
         <div className="inspector-tabs">
-          {(["worktree", "connectors", "skills", "plan", "settings"] as const).map((tab) => <button className={inspector === tab ? "active" : ""} onClick={() => setInspector(tab)} key={tab}>{tab === "connectors" ? "MCP" : tab}</button>)}
+          {(["worktree", "connectors", "hooks", "skills", "plan", "settings"] as const).map((tab) => <button className={inspector === tab ? "active" : ""} onClick={() => setInspector(tab)} key={tab}>{tab === "connectors" ? "MCP" : tab}</button>)}
         </div>
         <div className="inspector-body">
           {inspector === "worktree" ? <WorktreeInspector snapshot={snapshot} action={action} /> : null}
           {inspector === "connectors" ? <ConnectorsInspector snapshot={snapshot} action={action} /> : null}
+          {inspector === "hooks" ? <HooksInspector snapshot={snapshot} action={action} /> : null}
           {inspector === "skills" ? <SkillsInspector snapshot={snapshot} action={action} /> : null}
           {inspector === "plan" ? <PlanInspector snapshot={snapshot} action={action} /> : null}
           {inspector === "settings" ? <SettingsInspector snapshot={snapshot} action={action} /> : null}
@@ -1076,6 +1094,11 @@ function resolveComposedSkill(value: string, skills: SkillRecord[]): SkillRecord
 }
 
 function Activity({ event }: { event: AgentEvent }) {
+  if (event.kind.startsWith("hook.")) {
+    const payload = event.payload as { label: string; summary?: string; message?: string; trigger: string };
+    const failed = event.kind === "hook.failed";
+    return <div className={`activity-card hook-activity ${failed ? "failed" : ""}`}><span className="activity-icon">↪</span><div><strong>{payload.label}</strong><small>{failed ? payload.message : payload.summary ?? `${payload.trigger.replace(".", " ")} hook running`}</small></div></div>;
+  }
   if (event.kind.startsWith("tool.")) {
     const payload = event.payload as { toolName?: string; message?: string; toolUseId: string };
     return <div className="activity-card"><span className="activity-icon">⌘</span><div><strong>{payload.toolName ?? "Tool activity"}</strong><small>{event.kind.replace("tool.", "")} {payload.message ?? ""}</small></div></div>;
@@ -1298,6 +1321,105 @@ function parseKeyValueLines(value: string): Record<string, string> | undefined {
   return entries.length > 0 ? Object.fromEntries(entries) : undefined;
 }
 
+function HooksInspector({ snapshot, action }: { snapshot: StudioSnapshot; action(request: StudioActionRequest): Promise<void> }) {
+  const effectiveSkills = snapshot.skills.skills.filter((skill) => skill.effective);
+  const enabledConnectors = snapshot.connectors.connectors.filter((connector) => connector.enabled);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [label, setLabel] = useState("");
+  const [description, setDescription] = useState("");
+  const [trigger, setTrigger] = useState<HookTrigger>("turn.received");
+  const [handlerType, setHandlerType] = useState<"skill" | "mcp">("skill");
+  const [skillId, setSkillId] = useState("");
+  const [connectorId, setConnectorId] = useState("");
+  const [toolName, setToolName] = useState("");
+  const [instruction, setInstruction] = useState("");
+  const [blocking, setBlocking] = useState(false);
+  const [priority, setPriority] = useState(100);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const reset = () => {
+    setEditingId(null);
+    setLabel("");
+    setDescription("");
+    setTrigger("turn.received");
+    setHandlerType("skill");
+    setSkillId("");
+    setConnectorId("");
+    setToolName("");
+    setInstruction("");
+    setBlocking(false);
+    setPriority(100);
+  };
+  const run = async (request: StudioActionRequest, done?: () => void) => {
+    setBusy(true);
+    setError(null);
+    try {
+      await action(request);
+      done?.();
+    } catch (reason) {
+      setError(errorText(reason));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const edit = (hook: HookDefinition) => {
+    setEditingId(hook.hookId);
+    setLabel(hook.label);
+    setDescription(hook.description);
+    setTrigger(hook.trigger);
+    setHandlerType(hook.handler.type);
+    setSkillId(hook.handler.type === "skill" ? hook.handler.skillId : "");
+    setConnectorId(hook.handler.type === "mcp" ? hook.handler.connectorId : "");
+    setToolName(hook.handler.type === "mcp" ? hook.handler.toolName : "");
+    setInstruction(hook.instruction);
+    setBlocking(hook.blocking);
+    setPriority(hook.priority);
+  };
+  const save = () => {
+    const hookHandler = handlerType === "skill"
+      ? { type: "skill" as const, skillId }
+      : { type: "mcp" as const, connectorId, toolName };
+    void run({
+      type: "hook-upsert",
+      hookId: editingId ?? undefined,
+      hookLabel: label,
+      hookDescription: description,
+      hookTrigger: trigger,
+      hookHandler,
+      hookInstruction: instruction,
+      hookBlocking: blocking,
+      hookPriority: priority
+    }, reset);
+  };
+  const selectedConnector = enabledConnectors.find((connector) => connector.connectorId === connectorId);
+  const formReady = Boolean(label.trim() && instruction.trim() && (handlerType === "skill" ? skillId : connectorId && toolName.trim()));
+
+  return <>
+    <InspectorTitle title="Hooks" subtitle={`${snapshot.hooks.hooks.filter((hook) => hook.enabled).length} active · conversation lifecycle`} />
+    <div className="hooks-intro"><strong>Conversation hooks</strong><p>Automatically enrich or observe each turn with an effective skill or an MCP tool. Every execution appears in the transcript.</p></div>
+    {error ? <div className="inline-error">{error}</div> : null}
+    {snapshot.hooks.hooks.length ? <div className="hook-list">{snapshot.hooks.hooks.map((hook) => <HookRow hook={hook} busy={busy} run={run} onEdit={() => edit(hook)} key={hook.hookId} />)}</div> : <EmptyState title="No hooks configured" body="Add a context, policy, or knowledge-graph hook below." />}
+    <div className="hook-recipes"><span>Quick starts</span><button onClick={() => { reset(); setHandlerType("mcp"); setTrigger("turn.received"); setLabel("Retrieve graph context"); setDescription("Retrieve related project knowledge before each response."); setInstruction("Find the most relevant nodes, relationships, decisions, and provenance for this request. Return concise cited context for the agent."); }}>Graph retrieval</button><button onClick={() => { reset(); setHandlerType("mcp"); setTrigger("turn.completed"); setLabel("Capture graph knowledge"); setDescription("Store durable knowledge discovered during the turn."); setInstruction("Extract only durable decisions, entities, artifacts, and relationships from this turn. Upsert them with session and message provenance; do not store secrets."); }}>Graph capture</button></div>
+    <div className="hook-form">
+      <div className="hook-form-heading"><strong>{editingId ? "Edit hook" : "Add hook"}</strong>{editingId ? <button className="quiet" onClick={reset}>Cancel</button> : null}</div>
+      <label><span>Label</span><input value={label} onChange={(event) => setLabel(event.target.value)} placeholder="Retrieve product context" /></label>
+      <label><span>Description</span><input value={description} onChange={(event) => setDescription(event.target.value)} placeholder="What teammates should know about this hook" /></label>
+      <div className="hook-form-split"><label><span>When</span><select value={trigger} onChange={(event) => setTrigger(event.target.value as HookTrigger)}><option value="turn.received">Before answering</option><option value="turn.completed">Before final response</option></select></label><label><span>Handler</span><select value={handlerType} onChange={(event) => setHandlerType(event.target.value as "skill" | "mcp")}><option value="skill">Effective skill</option><option value="mcp">MCP tool</option></select></label></div>
+      {handlerType === "skill" ? <label><span>Skill</span><select value={skillId} onChange={(event) => setSkillId(event.target.value)}><option value="">Choose a skill</option>{effectiveSkills.map((skill) => <option value={skill.id} key={`${skill.id}-${skill.source}`}>{skill.name}</option>)}</select></label> : <><label><span>Connector</span><select value={connectorId} onChange={(event) => { setConnectorId(event.target.value); setToolName(""); }}><option value="">Choose a connector</option>{enabledConnectors.map((connector) => <option value={connector.connectorId} key={connector.connectorId}>{connector.label}</option>)}</select></label><label><span>Tool name</span>{selectedConnector?.tools.length ? <select value={toolName} onChange={(event) => setToolName(event.target.value)}><option value="">Choose a tool</option>{selectedConnector.tools.map((tool) => <option value={tool.name} key={tool.name}>{tool.name}</option>)}</select> : <input value={toolName} onChange={(event) => setToolName(event.target.value)} placeholder="query_knowledge_graph" />}</label></>}
+      <label><span>Instruction</span><textarea rows={4} value={instruction} onChange={(event) => setInstruction(event.target.value)} placeholder="Explain exactly what this hook contributes to the turn." /></label>
+      <div className="hook-form-split hook-form-options"><label><span>Priority</span><input type="number" min={0} max={10000} value={priority} onChange={(event) => setPriority(Number(event.target.value))} /></label><label className="hook-blocking"><input type="checkbox" checked={blocking} onChange={(event) => setBlocking(event.target.checked)} /><span><strong>Blocking</strong><small>Stop the turn if this hook cannot run.</small></span></label></div>
+      <button className="primary" disabled={busy || !formReady} onClick={save}>{busy ? "Saving…" : editingId ? "Save hook" : "Add hook"}</button>
+    </div>
+  </>;
+}
+
+function HookRow(props: { hook: HookDefinition; busy: boolean; run(request: StudioActionRequest): Promise<void>; onEdit(): void }) {
+  const { hook } = props;
+  const handler = hook.handler.type === "skill" ? `/${hook.handler.skillId}` : `${hook.handler.connectorId}.${hook.handler.toolName}`;
+  return <article className={`hook-row ${hook.enabled ? "enabled" : ""}`}><div className="hook-row-heading"><span className="hook-status" /><div><strong>{hook.label}</strong><small>{hook.trigger === "turn.received" ? "Before answering" : "Before final response"} · {handler}</small></div></div><p>{hook.description || hook.instruction}</p><div className="hook-row-meta"><span>priority {hook.priority}</span>{hook.blocking ? <span>blocking</span> : <span>observational</span>}</div><div className="hook-row-actions"><button disabled={props.busy} onClick={() => void props.run({ type: "hook-test", hookId: hook.hookId })}>Test</button><button disabled={props.busy} onClick={props.onEdit}>Edit</button><button disabled={props.busy} onClick={() => void props.run({ type: "hook-toggle", hookId: hook.hookId, selected: !hook.enabled })}>{hook.enabled ? "Disable" : "Enable"}</button><button className="danger" disabled={props.busy} onClick={() => { if (window.confirm(`Remove ${hook.label}?`)) void props.run({ type: "hook-remove", hookId: hook.hookId }); }}>Remove</button></div></article>;
+}
+
 function SkillsInspector({ snapshot, action }: { snapshot: StudioSnapshot; action(request: StudioActionRequest): Promise<void> }) {
   const [directory, setDirectory] = useState("");
   return <><InspectorTitle title="Skills" subtitle={`${snapshot.skills.skills.filter((skill) => skill.effective).length} effective · ${snapshot.skills.conflicts.length} conflicts`} /><div className="global-skill-path"><span>Global directory (created automatically)</span><code>{snapshot.skills.globalSkillsDirectory}</code></div><div className="skill-directory-add"><input value={directory} onChange={(event) => setDirectory(event.target.value)} placeholder="Additional skills directory" /><button disabled={!directory.trim()} onClick={() => { void action({ type: "skill-directory-add", directoryPath: directory.trim() }); setDirectory(""); }}>Add</button></div>{snapshot.skills.configuredDirectories.map((item) => <div className="configured-directory" key={item}><code>{item}</code><button onClick={() => void action({ type: "skill-directory-remove", directoryPath: item })}>Remove</button></div>)}{snapshot.skills.skills.length ? snapshot.skills.skills.map((skill) => <SkillRow skill={skill} action={action} key={`${skill.id}-${skill.source}`} />) : <EmptyState title="No skills found" body="Add a SKILL.md under the global directory or a project/provider skills directory." />}</>;
@@ -1311,7 +1433,7 @@ function PlanInspector({ snapshot, action }: { snapshot: StudioSnapshot; action(
   const actions: Array<{ label: string; request: StudioActionRequest }> = snapshot.mode === "prepare"
     ? [{ label: "Gather context", request: { type: "gather" } }, { label: "Build draft", request: { type: "build" } }, { label: "Slice plan", request: { type: "slice" } }, { label: "Approve", request: { type: "approve" } }]
     : [{ label: "Run next", request: { type: "run" } }, { label: "Auto continue", request: { type: "auto" } }, { label: "Checkpoint", request: { type: "checkpoint" } }, { label: "Review", request: { type: "review" } }];
-  return <><InspectorTitle title="Plan" subtitle={snapshot.state.mode} /><div className="readiness"><span>Readiness</span><strong>{snapshot.state.readiness.score}/{snapshot.state.readiness.total}</strong><div><i style={{ width: `${snapshot.state.readiness.score / Math.max(1, snapshot.state.readiness.total) * 100}%` }} /></div></div><div className="next-action"><span>Recommended next move</span><p>{snapshot.state.nextAction}</p></div><div className="plan-actions">{actions.map(({ label, request }) => <button disabled={snapshot.busy || !snapshot.actions[request.type].enabled} title={snapshot.actions[request.type].blockedReason ?? undefined} onClick={() => void action(request)} key={label}>{label}</button>)}</div></>;
+  return <><InspectorTitle title="Planning workflow" subtitle={`${snapshot.mode === "prepare" ? "Shape the work when useful" : "Execution actions"} · ${snapshot.state.mode}`} /><div className="inspector-note"><strong>Optional structure</strong><p>Chat remains available in either posture. Use these tools when the work benefits from an explicit plan, approval, or execution sequence.</p></div><div className="readiness"><span>Readiness</span><strong>{snapshot.state.readiness.score}/{snapshot.state.readiness.total}</strong><div><i style={{ width: `${snapshot.state.readiness.score / Math.max(1, snapshot.state.readiness.total) * 100}%` }} /></div></div><div className="next-action"><span>Recommended next move</span><p>{snapshot.state.nextAction}</p></div><div className="plan-actions">{actions.map(({ label, request }) => <button disabled={snapshot.busy || !snapshot.actions[request.type].enabled} title={snapshot.actions[request.type].blockedReason ?? undefined} onClick={() => void action(request)} key={label}>{label}</button>)}<button className="quiet" disabled={snapshot.busy || (snapshot.isGitRepository && snapshot.laneId === "current" && snapshot.mode === "prepare")} title={snapshot.isGitRepository && snapshot.laneId === "current" && snapshot.mode === "prepare" ? "Create a worktree before enabling execution actions." : undefined} onClick={() => void action({ type: "switch-mode", mode: snapshot.mode === "prepare" ? "operate" : "prepare" })}>{snapshot.mode === "prepare" ? "Enable execution actions" : "Return to planning actions"}</button></div></>;
 }
 
 function unresolvedEvents(events: AgentEvent[], requested: "permission.requested" | "question.requested", resolved: "permission.resolved" | "question.resolved"): AgentEvent[] {
@@ -1320,11 +1442,11 @@ function unresolvedEvents(events: AgentEvent[], requested: "permission.requested
 }
 
 function latestActivity(events: AgentEvent[]): AgentEvent[] {
-  const useful = events.filter((event) => event.kind.startsWith("tool.") || event.kind.startsWith("task.") || event.kind === "session.failed");
+  const useful = events.filter((event) => event.kind.startsWith("tool.") || event.kind.startsWith("task.") || event.kind.startsWith("hook.") || event.kind === "session.failed");
   const seen = new Set<string>();
   return useful.reverse().filter((event) => {
-    const payload = event.payload as { toolUseId?: string; taskId?: string };
-    const id = payload.toolUseId ?? payload.taskId ?? event.eventId;
+    const payload = event.payload as { toolUseId?: string; taskId?: string; executionId?: string };
+    const id = payload.toolUseId ?? payload.taskId ?? payload.executionId ?? event.eventId;
     if (seen.has(id)) return false;
     seen.add(id);
     return true;

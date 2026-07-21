@@ -167,7 +167,7 @@ export function renderPrepareHelpText(): string {
 export function renderOperateHelpText(): string {
   return [
     "Operate commands:",
-    "- Plain text chat is disabled here so execution stays action-first.",
+    "- Plain text chat remains available; execution commands are optional workflow actions.",
     "- Commands start with `:`. Example: `:run`, `:auto 3`, `:checkpoint`, `:prepare`.",
     "- `:run`: execute the next queued step once.",
     "- `:auto [n]`: continue automatically for up to `n` steps, or the remaining queue when `n` is omitted.",

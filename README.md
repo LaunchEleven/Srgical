@@ -1,187 +1,80 @@
 # srgical
 
-`srgical` is a local-first CLI for planning work with an AI, turning that plan into a visible pack inside your repo, and then executing the next step cleanly.
+`srgical` is a browser-first local workspace for AI-assisted software work. It keeps conversations, working directories, worktrees, models, skills, hooks, connectors, planning tools, and provider activity in one UI.
 
-It is built around a simple loop:
+The npm executable is intentionally thin: it starts the local backend and opens Studio. Planning and execution are browser workflows; there is no separate terminal UI to learn or maintain.
 
-1. `prepare` the plan
-2. approve it
-3. `operate` the next step
-4. repeat
-
-## Install From npm
+## Install and run
 
 Requirements:
 
 - Node.js 20 or newer
 - Codex authentication from `codex login` or `CODEX_API_KEY`, or Claude authentication through a Console API key or supported cloud provider
-- A working `claude` or `auggie` CLI is optional and remains available as a compatibility fallback
 
 ```bash
 npm install -g @launch11/srgical
-```
-
-After install:
-
-```bash
 srgical
 ```
 
-Running `srgical` opens the browser-first Studio in the last workspace you used. A workspace can be a Git repository or any working directory. Pass a path directly, or use the clickable working-directory control above the new-conversation composer to switch between recent folders or enter another path. Without a global install, use `npx @launch11/srgical`.
-
-Chrome and other compatible browsers can install the local Studio as a standalone app from the **Install app** action. Srgical uses stable local origin `http://127.0.0.1:43111` by default so the installed app can reconnect on later runs. The local `srgical` process still provides the repository and agent backend while the app is open; set `SRGICAL_STUDIO_PORT` or pass `--port` if that port is unavailable.
-
-## Quick Start
-
-Create or reopen a named plan:
+Pass a repository or any working directory when useful:
 
 ```bash
-srgical prepare release-readiness
+srgical ./my-project
 ```
 
-Add `--web` for the conversation-first local Studio:
+Without a global install, run `npx @launch11/srgical`. Studio reopens the last working directory by default and provides a clickable picker for recent folders and arbitrary paths. The selected folder becomes the session's working directory; Git-only controls appear when that folder is a repository.
 
-```bash
-srgical prepare release-readiness --web
-```
+Chrome and other compatible browsers can install Studio as a standalone app. The local `srgical` process still provides filesystem, Git, connector, and agent access while the app is open. Studio uses `http://127.0.0.1:43111` by default; pass `--port` or set `SRGICAL_STUDIO_PORT` to change it, and use `--no-open` when another app window will connect.
 
-The Studio keeps worktrees, conversations, provider activity, approvals, questions, plan state, and skills in one window. Once it is open, the default entry point is simply **What do you want to work on?**—no plan name, mode, branch, or worktree decision is required for each new conversation.
+## Conversations and models
 
-## Native Codex and Claude providers
+Start work from **What do you want to work on?**. A new conversation does not require a plan, mode, branch, or worktree decision.
 
-The native Codex provider uses the official `@openai/codex-sdk` and its pinned CLI runtime. It reuses `codex login` authentication or `CODEX_API_KEY`, keeps resumable Codex thread IDs, streams structured tool/file/MCP/usage events, and applies read-only or workspace-write sandboxing from the conversation's permission mode.
+Each conversation has a model selector in its header. Studio asks the authenticated provider for the models that are actually available, shows the provider-managed default, and persists an explicit choice with that conversation. Changing the model affects the next turn and does not change other conversations.
 
-The native Claude provider uses `@anthropic-ai/claude-agent-sdk` and activates when one of these supported authentication paths is configured:
+The native Codex provider uses `@openai/codex-sdk`, reuses `codex login` or API-key authentication, and discovers its selectable models from the bundled Codex runtime. The native Claude provider uses `@anthropic-ai/claude-agent-sdk` and its account-aware supported-model list. Claude supports:
 
 - `ANTHROPIC_API_KEY`
 - `CLAUDE_CODE_USE_BEDROCK=1`
 - `CLAUDE_CODE_USE_VERTEX=1`
 - `CLAUDE_CODE_USE_FOUNDRY=1`
 
-Srgical deliberately does not reuse Claude subscription OAuth or browser credentials. If supported native authentication is unavailable, Studio explains why and uses the selected local CLI adapter.
+Open **Settings** to select the authentication and billing route used by new conversations. Existing conversations retain the provider, authentication route, and model they started with. Srgical does not store provider secrets.
 
-Both native providers support durable sessions, resume, streaming, tool progress, tasks, interrupt, usage events, skills, and MCP servers. Claude additionally exposes provider-native session forks, interactive permission and question requests, rate-limit events, live MCP connection status, and file checkpoints. Codex worktree promotion starts a new thread with the preserved Srgical transcript and plan context because the TypeScript SDK does not currently expose thread forking.
+## Working directories, repositories, and worktrees
 
-### Provider and billing path
+A plain folder is directly writable and hides Git-only controls. In a Git repository, a new repository conversation starts against the protected primary checkout. Use **Create worktree** when a discussion becomes implementation work; Studio carries the transcript, provider context where supported, plan artifacts, connectors, hooks, and effective skills into an isolated worktree.
 
-Open **Settings** from the repository home or the conversation inspector to choose the authentication route used by new conversations. Studio detects each route independently, enables only configured routes, and stores the preference without storing secrets.
+The session library supports search, recency groups, pinning, archiving, forks, message previews, and current or retired workspace context. **Finish Work** assesses active operations, dirty or conflicted files, divergence, locks, and checkout safety before archival or optional worktree removal.
 
-Supported routes are:
+Built-in worktree actions turn live Git diagnostics into bounded prompts:
 
-- Codex through a ChatGPT subscription login
-- Codex through `CODEX_API_KEY` or `OPENAI_API_KEY`
-- Claude through `ANTHROPIC_API_KEY`
-- Claude through Amazon Bedrock, Google Vertex AI, or Microsoft Foundry
+- **Inspect conflicts** explains unmerged paths without changing Git state.
+- **Resolve conflicts** is available only in an isolated conflicted worktree.
+- **Update from base** uses merge-oriented integration without rewriting history.
+- **Integration check** reviews readiness before work is combined.
 
-Existing conversations keep the provider and authentication route they started with. When a route is selected, Srgical removes competing provider credentials from that provider's child-process environment so a subscription conversation cannot silently switch to API-key billing. Claude subscription OAuth is not exposed through the native Claude Agent SDK and is therefore not offered as a native route.
+These actions do not silently commit, push, reset, abort, or remove worktrees.
 
-## Sessions
+## Skills, prompt buttons, and hooks
 
-A session is the durable unit of conversation; its selected working directory is the folder agents use for inspection and file operations. In a Git repository, new conversations start against protected repository context with planning permissions unless **Start in a worktree** is selected. When a discussion becomes implementation work, **Create worktree** carries its provider context where supported, transcript, plan artifacts, connectors, and effective tools into an isolated branch and worktree. Plain folders are writable directly and hide Git-only worktree controls.
+Studio discovers skills from Srgical, Claude, Codex, Agents, repository, global, and user-configured skill directories. Type `/` in the composer to search effective skills, select one with the keyboard, and activate its complete `SKILL.md` for the turn.
 
-Studio provides a repository-wide session library with search, recency groups, pinned and archived views, message previews, fork ancestry, and current or retired workspace context. Repository conversations and worktree conversations can both be reopened from the same history.
+In **Settings → Prompt buttons**, bind an effective skill to a short reusable prompt. The button appears beside the composer and resolves the current version of the skill when clicked.
 
-Use **Finish Work** on a lane for post-operation cleanup. Studio assesses active operations, dirty/conflicted files, divergence, locks, and primary-checkout safety before acting. Finishing archives the lane's sessions and records their terminal commit and workspace summary. Worktree removal remains separately gated and requires the lane ID as typed confirmation; the branch, transcripts, plan artifacts, and binding history are retained.
+The **Hooks** inspector can automatically activate a skill or named MCP tool before an answer or before the final response. Hooks are ordered, may be blocking or observational, and emit visible lifecycle activity into the conversation. See [Conversation hooks](docs/hooks.md).
 
-## Worktrees and skills
+## Connectors and MCP
 
-Each lane maps one worktree and branch to one plan, a set of durable sessions, and an effective skill set. Studio reports dirty/conflict counts, ahead/behind state, stale or prunable worktrees, locks, and a recommended safe next action.
+Settings includes guided connection cards for GitHub, Linear, Slack, Notion, and Google Drive. **Connect** opens the service-specific authorization flow. Advanced configuration supports custom Streamable HTTP, SSE, and local stdio MCP servers, plus import of Claude-style MCP JSON.
 
-The browser Studio also turns live Git diagnostics into safe prompt tools. **Inspect conflicts** explains every unmerged path without changing Git state, **Resolve conflicts** is enabled only in an isolated conflicted worktree, **Update from base** performs a merge-oriented update without history rewriting, and **Integration check** reviews readiness before a lane is combined. These are agent prompts with explicit safety boundaries—not hidden shell scripts—and they never commit, push, reset, abort, or remove a worktree automatically.
+Connector definitions are repository-scoped and stored outside worktrees under `~/.srgical/repos/<repo-id>/connectors.json`. Use `${ENV_VAR}` placeholders for secrets. Studio validates required variables and displays live provider connection and tool status during turns. See [Connectors and MCP](docs/connectors-and-mcp.md).
 
-The global skills directory is created automatically at `~/.srgical/skills`. Studio also discovers:
+## Planning when it helps
 
-- `.srgical/skills`
-- `.claude/skills` and `~/.claude/skills`
-- `.codex/skills` and `~/.codex/skills`
-- `.agents/skills`
-- `skills`
-- additional directories configured in the Skills inspector
+Planning is an optional set of tools inside the conversation, not a separate product mode. Use the planning inspector to gather evidence, maintain `context.md`, build or slice a visible plan, approve it, and run steps when the work benefits from that structure. Ordinary chat, skills, hooks, connectors, and model selection remain available throughout.
 
-Skills are hashed with their supporting files and tracked by source, scope, trust, compatibility, precedence, and conflicts. They can be enabled, disabled, trusted, reviewed, or blocked per repository.
-
-Type `/` in the chat composer to open the workspace's effective-skill menu. Filter by typing part of a skill name, use the arrow keys and Enter to select it, then add an optional task after `/<skill-id>`. When sent, Studio resolves the skill again and asks the agent to read and follow its complete `SKILL.md` for that turn.
-
-Effective skills can also become custom buttons. In Studio **Settings → Prompt buttons**, choose a skill, give the button a short label, and define the task prompt. The resulting action appears beside the chat composer, resolves the current effective skill at click time, and asks the agent to read its complete `SKILL.md` before acting. Button configuration is repository-scoped under `~/.srgical/repos/<repo-id>/skills.json`; blocked or disabled skills make their buttons unavailable.
-
-## Connectors and MCP servers
-
-Studio Settings includes guided connection cards for GitHub, Linear, Slack, Notion, and Google Drive. **Connect** opens a service-specific walkthrough, hands off to the official setup page, and clearly separates hosted OAuth from token or OAuth-client configuration. Installing a hosted connector adds its official MCP endpoint to the repository; its secure consent flow opens when the selected native Codex or Claude provider first connects. The advanced **MCP** inspector also supports custom Streamable HTTP, SSE, and local stdio servers. Existing Claude-style JSON can be imported directly:
-
-```json
-{
-  "mcpServers": {
-    "linear": {
-      "type": "http",
-      "url": "https://mcp.linear.app/mcp"
-    },
-    "local-tools": {
-      "command": "npx",
-      "args": ["-y", "@example/mcp-server"]
-    }
-  }
-}
-```
-
-Connector definitions are repository-scoped but live under `~/.srgical/repos/<repo-id>/connectors.json`, outside Git worktrees. Use `${ENV_VAR}` placeholders for tokens, headers, process environment values, and OAuth client credentials so secrets do not need to be written to that file. Studio reports missing variables before a turn, then shows the provider's live connection state and discovered tools while the turn is active.
-
-Remote OAuth behavior depends on the MCP server and provider. Claude receives compatible OAuth client metadata; Codex uses its normal MCP OAuth credential store and callback configuration. Linear supports dynamic registration, Slack requires workspace approval, and Google's Drive MCP is currently a Developer Preview and requires a configured Google OAuth client. Connector changes take effect on the next native provider turn. Claude's normal user/project/local settings sources, including compatible `.mcp.json` configuration, and Codex's normal `config.toml` MCP sources remain enabled alongside Srgical-managed connectors.
-
-That command creates the plan pack under `.srgical/plans/release-readiness/` if it does not exist, then opens the full-screen prepare studio.
-
-Inside `prepare`:
-
-- Type normal text to talk to the planner
-- Press `F2` to gather more context
-- Use `:import <path>` to read a specific document and sync it into `context.md`
-- Use `:context` to refresh `context.md` from the current transcript and gathered evidence
-- Press `F3` to build the draft
-- Press `F4` to slice the plan into steps
-- Press `F6` to approve the current draft
-- Type `:help` to see the command list
-
-Check the current state at any time:
-
-```bash
-srgical status release-readiness
-```
-
-When the plan is approved, switch to execution:
-
-```bash
-srgical operate release-readiness
-```
-
-Useful operate variants:
-
-```bash
-srgical operate release-readiness --dry-run
-srgical operate release-readiness --auto --max-steps 5
-srgical operate release-readiness --checkpoint
-```
-
-## Main Commands
-
-```bash
-srgical prepare <id>
-srgical operate <id>
-srgical status [id]
-srgical about
-srgical changelog
-srgical completion bash
-srgical completion powershell
-```
-
-## What Gets Written
-
-Visible plan artifacts remain in `.srgical/` inside your repo. Durable sessions and skill preferences live under `~/.srgical/`; the worktree registry lives in shared Git metadata so branch changes cannot rewrite management state.
-
-Inside prepare, `context.md` is treated as a living document. Gather/import actions can refresh it directly before you build the full draft.
-
-## Notes
-
-- Legacy commands such as `doctor`, `init`, `studio`, and `run-next` now exist only to point you to the rebooted workflow.
-- If you want a fuller walkthrough of the prepare experience, see [docs/studio-plan-tutorial.md](docs/studio-plan-tutorial.md).
+Visible planning artifacts live under `.srgical/` in the working repository. Durable sessions and repository-scoped preferences live under `~/.srgical/`.
 
 ## Development
 
@@ -189,5 +82,5 @@ Inside prepare, `context.md` is treated as a living document. Gather/import acti
 npm install
 npm run build
 npm test
-npm run dev -- prepare release-readiness
+npm run dev -- .
 ```

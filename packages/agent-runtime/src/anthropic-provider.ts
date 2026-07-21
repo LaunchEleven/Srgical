@@ -16,6 +16,8 @@ import type {
 } from "@srgical/studio-shared";
 import type {
   AgentPermissionResolution,
+  AgentModelCatalog,
+  AgentModelListOptions,
   AgentProvider,
   AgentProviderStatus,
   AgentQuestionResolution,
@@ -26,7 +28,7 @@ import type {
 type QueryFactory = (params: { prompt: string; options?: AnthropicOptions }) => QueryLike;
 
 type QueryLike = AsyncIterable<SDKMessage> & Pick<Query, "interrupt" | "setPermissionMode" | "rewindFiles"> &
-  Partial<Pick<Query, "mcpServerStatus" | "reconnectMcpServer">>;
+  Partial<Pick<Query, "mcpServerStatus" | "reconnectMcpServer" | "supportedModels">>;
 
 type PendingPermission = {
   toolUseId: string;
@@ -109,6 +111,42 @@ export class AnthropicAgentProvider implements AgentProvider {
         capabilities: [],
         detail: errorMessage(error)
       };
+    }
+  }
+
+  async listModels(options: AgentModelListOptions): Promise<AgentModelCatalog> {
+    const factory = this.#factory ?? await loadQueryFactory();
+    const abortController = new AbortController();
+    const abort = () => abortController.abort(options.signal?.reason);
+    if (options.signal?.aborted) abort();
+    else options.signal?.addEventListener("abort", abort, { once: true });
+    const query = factory({
+      prompt: "",
+      options: {
+        abortController,
+        cwd: options.workspace,
+        env: buildAnthropicProviderEnvironment(this.#env, this.#authMethod),
+        persistSession: false,
+        settingSources: ["user", "project", "local"]
+      }
+    });
+    if (!query.supportedModels) {
+      throw new Error("This Claude Agent SDK version does not expose model discovery.");
+    }
+    try {
+      const rows = await query.supportedModels();
+      return {
+        models: rows.map((model) => ({
+          id: model.value,
+          label: model.displayName,
+          description: model.description,
+          resolvedId: model.resolvedModel
+        })),
+        defaultModelId: null
+      };
+    } finally {
+      options.signal?.removeEventListener("abort", abort);
+      await query.interrupt().catch(() => undefined);
     }
   }
 
@@ -195,6 +233,7 @@ export class AnthropicAgentProvider implements AgentProvider {
         enableFileCheckpointing: true,
         forkSession: options.fork ?? false,
         includePartialMessages: true,
+        model: options.session.model ?? undefined,
         permissionMode: toSdkPermissionMode(options.session.permissionMode),
         persistSession: true,
         promptSuggestions: true,

@@ -1,4 +1,6 @@
 import { readFile } from "node:fs/promises";
+import { spawn } from "node:child_process";
+import { createInterface } from "node:readline";
 import os from "node:os";
 import path from "node:path";
 import type {
@@ -13,6 +15,8 @@ import type {
 } from "@srgical/studio-shared";
 import type {
   AgentProvider,
+  AgentModelCatalog,
+  AgentModelListOptions,
   AgentProviderStatus,
   AgentSessionHandle,
   AgentSessionStartOptions
@@ -32,6 +36,7 @@ type CodexFactory = (options?: CodexOptions) => CodexClientLike;
 
 export type CodexAgentProviderOptions = {
   createCodex?: CodexFactory;
+  listModels?: (options: AgentModelListOptions) => Promise<AgentModelCatalog>;
   env?: NodeJS.ProcessEnv;
   authFilePath?: string;
   authMethod?: CodexAuthMethod;
@@ -55,12 +60,14 @@ export class CodexAgentProvider implements AgentProvider {
   readonly id: string;
   readonly label: string;
   readonly #factory?: CodexFactory;
+  readonly #listModels?: (options: AgentModelListOptions) => Promise<AgentModelCatalog>;
   readonly #env: NodeJS.ProcessEnv;
   readonly #authFilePath: string;
   readonly #authMethod: CodexAuthMethod;
 
   constructor(options: CodexAgentProviderOptions = {}) {
     this.#factory = options.createCodex;
+    this.#listModels = options.listModels;
     this.#env = options.env ?? process.env;
     const codexHome = this.#env.CODEX_HOME?.trim() || path.join(os.homedir(), ".codex");
     this.#authFilePath = options.authFilePath ?? path.join(codexHome, "auth.json");
@@ -75,6 +82,14 @@ export class CodexAgentProvider implements AgentProvider {
       : this.#authMethod === "api-key"
         ? "Codex · API key"
         : "Codex";
+  }
+
+  async listModels(options: AgentModelListOptions): Promise<AgentModelCatalog> {
+    if (this.#listModels) return this.#listModels(options);
+    return queryCodexModelCatalog({
+      ...options,
+      env: buildCodexProviderEnvironment(this.#env, this.#authMethod)
+    });
   }
 
   async detect(): Promise<AgentProviderStatus> {
@@ -114,6 +129,7 @@ export class CodexAgentProvider implements AgentProvider {
     const client = factory({ config: mcp.config, env: mcp.env });
     const threadOptions: ThreadOptions = {
       workingDirectory: options.session.workspace,
+      model: options.session.model ?? undefined,
       skipGitRepoCheck: true,
       sandboxMode: toCodexSandboxMode(options.session.permissionMode),
       approvalPolicy: toCodexApprovalPolicy(options.session.permissionMode)
@@ -390,6 +406,130 @@ function sanitizeEnvironmentPart(value: string): string {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+type CodexAppServerModel = {
+  id?: unknown;
+  model?: unknown;
+  displayName?: unknown;
+  description?: unknown;
+  hidden?: unknown;
+  isDefault?: unknown;
+};
+
+export function toCodexModelCatalog(rows: CodexAppServerModel[]): AgentModelCatalog {
+  const models = rows
+    .filter((row) => row.hidden !== true)
+    .map((row) => {
+      const id = typeof row.model === "string" && row.model.trim()
+        ? row.model.trim()
+        : typeof row.id === "string"
+          ? row.id.trim()
+          : "";
+      return {
+        id,
+        label: typeof row.displayName === "string" && row.displayName.trim() ? row.displayName.trim() : id,
+        description: typeof row.description === "string" ? row.description.trim() : "",
+        resolvedId: id,
+        isDefault: row.isDefault === true
+      };
+    })
+    .filter((model) => model.id.length > 0)
+    .filter((model, index, all) => all.findIndex((candidate) => candidate.id === model.id) === index);
+  return {
+    models,
+    defaultModelId: models.find((model) => model.isDefault)?.id ?? null
+  };
+}
+
+export async function queryCodexModelCatalog(options: AgentModelListOptions & {
+  env?: NodeJS.ProcessEnv;
+  timeoutMs?: number;
+}): Promise<AgentModelCatalog> {
+  const codexEntrypoint = require.resolve("@openai/codex/bin/codex.js");
+  const child = spawn(process.execPath, [codexEntrypoint, "app-server"], {
+    cwd: options.workspace,
+    env: options.env ?? process.env,
+    stdio: "pipe",
+    windowsHide: true
+  });
+  const lines = createInterface({ input: child.stdout });
+  let stderr = "";
+  let settled = false;
+
+  return new Promise<AgentModelCatalog>((resolve, reject) => {
+    const finish = (error?: Error, catalog?: AgentModelCatalog) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      options.signal?.removeEventListener("abort", onAbort);
+      lines.close();
+      child.stdin.end();
+      child.kill();
+      if (error) reject(error);
+      else resolve(catalog ?? { models: [], defaultModelId: null });
+    };
+    const onAbort = () => finish(abortError(options.signal?.reason));
+    const timeout = setTimeout(() => finish(new Error("Timed out while asking Codex for its available models.")), options.timeoutMs ?? 12_000);
+
+    options.signal?.addEventListener("abort", onAbort, { once: true });
+    child.stderr.on("data", (chunk) => {
+      stderr = `${stderr}${String(chunk)}`.slice(-2_000);
+    });
+    child.on("error", (error) => finish(error));
+    child.on("exit", (code) => {
+      if (!settled) finish(new Error(stderr.trim() || `Codex model discovery exited with code ${code ?? "unknown"}.`));
+    });
+    lines.on("line", (line) => {
+      let message: { id?: unknown; result?: unknown; error?: { message?: unknown } };
+      try {
+        message = JSON.parse(line) as typeof message;
+      } catch {
+        return;
+      }
+      if (message.id === 1) {
+        if (message.error) {
+          finish(new Error(typeof message.error.message === "string" ? message.error.message : "Codex initialization failed."));
+          return;
+        }
+        child.stdin.write(`${JSON.stringify({ method: "initialized" })}\n`);
+        child.stdin.write(`${JSON.stringify({ method: "model/list", id: 2, params: { limit: 100, includeHidden: false } })}\n`);
+        return;
+      }
+      if (message.id === 2) {
+        if (message.error) {
+          finish(new Error(typeof message.error.message === "string" ? message.error.message : "Codex model discovery failed."));
+          return;
+        }
+        const result = isRecord(message.result) ? message.result : {};
+        const rows = Array.isArray(result.data) ? result.data.filter(isRecord) : [];
+        finish(undefined, toCodexModelCatalog(rows));
+      }
+    });
+
+    if (options.signal?.aborted) {
+      onAbort();
+      return;
+    }
+    child.stdin.write(`${JSON.stringify({
+      method: "initialize",
+      id: 1,
+      params: {
+        clientInfo: { name: "srgical", title: "Srgical", version: "0.0.0" },
+        capabilities: null
+      }
+    })}\n`);
+  });
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function abortError(reason: unknown): Error {
+  const error = new Error(typeof reason === "string" ? reason : "Model discovery was interrupted.");
+  error.name = "AbortError";
+  return error;
 }
 
 async function loadCodexFactory(): Promise<CodexFactory> {

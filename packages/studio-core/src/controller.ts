@@ -11,6 +11,7 @@ import {
   runLegacyTextTurn,
   selectAgentAuthOption,
   type AgentProvider,
+  type AgentModelCatalog,
   type AgentProviderStatus,
   type AgentSessionHandle
 } from "@srgical/agent-runtime";
@@ -55,6 +56,7 @@ import {
   saveStudioUiConfig
 } from "../../../apps/cli/src/core/studio-ui-config";
 import { unblockTrackerStep } from "../../../apps/cli/src/core/tracker-unblock";
+import { loadHookRegistry, removeHook, setHookEnabled, upsertHook } from "../../../apps/cli/src/core/hook-registry";
 import { getPlanningPackPaths, readText, resolvePlanId, resolveWorkspace, saveActivePlanId } from "../../../apps/cli/src/core/workspace";
 import { getGitWorktreeDiagnostics, type GitWorktreeDiagnostics } from "../../../apps/cli/src/core/git-worktree";
 import { getWorkspaceBranchName } from "../../../apps/cli/src/core/worktree-lanes";
@@ -112,6 +114,7 @@ import type {
   StudioListener,
   StudioSnapshot
 } from "./types";
+import { completeTurnHooks, failTurnHooks, prepareTurnHooks, type PreparedHookExecution } from "./hook-runtime";
 
 const GATHER_SOURCE_LIMIT = 6000;
 
@@ -119,7 +122,9 @@ const STUDIO_START_MESSAGE_PREFIXES = [
   "Repository conversation is active against the primary checkout.",
   "Directory conversation is active in the selected working directory.",
   "Prepare mode gathers context, keeps `context.md` current, builds the draft,",
-  "Operate mode is execution-only."
+  "Operate mode is execution-only.",
+  "Planning workflow tools are available when this work benefits from explicit structure.",
+  "Execution actions are enabled for this planning workflow."
 ] as const;
 
 type LiveStudioMessage = {
@@ -210,6 +215,19 @@ export async function createStudioController(options: StudioControllerOptions = 
           ? `${nativeProviderStatus.label} native provider unavailable: ${nativeProviderStatus.detail}`
           : "Using the configured CLI adapter."
       };
+  let agentModels: AgentModelCatalog = nativeProviderEnabled && nativeProvider.listModels
+    ? await nativeProvider.listModels({ workspace, signal: AbortSignal.timeout(12_000) }).catch((error: unknown) => ({
+        models: [],
+        defaultModelId: null,
+        detail: `Model discovery unavailable: ${error instanceof Error ? error.message : String(error)}`
+      }))
+    : {
+        models: [],
+        defaultModelId: null,
+        detail: nativeProviderEnabled
+          ? "This provider does not expose model discovery."
+          : "Model selection requires an authenticated native provider."
+      };
   if (options.agentProviderId && activeProviderStatus.providerId !== options.agentProviderId) {
     throw new Error(`Session provider \`${options.agentProviderId}\` is unavailable; detected \`${activeProviderStatus.providerId}\`.`);
   }
@@ -217,6 +235,7 @@ export async function createStudioController(options: StudioControllerOptions = 
   const agentSessionStore = options.agentSessionStore ?? new AgentSessionStore();
   let skills = await discoverSkills(workspace, { repoId });
   let connectors = await loadConnectorRegistry(repoId);
+  let hooks = await loadHookRegistry(repoId);
   let agentSession = await resolveStructuredAgentSession({
     store: agentSessionStore,
     repoId,
@@ -264,6 +283,7 @@ export async function createStudioController(options: StudioControllerOptions = 
     busyStatus,
     agentLabel: activeProviderStatus.label,
     agentProvider: activeProviderStatus,
+    agentModels,
     authOptions,
     agentSession,
     agentSessions,
@@ -278,6 +298,7 @@ export async function createStudioController(options: StudioControllerOptions = 
     promptActions: buildWorktreePromptActions(options.laneId ?? "current", worktreeDiagnostics, skills.promptActions, isGitRepository),
     worktreeDiagnostics,
     connectors,
+    hooks,
     footerText:
       busy
         ? `Working: ${busyStatus}`
@@ -346,6 +367,7 @@ export async function createStudioController(options: StudioControllerOptions = 
     authOptions = await detectAgentAuthOptions(settings.preferredAuthOptionId);
     skills = await discoverSkills(workspace, { repoId });
     connectors = await loadConnectorRegistry(repoId);
+    hooks = await loadHookRegistry(repoId);
     agentSession = await agentSessionStore.update(repoId, agentSession.sessionId, {
       effectiveSkillHashes: skills.effectiveSkillHashes
     });
@@ -1155,18 +1177,15 @@ export async function createStudioController(options: StudioControllerOptions = 
       await system("No active skill matches that slash command. Type `/` in the chat composer to choose an effective skill. Studio commands use `:`, for example `:help`, `:gather`, `:slice --help`, or `:operate`.");
       return;
     }
-    if (mode === "operate" && !skillInvocation) {
-      await system("Operate is action-first. Use the primary actions or the :command palette.");
-      return;
-    }
     const activeSkillInvocation = skillInvocation?.status === "ready" ? skillInvocation : null;
     const activeSkill = activeSkillInvocation?.skill ?? null;
-    const agentPrompt = activeSkillInvocation
+    const baseAgentPrompt = activeSkillInvocation
       ? buildSkillInvocationPrompt(activeSkillInvocation.skill, activeSkillInvocation.task)
       : value;
     const writableWorkspace = !isGitRepository || (options.laneId ?? "current") !== "current";
     setBusyState(true, activeSkill ? `using ${activeSkill.name}...` : "thinking...");
     let liveReply: LiveStudioMessage | null = null;
+    let preparedHooks: PreparedHookExecution[] = [];
     try {
       if (agentSession.lifecycle === "archived") {
         agentSession = await agentSessionStore.setArchived(repoId, agentSession.sessionId, false);
@@ -1188,20 +1207,38 @@ export async function createStudioController(options: StudioControllerOptions = 
         await system(`Context sync completed from your instruction.\nNext action: ${result.nextAction}`);
         return;
       }
-      const plannerMessages = activeSkill
+      const hookEventStartSequence = recentAgentEvents.at(-1)?.sequence ?? 0;
+      const receivedHooks = await prepareTurnHooks({
+        hooks: hooks.hooks,
+        trigger: "turn.received",
+        userMessage: value,
+        skills,
+        connectors,
+        mcpAvailable: nativeProviderEnabled && activeProviderStatus.capabilities.includes("mcp"),
+        emit: (event) => agentSessionStore.append(repoId, agentSession.sessionId, event).then(() => undefined)
+      });
+      const completedHooks = await prepareTurnHooks({
+        hooks: hooks.hooks,
+        trigger: "turn.completed",
+        userMessage: value,
+        skills,
+        connectors,
+        mcpAvailable: nativeProviderEnabled && activeProviderStatus.capabilities.includes("mcp"),
+        emit: (event) => agentSessionStore.append(repoId, agentSession.sessionId, event).then(() => undefined)
+      });
+      preparedHooks = [...receivedHooks, ...completedHooks];
+      const hookPrompt = preparedHooks.map((execution) => execution.promptBlock).join("\n\n");
+      const agentPrompt = hookPrompt
+        ? ["Srgical lifecycle hooks for this turn:", hookPrompt, "", "Primary user request:", baseAgentPrompt].join("\n")
+        : baseAgentPrompt;
+      const plannerMessages = activeSkill || preparedHooks.length
         ? [...messages.slice(0, -1), { role: "user" as const, content: agentPrompt }]
         : null;
       const activeLiveReply = (liveReply = startLiveMessage("assistant"));
       if (nativeProviderEnabled) {
         const completedText = await runNativeProviderTurn(agentPrompt, activeLiveReply, writableWorkspace ? "acceptEdits" : "plan");
         await activeLiveReply.finalize(completedText);
-      } else if (writableWorkspace && activeSkill) {
-        const result = await runNextPrompt(workspace, agentPrompt, {
-          planId,
-          onOutputChunk: (chunk) => activeLiveReply.append(chunk)
-        });
-        await activeLiveReply.finalize(result.trim());
-      } else if (!isGitRepository) {
+      } else if (writableWorkspace) {
         const result = await runNextPrompt(workspace, agentPrompt, {
           planId,
           onOutputChunk: (chunk) => activeLiveReply.append(chunk)
@@ -1222,10 +1259,21 @@ export async function createStudioController(options: StudioControllerOptions = 
         });
         await activeLiveReply.finalize(reply.trim());
       }
+      const observedHookTools = recentAgentEvents
+        .filter((event) => event.sequence > hookEventStartSequence && event.kind === "tool.started")
+        .map((event) => event.kind === "tool.started" ? event.payload.toolName : "");
+      await completeTurnHooks(
+        preparedHooks,
+        (event) => agentSessionStore.append(repoId, agentSession.sessionId, event).then(() => undefined),
+        { observedToolNames: observedHookTools }
+      );
       await refreshAdvice(workspace, messages, { planId }).catch(() => null);
       await refresh();
     } catch (error) {
       await liveReply?.discard();
+      if (preparedHooks.length) {
+        await failTurnHooks(preparedHooks, error instanceof Error ? error.message : String(error), (event) => agentSessionStore.append(repoId, agentSession.sessionId, event).then(() => undefined));
+      }
       await system(`Planner request failed: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
       setBusyState(false);
@@ -1360,6 +1408,17 @@ export async function createStudioController(options: StudioControllerOptions = 
         case "provider-auth-select":
           await setPreferredAuthOption(request.authOptionId);
           break;
+        case "model-select": {
+          if (activeAgentHandle || busy) throw new Error("Stop the active response before changing models.");
+          const selectedModel = request.modelId?.trim() || null;
+          if (selectedModel && !agentModels.models.some((model) => model.id === selectedModel || model.resolvedId === selectedModel)) {
+            throw new Error(`Model \`${selectedModel}\` is not available from ${activeProviderStatus.label}.`);
+          }
+          agentSession = await agentSessionStore.update(repoId, agentSession.sessionId, { model: selectedModel });
+          agentSessions = await listLaneSessions(agentSessionStore, repoId, workspace, options.laneId ?? "current", activeProviderStatus.providerId);
+          publishSnapshot();
+          break;
+        }
         case "reference-toggle":
           if (!request.referenceId) {
             throw new Error("A reference id is required to change reference selection.");
@@ -1517,6 +1576,53 @@ export async function createStudioController(options: StudioControllerOptions = 
           }
           await activeAgentHandle.reconnectMcpServer(request.connectorId);
           break;
+        case "hook-upsert":
+          if (!request.hookLabel?.trim() || !request.hookTrigger || !request.hookHandler || !request.hookInstruction?.trim()) {
+            throw new Error("A hook label, trigger, handler, and instruction are required.");
+          }
+          await upsertHook(repoId, {
+            hookId: request.hookId,
+            label: request.hookLabel,
+            description: request.hookDescription,
+            trigger: request.hookTrigger,
+            handler: request.hookHandler,
+            instruction: request.hookInstruction,
+            blocking: request.hookBlocking,
+            priority: request.hookPriority,
+            timeoutMs: request.hookTimeoutMs
+          });
+          await refresh();
+          break;
+        case "hook-toggle":
+          if (!request.hookId || typeof request.selected !== "boolean") throw new Error("A hook and enabled state are required.");
+          await setHookEnabled(repoId, request.hookId, request.selected);
+          await refresh();
+          break;
+        case "hook-remove":
+          if (!request.hookId) throw new Error("A hook is required.");
+          await removeHook(repoId, request.hookId);
+          await refresh();
+          break;
+        case "hook-test": {
+          if (!request.hookId) throw new Error("A hook is required.");
+          const hook = hooks.hooks.find((item) => item.hookId === request.hookId);
+          if (!hook) throw new Error(`Unknown hook: ${request.hookId}`);
+          const tested = await prepareTurnHooks({
+            hooks: [{ ...hook, enabled: true }],
+            trigger: hook.trigger,
+            userMessage: "Validate this hook against the current workspace configuration.",
+            skills,
+            connectors,
+            mcpAvailable: nativeProviderEnabled && activeProviderStatus.capabilities.includes("mcp"),
+            emit: (event) => agentSessionStore.append(repoId, agentSession.sessionId, event).then(() => undefined)
+          });
+          await completeTurnHooks(
+            tested,
+            (event) => agentSessionStore.append(repoId, agentSession.sessionId, event).then(() => undefined),
+            { validationOnly: true }
+          );
+          break;
+        }
         case "session-create": {
           const created = await agentSessionStore.create({
             providerId: activeProviderStatus.providerId,
@@ -1658,8 +1764,8 @@ function buildStudioStartMessage(laneId: string, mode: StudioMode, state: Planni
       ? "Repository conversation is active against the primary checkout. Use it to inspect, discuss, and plan; create a worktree before changing files.\n\n"
       : "Directory conversation is active in the selected working directory. You may inspect and modify files here; Git worktree features are unavailable unless this directory becomes a repository.\n\n";
   return `${contextMessage}${mode === "prepare"
-    ? `Prepare mode gathers context, keeps \`context.md\` current, builds the draft, slices it into steps, and gets the plan ready to operate.\nType normal text to chat with the planner.\nUse \`:\` to run a studio command such as \`:import <path>\`, \`:context\`, \`:build\`, \`:slice --help\`, or \`:operate\`.\nStage: ${state.mode}\nNext action: ${state.nextAction}`
-    : `Operate mode is execution-only.\nUse \`:\` to run studio commands such as \`:run\`, \`:auto 3\`, \`:checkpoint\`, or \`:prepare\`.\nStage: ${state.mode}\nNext action: ${state.nextAction}`}`;
+    ? `Planning workflow tools are available when this work benefits from explicit structure. Normal chat remains available, and hooks can add context or policy to each turn.\nUse \`:\` to run a studio command such as \`:import <path>\`, \`:context\`, \`:build\`, \`:slice --help\`, or \`:operate\`.\nStage: ${state.mode}\nNext action: ${state.nextAction}`
+    : `Execution actions are enabled for this planning workflow. Normal chat remains available alongside \`:run\`, \`:auto 3\`, \`:checkpoint\`, and \`:prepare\`.\nStage: ${state.mode}\nNext action: ${state.nextAction}`}`;
 }
 
 function compactStudioStartMessages(messages: ChatMessage[]): { messages: ChatMessage[]; removed: number } {
@@ -1855,6 +1961,7 @@ function buildActionStates(mode: StudioMode, state: PlanningPackState): Record<S
     wheel: { enabled: true, blockedReason: null },
     theme: { enabled: true, blockedReason: null },
     "provider-auth-select": { enabled: true, blockedReason: null },
+    "model-select": { enabled: true, blockedReason: null },
     command: { enabled: true, blockedReason: null },
     "reference-toggle": { enabled: true, blockedReason: null },
     "reference-autoselect": { enabled: true, blockedReason: null },
@@ -1878,6 +1985,10 @@ function buildActionStates(mode: StudioMode, state: PlanningPackState): Record<S
     "connector-toggle": { enabled: true, blockedReason: null },
     "connector-remove": { enabled: true, blockedReason: null },
     "connector-reconnect": { enabled: true, blockedReason: null },
+    "hook-upsert": { enabled: true, blockedReason: null },
+    "hook-toggle": { enabled: true, blockedReason: null },
+    "hook-remove": { enabled: true, blockedReason: null },
+    "hook-test": { enabled: true, blockedReason: null },
     "session-create": { enabled: true, blockedReason: null },
     "session-switch": { enabled: true, blockedReason: null },
     "session-fork": { enabled: true, blockedReason: null },

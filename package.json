@@ -9,7 +9,6 @@
     "build": "npm run build -w @srgical/studio-shared && npm run build -w @srgical/agent-runtime && npm run build -w @srgical/skill-registry && npm run build -w @srgical/connector-registry && npm run build -w @srgical/studio-core && npm run build -w @srgical/studio-web && npm run build -w @launcheleven/srgical",
     "dev": "npm run dev -w @launcheleven/srgical --",
     "start": "npm run start -w @launcheleven/srgical --",
-    "status": "npm run status -w @launcheleven/srgical --",
     "test": "npm run test -w @launcheleven/srgical",
     "test:coverage": "npm run test:coverage -w @launcheleven/srgical",
     "prepack": "npm run build",

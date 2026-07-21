@@ -2,8 +2,8 @@ import type { ChatMessage } from "../../../apps/cli/src/core/prompts";
 import type { PlanningPackState } from "../../../apps/cli/src/core/planning-pack-state";
 import type { StudioUiConfig } from "../../../apps/cli/src/core/studio-ui-config";
 import type { PlanDiceOptions } from "../../../apps/cli/src/core/plan-dicing";
-import type { AgentEvent, AgentSessionRecord, ConnectorRegistrySnapshot, McpServerDefinition, PromptActionRecord, SkillRegistrySnapshot, StudioAuthOptionId, StudioAuthOptionStatus, StudioMode, StudioSettings, StudioTheme, WorktreeDiagnosticsView } from "@srgical/studio-shared";
-import type { AgentProviderStatus } from "@srgical/agent-runtime";
+import type { AgentEvent, AgentSessionRecord, ConnectorRegistrySnapshot, HookHandler, HookRegistrySnapshot, HookTrigger, McpServerDefinition, PromptActionRecord, SkillRegistrySnapshot, StudioAuthOptionId, StudioAuthOptionStatus, StudioMode, StudioSettings, StudioTheme, WorktreeDiagnosticsView } from "@srgical/studio-shared";
+import type { AgentModelCatalog, AgentProviderStatus } from "@srgical/agent-runtime";
 
 export type StudioActionId =
   | "gather"
@@ -22,6 +22,7 @@ export type StudioActionId =
   | "wheel"
   | "theme"
   | "provider-auth-select"
+  | "model-select"
   | "command"
   | "reference-toggle"
   | "reference-autoselect"
@@ -45,6 +46,10 @@ export type StudioActionId =
   | "connector-toggle"
   | "connector-remove"
   | "connector-reconnect"
+  | "hook-upsert"
+  | "hook-toggle"
+  | "hook-remove"
+  | "hook-test"
   | "session-create"
   | "session-switch"
   | "session-fork"
@@ -63,6 +68,7 @@ export type StudioActionRequest = {
   wheelSensitivity?: number;
   themeId?: string;
   authOptionId?: StudioAuthOptionId;
+  modelId?: string | null;
   diceOptions?: PlanDiceOptions;
   label?: string;
   referenceId?: string;
@@ -93,6 +99,15 @@ export type StudioActionRequest = {
   promptActionDescription?: string;
   promptActionPrompt?: string;
   promptActionSkillId?: string;
+  hookId?: string;
+  hookLabel?: string;
+  hookDescription?: string;
+  hookTrigger?: HookTrigger;
+  hookHandler?: HookHandler;
+  hookInstruction?: string;
+  hookBlocking?: boolean;
+  hookPriority?: number;
+  hookTimeoutMs?: number;
 };
 
 export type StudioActionState = {
@@ -227,6 +242,7 @@ export type StudioSnapshot = {
   busyStatus: string;
   agentLabel: string;
   agentProvider: AgentProviderStatus;
+  agentModels: AgentModelCatalog;
   authOptions: StudioAuthOptionStatus[];
   agentSession: AgentSessionRecord;
   agentSessions: AgentSessionRecord[];
@@ -241,6 +257,7 @@ export type StudioSnapshot = {
   promptActions: PromptActionRecord[];
   worktreeDiagnostics: WorktreeDiagnosticsView;
   connectors: ConnectorRegistrySnapshot;
+  hooks: HookRegistrySnapshot;
   footerText: string;
 };
 

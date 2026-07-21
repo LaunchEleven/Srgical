@@ -16,6 +16,25 @@ export type AgentProviderStatus = {
   detail?: string;
 };
 
+export type AgentModelOption = {
+  id: string;
+  label: string;
+  description: string;
+  resolvedId?: string;
+  isDefault?: boolean;
+};
+
+export type AgentModelCatalog = {
+  models: AgentModelOption[];
+  defaultModelId: string | null;
+  detail?: string;
+};
+
+export type AgentModelListOptions = {
+  workspace: string;
+  signal?: AbortSignal;
+};
+
 export type AgentSessionStartOptions = {
   session: AgentSessionRecord;
   prompt: string;
@@ -52,5 +71,6 @@ export interface AgentProvider {
   readonly id: string;
   readonly label: string;
   detect(): Promise<AgentProviderStatus>;
+  listModels?(options: AgentModelListOptions): Promise<AgentModelCatalog>;
   start(options: AgentSessionStartOptions): Promise<AgentSessionHandle>;
 }

@@ -83,6 +83,9 @@ export type AgentEventKind =
   | "rate_limit.updated"
   | "checkpoint.created"
   | "checkpoint.rewound"
+  | "hook.started"
+  | "hook.completed"
+  | "hook.failed"
   | "workspace.retired";
 
 export type AgentEventPayloadMap = {
@@ -185,6 +188,28 @@ export type AgentEventPayloadMap = {
   "checkpoint.rewound": {
     checkpointId: string;
     changedFiles?: string[];
+  };
+  "hook.started": {
+    executionId: string;
+    hookId: string;
+    label: string;
+    trigger: "turn.received" | "turn.completed";
+    handlerType: "skill" | "mcp";
+  };
+  "hook.completed": {
+    executionId: string;
+    hookId: string;
+    label: string;
+    trigger: "turn.received" | "turn.completed";
+    summary: string;
+  };
+  "hook.failed": {
+    executionId: string;
+    hookId: string;
+    label: string;
+    trigger: "turn.received" | "turn.completed";
+    message: string;
+    blocking: boolean;
   };
   "workspace.retired": {
     laneId: string;

@@ -4,6 +4,7 @@ import {
   CodexAgentProvider,
   detectCodexAuthentication,
   mapCodexEvent,
+  toCodexModelCatalog,
   toCodexMcpConfiguration
 } from "@srgical/agent-runtime";
 import type { CodexOptions, ThreadEvent, ThreadOptions } from "@openai/codex-sdk";
@@ -38,7 +39,7 @@ test("Codex provider resumes durable threads and maps streamed agent, tool, file
   const status = await provider.detect();
   assert.equal(status.authenticated, true);
   const handle = await provider.start({
-    session: sessionRecord("plan"),
+    session: sessionRecord("plan", "gpt-test"),
     prompt: "Inspect only",
     resumeProviderSessionId: "existing-thread",
     signal: new AbortController().signal,
@@ -49,6 +50,7 @@ test("Codex provider resumes durable threads and maps streamed agent, tool, file
   assert.equal(resumedId, "existing-thread");
   assert.equal(threadOptions?.sandboxMode, "read-only");
   assert.equal(threadOptions?.approvalPolicy, "on-request");
+  assert.equal(threadOptions?.model, "gpt-test");
   assert.equal(handle.providerSessionId, "codex-thread");
   assert.deepEqual(emitted.map((draft) => draft.kind), [
     "session.status",
@@ -64,6 +66,16 @@ test("Codex provider resumes durable threads and maps streamed agent, tool, file
     "usage.updated",
     "session.completed"
   ]);
+});
+
+test("Codex model catalog exposes visible app-server models and its provider default", () => {
+  const catalog = toCodexModelCatalog([
+    { id: "frontier", model: "gpt-frontier", displayName: "GPT Frontier", description: "Best quality", isDefault: true },
+    { id: "fast", model: "gpt-fast", displayName: "GPT Fast", description: "Low latency", isDefault: false },
+    { id: "hidden", model: "gpt-hidden", displayName: "Hidden", hidden: true }
+  ]);
+  assert.equal(catalog.defaultModelId, "gpt-frontier");
+  assert.deepEqual(catalog.models.map((model) => model.id), ["gpt-frontier", "gpt-fast"]);
 });
 
 test("Codex MCP projection keeps resolved HTTP secrets out of CLI config", () => {
@@ -117,7 +129,7 @@ test("Codex MCP and failure events map to shared Studio events", () => {
   assert.deepEqual(failed[0]?.payload, { message: "model unavailable" });
 });
 
-function sessionRecord(permissionMode: AgentSessionRecord["permissionMode"]): AgentSessionRecord {
+function sessionRecord(permissionMode: AgentSessionRecord["permissionMode"], model: string | null = null): AgentSessionRecord {
   return {
     version: 1,
     sessionId: "srgical-session",
@@ -128,7 +140,7 @@ function sessionRecord(permissionMode: AgentSessionRecord["permissionMode"]): Ag
     workspace: process.cwd(),
     planId: null,
     title: "Codex compatibility",
-    model: null,
+    model,
     permissionMode,
     status: "idle",
     lifecycle: "active",

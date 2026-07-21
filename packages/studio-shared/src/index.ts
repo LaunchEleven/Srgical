@@ -3,6 +3,7 @@ export * from "./skills";
 export * from "./finish-work";
 export * from "./connectors";
 export * from "./prompt-actions";
+export * from "./hooks";
 
 export type StudioMode = "prepare" | "operate";
 

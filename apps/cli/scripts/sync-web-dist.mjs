@@ -13,5 +13,5 @@ await mkdir(path.dirname(target), { recursive: true });
 try {
   await cp(webDist, target, { recursive: true });
 } catch {
-  // The CLI can still run in terminal mode before the web bundle exists.
+  // Let TypeScript-only checks complete; the packaged launcher build requires the web bundle.
 }

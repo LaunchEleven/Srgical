@@ -177,7 +177,7 @@ function createPackState(): PlanningPackState {
     mode: "Prepare",
     hasFailureOverlay: false,
     manifest: null,
-    evidence: ["src/ui/studio.ts"],
+    evidence: ["apps/studio-web/src/App.tsx"],
     unknowns: ["Need one more approval signal before operate."],
     nextAction: "Review the sliced tracker, then approve when it is clear enough to operate."
   };
