@@ -176,6 +176,7 @@ export type RepoSnapshot = {
   repoRoot: string;
   repoLabel: string;
   currentWorkspace: string;
+  isGitRepository: boolean;
   repositories: RepositoryChoice[];
   requestedPlanId: string | null;
   requestedMode: StudioMode | null;
@@ -216,6 +217,7 @@ export type StudioSnapshot = {
   workspace: string;
   workspaceLabel: string;
   repoRoot: string;
+  isGitRepository: boolean;
   planId: string;
   laneId: string;
   branchName: string | null;

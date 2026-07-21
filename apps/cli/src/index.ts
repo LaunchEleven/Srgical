@@ -22,12 +22,12 @@ const packageInfo = readInstalledPackageInfo();
 
 program
   .name("srgical")
-  .description("A browser-first local workspace for AI-assisted repository planning and delivery.")
+  .description("A browser-first local workspace for AI-assisted planning and delivery.")
   .version(packageInfo.version, "-V, --version", "Show installed version and release info.")
-  .argument("[workspace]", "Git repository to open", process.cwd())
+  .argument("[workspace]", "Repository or working directory to open (defaults to the last used workspace)")
   .option("--port <number>", "Stable localhost port for the browser Studio", Number)
   .option("--no-open", "Start the browser Studio without opening a browser")
-  .action(async (workspace: string, options: { open?: boolean; port?: number }) => {
+  .action(async (workspace: string | undefined, options: { open?: boolean; port?: number }) => {
     await launchWebStudio({ workspace, port: options.port, openBrowser: options.open !== false });
   });
 

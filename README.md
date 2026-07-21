@@ -27,7 +27,7 @@ After install:
 srgical
 ```
 
-Running `srgical` opens the browser-first Studio for the current Git repository. Pass another repository path directly, or use **Switch repository** in the Studio to choose from recent repositories. Without a global install, use `npx @launch11/srgical`.
+Running `srgical` opens the browser-first Studio in the last workspace you used. A workspace can be a Git repository or any working directory. Pass a path directly, or use the clickable working-directory control above the new-conversation composer to switch between recent folders or enter another path. Without a global install, use `npx @launch11/srgical`.
 
 Chrome and other compatible browsers can install the local Studio as a standalone app from the **Install app** action. Srgical uses stable local origin `http://127.0.0.1:43111` by default so the installed app can reconnect on later runs. The local `srgical` process still provides the repository and agent backend while the app is open; set `SRGICAL_STUDIO_PORT` or pass `--port` if that port is unavailable.
 
@@ -77,7 +77,7 @@ Existing conversations keep the provider and authentication route they started w
 
 ## Sessions
 
-A session is the durable unit of conversation; a worktree is a workspace the session may use for a period of time. They intentionally are not one-to-one. New conversations start against protected repository context with planning permissions, unless **Start in a worktree** is selected. When a discussion becomes implementation work, **Create worktree** carries its provider context where supported, transcript, plan artifacts, connectors, and effective tools into an isolated branch and worktree.
+A session is the durable unit of conversation; its selected working directory is the folder agents use for inspection and file operations. In a Git repository, new conversations start against protected repository context with planning permissions unless **Start in a worktree** is selected. When a discussion becomes implementation work, **Create worktree** carries its provider context where supported, transcript, plan artifacts, connectors, and effective tools into an isolated branch and worktree. Plain folders are writable directly and hide Git-only worktree controls.
 
 Studio provides a repository-wide session library with search, recency groups, pinned and archived views, message previews, fork ancestry, and current or retired workspace context. Repository conversations and worktree conversations can both be reopened from the same history.
 
@@ -99,6 +99,8 @@ The global skills directory is created automatically at `~/.srgical/skills`. Stu
 - additional directories configured in the Skills inspector
 
 Skills are hashed with their supporting files and tracked by source, scope, trust, compatibility, precedence, and conflicts. They can be enabled, disabled, trusted, reviewed, or blocked per repository.
+
+Type `/` in the chat composer to open the workspace's effective-skill menu. Filter by typing part of a skill name, use the arrow keys and Enter to select it, then add an optional task after `/<skill-id>`. When sent, Studio resolves the skill again and asks the agent to read and follow its complete `SKILL.md` for that turn.
 
 Effective skills can also become custom buttons. In Studio **Settings → Prompt buttons**, choose a skill, give the button a short label, and define the task prompt. The resulting action appears beside the chat composer, resolves the current effective skill at click time, and asks the agent to read its complete `SKILL.md` before acting. Button configuration is repository-scoped under `~/.srgical/repos/<repo-id>/skills.json`; blocked or disabled skills make their buttons unavailable.
 

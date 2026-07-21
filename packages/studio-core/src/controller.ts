@@ -67,7 +67,7 @@ import {
   saveSelectedReferenceIds,
   toggleReferenceSelection
 } from "../../../apps/cli/src/core/reference-library";
-import { getStudioTheme, type AgentEventDraft, type AgentSessionRecord, type PromptActionRecord, type SkillPromptAction, type StudioAuthOptionStatus, type StudioMode } from "@srgical/studio-shared";
+import { getStudioTheme, type AgentEventDraft, type AgentSessionRecord, type PromptActionRecord, type SkillPromptAction, type SkillRecord, type StudioAuthOptionStatus, type StudioMode } from "@srgical/studio-shared";
 import {
   importMcpJson,
   installConnectorPreset,
@@ -117,6 +117,7 @@ const GATHER_SOURCE_LIMIT = 6000;
 
 const STUDIO_START_MESSAGE_PREFIXES = [
   "Repository conversation is active against the primary checkout.",
+  "Directory conversation is active in the selected working directory.",
   "Prepare mode gathers context, keeps `context.md` current, builds the draft,",
   "Operate mode is execution-only."
 ] as const;
@@ -132,6 +133,7 @@ type StudioControllerOptions = {
   planId?: string | null;
   mode?: StudioMode;
   repoRoot?: string;
+  isGitRepository?: boolean;
   laneId?: string;
   agentSessionStore?: AgentSessionStore;
   resolveAgent?: typeof resolvePrimaryAgent;
@@ -149,6 +151,7 @@ export async function createStudioController(options: StudioControllerOptions = 
   const requestPlanner = options.requestPlanner ?? requestPlannerReply;
   const refreshAdvice = options.refreshAdvice ?? refreshPlanningAdvice;
   const workspace = resolveWorkspace(options.workspace);
+  const isGitRepository = options.isGitRepository !== false;
   const planId = await resolvePlanId(workspace, options.planId).catch(async () => {
     if (mode === "prepare" && options.planId) {
       return options.planId;
@@ -227,7 +230,8 @@ export async function createStudioController(options: StudioControllerOptions = 
     requestedSessionId: options.agentSessionId
   });
   agentSession = await agentSessionStore.update(repoId, agentSession.sessionId, {
-    effectiveSkillHashes: skills.effectiveSkillHashes
+    effectiveSkillHashes: skills.effectiveSkillHashes,
+    ...(!isGitRepository ? { permissionMode: "acceptEdits" as const } : {})
   });
   let agentSessions = await listLaneSessions(agentSessionStore, repoId, workspace, options.laneId ?? "current", activeProviderStatus.providerId);
   let recentAgentEvents = (await agentSessionStore.readEvents(repoId, agentSession.sessionId)).slice(-250);
@@ -250,6 +254,7 @@ export async function createStudioController(options: StudioControllerOptions = 
     workspace,
     workspaceLabel: path.basename(workspace) || workspace,
     repoRoot: options.repoRoot ?? workspace,
+    isGitRepository,
     planId,
     laneId: options.laneId ?? "current",
     branchName,
@@ -270,7 +275,7 @@ export async function createStudioController(options: StudioControllerOptions = 
     prepareClarity,
     references,
     skills,
-    promptActions: buildWorktreePromptActions(options.laneId ?? "current", worktreeDiagnostics, skills.promptActions),
+    promptActions: buildWorktreePromptActions(options.laneId ?? "current", worktreeDiagnostics, skills.promptActions, isGitRepository),
     worktreeDiagnostics,
     connectors,
     footerText:
@@ -732,15 +737,23 @@ export async function createStudioController(options: StudioControllerOptions = 
     agentSession = await agentSessionStore.update(repoId, agentSession.sessionId, { permissionMode });
     let completedText = "";
     const turnController = new AbortController();
-    const providerPrompt = (options.laneId ?? "current") === "current"
+    const providerPrompt = !isGitRepository
       ? [
+          "You are working in the user's selected working directory.",
+          "Keep all inspection and file changes within this directory unless the user explicitly expands the scope.",
+          "This directory is not a Git repository, so do not assume branches, commits, or worktrees are available.",
+          "",
+          prompt
+        ].join("\n")
+      : (options.laneId ?? "current") === "current"
+        ? [
           "You are in a repository conversation attached to the primary checkout.",
           "Inspect and discuss freely, but do not modify files in this checkout.",
           "If the user's request requires file changes, explain that it is ready for implementation and ask them to use the Create worktree action. Preserve the plan and context for that continuation.",
           "",
           prompt
-        ].join("\n")
-      : prompt;
+          ].join("\n")
+        : prompt;
     const handle = await nativeProvider.start({
       session: agentSession,
       prompt: providerPrompt,
@@ -1126,21 +1139,33 @@ export async function createStudioController(options: StudioControllerOptions = 
       await system(mode === "prepare" ? renderPrepareHelpText() : renderOperateHelpText());
       return;
     }
-    if (value.startsWith("/")) {
+    const skillInvocation = resolveSkillInvocation(value, skills.skills);
+    if (skillInvocation?.status === "unavailable") {
+      await push({ role: "system", content: `Skill: /${skillInvocation.skill.id}` });
+      await system(`The \`${skillInvocation.skill.name}\` skill is not active. Enable it and resolve any trust, compatibility, or precedence conflicts in the Skills inspector before using \`/${skillInvocation.skill.id}\`.`);
+      return;
+    }
+    if (value.startsWith("/") && !skillInvocation) {
       await push({ role: "system", content: `Command: ${value}` });
       if (mode === "prepare" && (value.startsWith("/read ") || value.startsWith("/import "))) {
         const rawPath = value.startsWith("/read ") ? value.slice("/read ".length) : value.slice("/import ".length);
         await importContextFile(rawPath);
         return;
       }
-      await system("Slash commands were retired in the rebooted studio.\nUse `:` commands now, for example `:help`, `:gather`, `:slice --help`, or `:operate`.\nIf you just want to chat with the planner, type plain text without a prefix.");
+      await system("No active skill matches that slash command. Type `/` in the chat composer to choose an effective skill. Studio commands use `:`, for example `:help`, `:gather`, `:slice --help`, or `:operate`.");
       return;
     }
-    if (mode === "operate") {
+    if (mode === "operate" && !skillInvocation) {
       await system("Operate is action-first. Use the primary actions or the :command palette.");
       return;
     }
-    setBusyState(true, "thinking...");
+    const activeSkillInvocation = skillInvocation?.status === "ready" ? skillInvocation : null;
+    const activeSkill = activeSkillInvocation?.skill ?? null;
+    const agentPrompt = activeSkillInvocation
+      ? buildSkillInvocationPrompt(activeSkillInvocation.skill, activeSkillInvocation.task)
+      : value;
+    const writableWorkspace = !isGitRepository || (options.laneId ?? "current") !== "current";
+    setBusyState(true, activeSkill ? `using ${activeSkill.name}...` : "thinking...");
     let liveReply: LiveStudioMessage | null = null;
     try {
       if (agentSession.lifecycle === "archived") {
@@ -1156,23 +1181,38 @@ export async function createStudioController(options: StudioControllerOptions = 
         kind: "message.completed",
         payload: { messageId: userMessageId, text: value }
       });
-      if (isDirectContextSyncRequest(value)) {
+      if (!activeSkill && isDirectContextSyncRequest(value)) {
         const result = await refreshContext([], {
           completionLabel: "Context Sync"
         });
         await system(`Context sync completed from your instruction.\nNext action: ${result.nextAction}`);
         return;
       }
+      const plannerMessages = activeSkill
+        ? [...messages.slice(0, -1), { role: "user" as const, content: agentPrompt }]
+        : null;
       const activeLiveReply = (liveReply = startLiveMessage("assistant"));
       if (nativeProviderEnabled) {
-        const completedText = await runNativeProviderTurn(value, activeLiveReply, "plan");
+        const completedText = await runNativeProviderTurn(agentPrompt, activeLiveReply, writableWorkspace ? "acceptEdits" : "plan");
         await activeLiveReply.finalize(completedText);
+      } else if (writableWorkspace && activeSkill) {
+        const result = await runNextPrompt(workspace, agentPrompt, {
+          planId,
+          onOutputChunk: (chunk) => activeLiveReply.append(chunk)
+        });
+        await activeLiveReply.finalize(result.trim());
+      } else if (!isGitRepository) {
+        const result = await runNextPrompt(workspace, agentPrompt, {
+          planId,
+          onOutputChunk: (chunk) => activeLiveReply.append(chunk)
+        });
+        await activeLiveReply.finalize(result.trim());
       } else {
         const reply = await runLegacyTextTurn({
           emit: async (event: AgentEventDraft) => {
             await agentSessionStore.append(repoId, agentSession.sessionId, event);
           },
-          invoke: async ({ onOutputChunk }) => requestPlanner(workspace, [...messages], {
+          invoke: async ({ onOutputChunk }) => requestPlanner(workspace, plannerMessages ?? [...messages], {
             planId,
             onOutputChunk: (chunk) => {
               activeLiveReply.append(chunk);
@@ -1194,7 +1234,7 @@ export async function createStudioController(options: StudioControllerOptions = 
 
   const runPromptAction = async (actionId: string) => {
     if (busy) throw new Error("Wait for the active agent turn to finish before running another action.");
-    const action = buildWorktreePromptActions(options.laneId ?? "current", worktreeDiagnostics, skills.promptActions)
+    const action = buildWorktreePromptActions(options.laneId ?? "current", worktreeDiagnostics, skills.promptActions, isGitRepository)
       .find((item) => item.actionId === actionId);
     if (!action) throw new Error(`Unknown prompt action: ${actionId}`);
     if (!action.enabled) throw new Error(action.blockedReason ?? `${action.label} is not available right now.`);
@@ -1212,7 +1252,9 @@ export async function createStudioController(options: StudioControllerOptions = 
       "",
       action.permissionMode === "plan"
         ? "This is an inspection-only action. Do not modify files, the index, commits, branches, or worktree metadata."
-        : "Work only in the current isolated worktree. Do not reset, abort, rebase, commit, push, remove a worktree, or discard either side of a conflict unless the user explicitly asks."
+        : isGitRepository
+          ? "Work only in the current isolated worktree. Do not reset, abort, rebase, commit, push, remove a worktree, or discard either side of a conflict unless the user explicitly asks."
+          : "Work only in the selected working directory. Do not access files outside it unless the user explicitly expands the scope."
     ].filter((line): line is string => line !== null).join("\n");
     setBusyState(true, `${action.label.toLowerCase()}...`);
     let liveReply: LiveStudioMessage | null = null;
@@ -1300,7 +1342,7 @@ export async function createStudioController(options: StudioControllerOptions = 
           await handleCommand(":stop");
           break;
         case "switch-mode":
-          if ((options.laneId ?? "current") === "current" && request.mode === "operate") {
+          if (isGitRepository && (options.laneId ?? "current") === "current" && request.mode === "operate") {
             throw new Error("Create a worktree before switching this conversation to operate mode.");
           }
           mode = request.mode === "operate" ? "operate" : "prepare";
@@ -1571,7 +1613,7 @@ export async function createStudioController(options: StudioControllerOptions = 
         return;
       }
       started = true;
-      const startMessage = buildStudioStartMessage(options.laneId ?? "current", mode, state);
+      const startMessage = buildStudioStartMessage(options.laneId ?? "current", mode, state, isGitRepository);
       const existingStartMessageIndex = messages.findIndex(isStudioStartMessage);
       if (existingStartMessageIndex < 0) {
         await system(startMessage);
@@ -1609,8 +1651,13 @@ export async function createStudioController(options: StudioControllerOptions = 
   };
 }
 
-function buildStudioStartMessage(laneId: string, mode: StudioMode, state: PlanningPackState): string {
-  return `${laneId === "current" ? "Repository conversation is active against the primary checkout. Use it to inspect, discuss, and plan; create a worktree before changing files.\n\n" : ""}${mode === "prepare"
+function buildStudioStartMessage(laneId: string, mode: StudioMode, state: PlanningPackState, isGitRepository: boolean): string {
+  const contextMessage = laneId !== "current"
+    ? ""
+    : isGitRepository
+      ? "Repository conversation is active against the primary checkout. Use it to inspect, discuss, and plan; create a worktree before changing files.\n\n"
+      : "Directory conversation is active in the selected working directory. You may inspect and modify files here; Git worktree features are unavailable unless this directory becomes a repository.\n\n";
+  return `${contextMessage}${mode === "prepare"
     ? `Prepare mode gathers context, keeps \`context.md\` current, builds the draft, slices it into steps, and gets the plan ready to operate.\nType normal text to chat with the planner.\nUse \`:\` to run a studio command such as \`:import <path>\`, \`:context\`, \`:build\`, \`:slice --help\`, or \`:operate\`.\nStage: ${state.mode}\nNext action: ${state.nextAction}`
     : `Operate mode is execution-only.\nUse \`:\` to run studio commands such as \`:run\`, \`:auto 3\`, \`:checkpoint\`, or \`:prepare\`.\nStage: ${state.mode}\nNext action: ${state.nextAction}`}`;
 }
@@ -1651,9 +1698,11 @@ async function loadWorktreeDiagnostics(workspace: string): Promise<GitWorktreeDi
 export function buildWorktreePromptActions(
   laneId: string,
   diagnostics: GitWorktreeDiagnostics,
-  skillActions: SkillPromptAction[]
+  skillActions: SkillPromptAction[],
+  isGitRepository = true
 ): PromptActionRecord[] {
-  const isolated = laneId !== "current";
+  const isolated = isGitRepository && laneId !== "current";
+  const writableWorkspace = isolated || !isGitRepository;
   const conflicts = diagnostics.conflictCount;
   const baseLabel = diagnostics.baseRef ?? "the base branch";
   const builtIns: PromptActionRecord[] = [
@@ -1724,12 +1773,43 @@ export function buildWorktreePromptActions(
     prompt: action.prompt,
     skillId: action.skillId,
     skillSource: action.skillSource,
-    permissionMode: isolated ? "acceptEdits" : "plan",
+    permissionMode: writableWorkspace ? "acceptEdits" : "plan",
     enabled: action.available,
     blockedReason: action.blockedReason,
     emphasis: "normal"
   }));
   return [...builtIns, ...custom];
+}
+
+export type SkillInvocationResolution = {
+  status: "ready" | "unavailable";
+  skill: SkillRecord;
+  task: string;
+};
+
+export function resolveSkillInvocation(value: string, availableSkills: SkillRecord[]): SkillInvocationResolution | null {
+  const match = value.trim().match(/^\/([^\s/]+)(?:\s+([\s\S]*))?$/);
+  if (!match) return null;
+  const requestedId = match[1].toLowerCase();
+  const matches = availableSkills.filter((skill) => skill.id.toLowerCase() === requestedId);
+  const skill = matches.find((item) => item.effective) ?? matches[0];
+  if (!skill) return null;
+  return {
+    status: skill.effective ? "ready" : "unavailable",
+    skill,
+    task: match[2]?.trim() || "Apply this skill to the current workspace. If the intended task is ambiguous, ask one concise clarifying question before making changes."
+  };
+}
+
+export function buildSkillInvocationPrompt(skill: SkillRecord, task: string): string {
+  return [
+    `Activate the \`${skill.name}\` skill for this turn.`,
+    `Read and follow its complete instructions at: ${skill.manifestPath}`,
+    "Treat those skill instructions as authoritative for this task and load any directly referenced supporting files you need.",
+    "",
+    "User task:",
+    task
+  ].join("\n");
 }
 
 function buildActionStates(mode: StudioMode, state: PlanningPackState): Record<StudioActionId, { enabled: boolean; blockedReason: string | null }> {

@@ -144,11 +144,12 @@ function RepositoryHome({ token }: { token: string }) {
     setBusy(true);
     setError(null);
     try {
-      const next = await postJson<RepoSnapshot, { path: string }>("/api/repositories/select", token, { path: repositoryPath });
+      const next = await postJson<RepoSnapshot, { path: string }>("/api/workspaces/select", token, { path: repositoryPath });
       setSnapshot(next);
       setRepositoryPickerOpen(false);
       setPrompt("");
       setSessionQuery("");
+      setIsolation("repository");
     } catch (reason) {
       setError(errorText(reason));
       throw reason;
@@ -205,7 +206,7 @@ function RepositoryHome({ token }: { token: string }) {
     }
   };
 
-  if (!snapshot) return <Loading label="Opening repository" />;
+  if (!snapshot) return <Loading label="Opening workspace" />;
   const liveLanes = snapshot.lanes.filter((lane) => !lane.removed);
   const isolatedLanes = liveLanes.filter((lane) => !lane.isCurrentCheckout);
   const visibleSessions = snapshot.sessions
@@ -221,28 +222,37 @@ function RepositoryHome({ token }: { token: string }) {
       <header className="home-header">
         <Brand />
         <div className="home-header-actions">
-          <div className="repo-path" title={snapshot.repoRoot}>{snapshot.repoRoot}</div>
+          <div className="repo-path" title={snapshot.currentWorkspace}>{snapshot.currentWorkspace}</div>
           {installApp ? <button className="quiet settings-trigger" onClick={() => void installApp()}>Install app</button> : null}
-          <button className="quiet settings-trigger" onClick={() => setRepositoryPickerOpen(true)}>Switch repository</button>
+          <button className="quiet settings-trigger" onClick={() => setRepositoryPickerOpen(true)}>Switch workspace</button>
           <button className="quiet settings-trigger" onClick={() => setSettingsOpen(true)}>Settings</button>
         </div>
       </header>
       <main className="home-main">
         <section className="home-intro">
           <div>
-            <div className="overline">Repository workspace</div>
+            <div className="overline">{snapshot.isGitRepository ? "Git repository" : "Working directory"}</div>
             <h1>{snapshot.repoLabel}</h1>
-            <p>Start with a conversation. When the work needs file changes, move it into an isolated worktree without losing context.</p>
+            <p>{snapshot.isGitRepository ? "Start with a conversation. When the work needs file changes, move it into an isolated worktree without losing context." : "Start a conversation with this folder as the session's working directory. Srgical can inspect and change its files without requiring Git."}</p>
           </div>
           <div className="repo-stats">
-            <Stat value={String(isolatedLanes.length)} label="worktrees" />
+            {snapshot.isGitRepository ? <Stat value={String(isolatedLanes.length)} label="worktrees" /> : <Stat value="Folder" label="workspace type" />}
             <Stat value={String(snapshot.sessions.length)} label="sessions" />
-            <Stat value={String(isolatedLanes.filter((lane) => lane.dirty).length)} label="in progress" />
-            <Stat value={String(isolatedLanes.filter((lane) => lane.conflictCount > 0).length)} label="conflicted" />
+            {snapshot.isGitRepository ? <Stat value={String(isolatedLanes.filter((lane) => lane.dirty).length)} label="in progress" /> : <Stat value={String(snapshot.repositories.length)} label="recent" />}
+            {snapshot.isGitRepository ? <Stat value={String(isolatedLanes.filter((lane) => lane.conflictCount > 0).length)} label="conflicted" /> : null}
           </div>
         </section>
 
         <section className="conversation-starter">
+          <WorkspaceSelector
+            currentPath={snapshot.currentWorkspace}
+            label={snapshot.repoLabel}
+            isGitRepository={snapshot.isGitRepository}
+            recent={snapshot.repositories}
+            busy={busy}
+            onChoose={() => setRepositoryPickerOpen(true)}
+            onSelect={selectRepository}
+          />
           <textarea
             value={prompt}
             onChange={(event) => setPrompt(event.target.value)}
@@ -257,7 +267,7 @@ function RepositoryHome({ token }: { token: string }) {
             autoFocus
           />
           <div className="conversation-starter-footer">
-            <label className="isolation-choice"><input type="checkbox" checked={isolation === "worktree"} onChange={(event) => setIsolation(event.target.checked ? "worktree" : "repository")} /><span><strong>Start in a worktree</strong><small>Optional. You can move the conversation later when it needs to change files.</small></span></label>
+            <label className={`isolation-choice ${snapshot.isGitRepository ? "" : "disabled"}`}><input type="checkbox" checked={isolation === "worktree"} disabled={!snapshot.isGitRepository} onChange={(event) => setIsolation(event.target.checked ? "worktree" : "repository")} /><span><strong>Start in a worktree</strong><small>{snapshot.isGitRepository ? "Optional. You can move the conversation later when it needs to change files." : "Worktrees are available when the selected folder is a Git repository."}</small></span></label>
             <button className="primary starter-send" disabled={busy || !prompt.trim()} onClick={() => void startConversation()}>{busy ? "Starting..." : "Start conversation"}</button>
           </div>
         </section>
@@ -282,6 +292,7 @@ function RepositoryHome({ token }: { token: string }) {
                 <SessionLibraryRow
                   session={session}
                   busy={busy}
+                  canUseWorktrees={snapshot.isGitRepository}
                   key={session.sessionId}
                   onOpen={() => void openSession(session.sessionId)}
                   onFork={() => void forkSessionIntoWorktree(session.sessionId)}
@@ -295,12 +306,13 @@ function RepositoryHome({ token }: { token: string }) {
           {visibleSessions.length === 0 ? <EmptyState title="No matching conversations" body="Start by asking a question above, or change the search and lifecycle filters." /> : null}
         </section>
 
-        <div className="section-heading">
-          <div><h2>Worktrees</h2><p>Git state and agent context, reconciled on every refresh.</p></div>
-          <button className="quiet" onClick={() => void refresh()}>Refresh</button>
-        </div>
-        <section className="lane-list">
-          {isolatedLanes.map((lane) => (
+        {snapshot.isGitRepository ? <>
+          <div className="section-heading">
+            <div><h2>Worktrees</h2><p>Git state and agent context, reconciled on every refresh.</p></div>
+            <button className="quiet" onClick={() => void refresh()}>Refresh</button>
+          </div>
+          <section className="lane-list">
+            {isolatedLanes.map((lane) => (
             <LaneRow
               lane={lane}
               busy={busy}
@@ -314,9 +326,10 @@ function RepositoryHome({ token }: { token: string }) {
                 if (phrase === lane.laneId) void mutateLane("/api/lanes/remove", { laneId: lane.laneId });
               }}
             />
-          ))}
-          {isolatedLanes.length === 0 ? <EmptyState title="No isolated worktrees" body="Keep talking in repository context, or start a worktree when a conversation is ready for file changes." /> : null}
-        </section>
+            ))}
+            {isolatedLanes.length === 0 ? <EmptyState title="No isolated worktrees" body="Keep talking in repository context, or start a worktree when a conversation is ready for file changes." /> : null}
+          </section>
+        </> : null}
       </main>
       {finishAssessment ? (
         <FinishWorkDialog
@@ -340,13 +353,35 @@ function RepositoryHome({ token }: { token: string }) {
         onRemoveConnector={(connectorId) => mutateConnector("/api/settings/connectors/remove", { connectorId })}
         onClose={() => setSettingsOpen(false)}
       /> : null}
-      {repositoryPickerOpen ? <RepositoryPickerDialog
+      {repositoryPickerOpen ? <WorkspacePickerDialog
         repositories={snapshot.repositories}
-        currentPath={snapshot.repoRoot}
+        currentPath={snapshot.currentWorkspace}
         busy={busy}
         onSelect={selectRepository}
         onClose={() => setRepositoryPickerOpen(false)}
       /> : null}
+    </div>
+  );
+}
+
+function WorkspaceSelector(props: {
+  currentPath: string;
+  label: string;
+  isGitRepository: boolean;
+  recent: RepoSnapshot["repositories"];
+  busy: boolean;
+  onChoose(): void;
+  onSelect(path: string): Promise<void>;
+}) {
+  const alternatives = props.recent.filter((item) => !item.selected).slice(0, 3);
+  return (
+    <div className="workspace-selector">
+      <button className="workspace-selector-current" type="button" disabled={props.busy} onClick={props.onChoose}>
+        <span className="workspace-selector-icon" aria-hidden="true">{props.isGitRepository ? "⑂" : "▰"}</span>
+        <span className="workspace-selector-copy"><small>Working directory</small><strong>{props.label}</strong><code>{props.currentPath}</code></span>
+        <span className="workspace-selector-change">Change</span>
+      </button>
+      {alternatives.length > 0 ? <div className="workspace-quick-picks"><span>Recent</span>{alternatives.map((item) => <button type="button" disabled={props.busy} title={item.path} onClick={() => void props.onSelect(item.path)} key={item.path}>{item.label}</button>)}</div> : null}
     </div>
   );
 }
@@ -391,6 +426,7 @@ function LaneRow(props: {
 function SessionLibraryRow(props: {
   session: AgentSessionRecord;
   busy: boolean;
+  canUseWorktrees: boolean;
   onOpen(): void;
   onFork(): void;
   onPin(): void;
@@ -410,15 +446,15 @@ function SessionLibraryRow(props: {
         </span>
       </button>
       <div className="session-context">
-        <span>{(binding?.laneId ?? session.laneId) === "current" ? "repository chat" : binding?.laneId ?? session.laneId}</span>
-        <span>{(binding?.laneId ?? session.laneId) === "current" ? "primary checkout protected" : binding?.branchName ?? "branch unknown"}</span>
+        <span>{(binding?.laneId ?? session.laneId) === "current" ? (props.canUseWorktrees ? "repository chat" : "folder session") : binding?.laneId ?? session.laneId}</span>
+        <span>{(binding?.laneId ?? session.laneId) === "current" ? (props.canUseWorktrees ? "primary checkout protected" : "working directory") : binding?.branchName ?? "branch unknown"}</span>
         {session.parentSessionId ? <span>fork</span> : null}
         {binding?.retiredAt ? <span className="retired">worktree retired</span> : null}
       </div>
       <time>{formatRelativeTime(session.updatedAt)}</time>
       <details className="row-menu session-menu"><summary>•••</summary><div>
         <button onClick={props.onPin}>{session.pinnedAt ? "Unpin" : "Pin"}</button>
-        {binding?.retiredAt || binding?.laneId === "current" ? <button onClick={props.onFork}>{binding?.laneId === "current" ? "Continue in a worktree" : "Fork into new worktree"}</button> : null}
+        {props.canUseWorktrees && (binding?.retiredAt || binding?.laneId === "current") ? <button onClick={props.onFork}>{binding?.laneId === "current" ? "Continue in a worktree" : "Fork into new worktree"}</button> : null}
         <button onClick={props.onArchive}>{session.lifecycle === "archived" ? "Restore to history" : "Archive"}</button>
         <button className="danger" onClick={props.onDelete}>Remove from history</button>
       </div></details>
@@ -460,7 +496,7 @@ function FinishWorkDialog(props: {
   );
 }
 
-function RepositoryPickerDialog(props: {
+function WorkspacePickerDialog(props: {
   repositories: RepoSnapshot["repositories"];
   currentPath: string;
   busy: boolean;
@@ -481,18 +517,18 @@ function RepositoryPickerDialog(props: {
   };
   return (
     <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) props.onClose(); }}>
-      <section className="repository-dialog" role="dialog" aria-modal="true" aria-labelledby="repository-dialog-title">
+      <section className="repository-dialog" role="dialog" aria-modal="true" aria-labelledby="workspace-dialog-title">
         <header>
-          <div><div className="overline">Working repository</div><h2 id="repository-dialog-title">Choose where Srgical works</h2><p>Switching repositories closes live local sessions and loads that repository's worktrees, conversations, skills, and connectors.</p></div>
+          <div><div className="overline">Working directory</div><h2 id="workspace-dialog-title">Choose where Srgical works</h2><p>Choose a Git repository or any folder. It becomes the working directory for new sessions; switching closes live local sessions and loads that workspace's conversations and settings.</p></div>
           <button className="quiet" onClick={props.onClose}>Close</button>
         </header>
         <div className="repository-current"><span>Current</span><code>{props.currentPath}</code></div>
         <form className="repository-path-form" onSubmit={(event) => { event.preventDefault(); void choose(repositoryPath); }}>
-          <label><span>Repository directory</span><input value={repositoryPath} onChange={(event) => setRepositoryPath(event.target.value)} placeholder="C:\\code\\my-repository" autoFocus /></label>
-          <button className="primary" disabled={props.busy || !repositoryPath.trim()}>{props.busy ? "Opening..." : "Open repository"}</button>
+          <label><span>Folder path</span><input value={repositoryPath} onChange={(event) => setRepositoryPath(event.target.value)} placeholder="C:\\code\\my-project" autoFocus /></label>
+          <button className="primary" disabled={props.busy || !repositoryPath.trim()}>{props.busy ? "Opening..." : "Open workspace"}</button>
         </form>
         {localError ? <div className="error-banner">{localError}</div> : null}
-        <div className="repository-recents-heading">Recent repositories</div>
+        <div className="repository-recents-heading">Recent workspaces</div>
         <div className="repository-recents">
           {props.repositories.map((repository) => (
             <button className={repository.selected ? "selected" : ""} disabled={props.busy || repository.selected} onClick={() => void choose(repository.path)} key={repository.path}>
@@ -516,6 +552,9 @@ function Studio({ token, dashboardToken: homeToken }: { token: string; dashboard
   const [sending, setSending] = useState(false);
   const [promoting, setPromoting] = useState(false);
   const [inspector, setInspector] = useState<"worktree" | "connectors" | "skills" | "plan" | "settings">("worktree");
+  const [skillMenuIndex, setSkillMenuIndex] = useState(0);
+  const [skillMenuDismissed, setSkillMenuDismissed] = useState(false);
+  const composerInput = useRef<HTMLTextAreaElement>(null);
   const transcriptScroll = useRef<HTMLElement>(null);
   const stickTranscriptToBottom = useRef(true);
 
@@ -561,6 +600,8 @@ function Studio({ token, dashboardToken: homeToken }: { token: string; dashboard
     const text = input.trim();
     if (!text || sending) return;
     setInput("");
+    setSkillMenuDismissed(false);
+    setSkillMenuIndex(0);
     setSending(true);
     try {
       await postJson("/api/studio/input", token, { text });
@@ -585,6 +626,17 @@ function Studio({ token, dashboardToken: homeToken }: { token: string; dashboard
   const pendingQuestions = unresolvedEvents(snapshot.recentAgentEvents, "question.requested", "question.resolved");
   const activity = latestActivity(snapshot.recentAgentEvents);
   const displayMessages = snapshot.messages;
+  const effectiveSkills = snapshot.skills.skills.filter((skill) => skill.effective);
+  const skillQuery = skillMenuDismissed ? null : parseSkillMenuQuery(input);
+  const skillMenuItems = skillQuery === null ? [] : filterSkillMenuItems(effectiveSkills, skillQuery);
+  const activeSkillMenuIndex = skillMenuItems.length ? Math.min(skillMenuIndex, skillMenuItems.length - 1) : 0;
+  const invokedSkill = resolveComposedSkill(input, effectiveSkills);
+  const chooseSkill = (skill: SkillRecord) => {
+    setInput(`/${skill.id} `);
+    setSkillMenuDismissed(true);
+    setSkillMenuIndex(0);
+    window.requestAnimationFrame(() => composerInput.current?.focus());
+  };
 
   return (
     <div className="studio-layout">
@@ -592,7 +644,7 @@ function Studio({ token, dashboardToken: homeToken }: { token: string; dashboard
         <Brand compact />
         <button className="back-link" onClick={() => window.location.assign(`/?token=${encodeURIComponent(homeToken)}`)}>← All conversations</button>
         <div className="rail-section-label">Workspace</div>
-        <div className="rail-lane"><span className="lane-dot current" /><div><strong>{snapshot.laneId === "current" ? "Repository chat" : "Isolated worktree"}</strong><small>{snapshot.branchName ?? "detached"}</small></div></div>
+        <div className="rail-lane"><span className="lane-dot current" /><div><strong>{!snapshot.isGitRepository ? "Working directory" : snapshot.laneId === "current" ? "Repository chat" : "Isolated worktree"}</strong><small>{snapshot.isGitRepository ? snapshot.branchName ?? "detached" : snapshot.workspace}</small></div></div>
         <div className="rail-section-label">Conversation</div>
         <button className="new-session" onClick={() => void action({ type: "session-create" })}>＋ New conversation</button>
         {snapshot.agentSessions.map((session) => <button className={`session-item ${session.sessionId === snapshot.agentSession.sessionId ? "active" : ""}`} onClick={() => void action({ type: "session-switch", sessionId: session.sessionId })} key={session.sessionId}><span>{session.pinnedAt ? "◆" : session.parentSessionId ? "⑂" : "◌"}</span><div><strong>{session.title}</strong><small>{session.lifecycle} · {session.status} · {new Date(session.updatedAt).toLocaleDateString()}</small></div></button>)}
@@ -605,14 +657,14 @@ function Studio({ token, dashboardToken: homeToken }: { token: string; dashboard
 
       <main className="conversation-pane">
         <header className="conversation-header">
-          <div><strong>{snapshot.agentSession.title}</strong><span>{snapshot.workspaceLabel} · {snapshot.laneId === "current" ? "repository chat · planning permissions" : `${snapshot.mode} · ${snapshot.agentSession.permissionMode} permissions`}</span></div>
+          <div><strong>{snapshot.agentSession.title}</strong><span>{snapshot.workspaceLabel} · {!snapshot.isGitRepository ? `working directory · ${snapshot.agentSession.permissionMode} permissions` : snapshot.laneId === "current" ? "repository chat · planning permissions" : `${snapshot.mode} · ${snapshot.agentSession.permissionMode} permissions`}</span></div>
           <div className="header-actions">
             {snapshot.busy ? <button className="stop" onClick={() => void action({ type: "interrupt-agent" })}>■ Stop</button> : null}
             <button className="quiet" onClick={() => void action({ type: "session-pin", pinned: !snapshot.agentSession.pinnedAt })}>{snapshot.agentSession.pinnedAt ? "Unpin" : "Pin"}</button>
             <button className="quiet" onClick={() => void action({ type: "session-archive" })}>Archive</button>
             <button className="quiet" onClick={() => void action({ type: "session-fork" })}>Fork</button>
             <button className="quiet" onClick={() => { const title = window.prompt("Conversation title", snapshot.agentSession.title); if (title?.trim()) void action({ type: "session-rename", title }); }}>Rename</button>
-            {snapshot.laneId === "current" ? <button className="primary promote-worktree" disabled={snapshot.busy || promoting} onClick={() => void promoteToWorktree()}>{promoting ? "Creating..." : "Create worktree"}</button> : <button className="quiet" onClick={() => void action({ type: "switch-mode", mode: snapshot.mode === "prepare" ? "operate" : "prepare" })}>
+            {snapshot.isGitRepository && snapshot.laneId === "current" ? <button className="primary promote-worktree" disabled={snapshot.busy || promoting} onClick={() => void promoteToWorktree()}>{promoting ? "Creating..." : "Create worktree"}</button> : <button className="quiet" onClick={() => void action({ type: "switch-mode", mode: snapshot.mode === "prepare" ? "operate" : "prepare" })}>
               {snapshot.mode === "prepare" ? "Switch to operate" : "Return to prepare"}
             </button>}
           </div>
@@ -633,9 +685,9 @@ function Studio({ token, dashboardToken: homeToken }: { token: string; dashboard
               <div className="context-pills">
                 <span>{snapshot.skills.effectiveSkillHashes.length} skills</span>
                 <span>{snapshot.agentProvider.label}</span>
-                <span>{snapshot.laneId === "current" ? "repository context" : snapshot.branchName ?? "detached"}</span>
+                <span>{!snapshot.isGitRepository ? "working directory" : snapshot.laneId === "current" ? "repository context" : snapshot.branchName ?? "detached"}</span>
               </div>
-              <p>{snapshot.laneId === "current" ? "Primary checkout is protected. Create a worktree when the conversation is ready for file changes." : snapshot.prepareClarity?.coachHeadline ?? snapshot.state.nextAction}</p>
+              <p>{!snapshot.isGitRepository ? "This folder is the session's working directory. Srgical can inspect and modify files here." : snapshot.laneId === "current" ? "Primary checkout is protected. Create a worktree when the conversation is ready for file changes." : snapshot.prepareClarity?.coachHeadline ?? snapshot.state.nextAction}</p>
             </div>
 
             {displayMessages.map((message, index) => (
@@ -654,19 +706,57 @@ function Studio({ token, dashboardToken: homeToken }: { token: string; dashboard
         <section className="composer-wrap">
           <PromptActionBar snapshot={snapshot} action={action} />
           <div className="composer">
+            {skillQuery !== null ? <SkillSlashMenu
+              skills={skillMenuItems}
+              activeIndex={activeSkillMenuIndex}
+              query={skillQuery}
+              onChoose={chooseSkill}
+            /> : null}
             <textarea
+              ref={composerInput}
               value={input}
-              onChange={(event) => setInput(event.target.value)}
+              onChange={(event) => {
+                setInput(event.target.value);
+                setSkillMenuDismissed(false);
+                setSkillMenuIndex(0);
+              }}
               onKeyDown={(event) => {
+                if (skillQuery !== null) {
+                  if (event.key === "ArrowDown" && skillMenuItems.length) {
+                    event.preventDefault();
+                    setSkillMenuIndex((activeSkillMenuIndex + 1) % skillMenuItems.length);
+                    return;
+                  }
+                  if (event.key === "ArrowUp" && skillMenuItems.length) {
+                    event.preventDefault();
+                    setSkillMenuIndex((activeSkillMenuIndex - 1 + skillMenuItems.length) % skillMenuItems.length);
+                    return;
+                  }
+                  if ((event.key === "Enter" || event.key === "Tab") && skillMenuItems[activeSkillMenuIndex]) {
+                    event.preventDefault();
+                    chooseSkill(skillMenuItems[activeSkillMenuIndex]);
+                    return;
+                  }
+                  if (event.key === "Escape") {
+                    event.preventDefault();
+                    setSkillMenuDismissed(true);
+                    return;
+                  }
+                }
                 if (event.key === "Enter" && !event.shiftKey) {
                   event.preventDefault();
                   void send();
                 }
               }}
-              placeholder={snapshot.laneId === "current" ? "Ask about the repository, explore an idea, or describe a change…" : snapshot.mode === "prepare" ? "Ask Srgical to explore, plan, or implement…" : "Describe the next change or use an action…"}
+              placeholder={!snapshot.isGitRepository ? "Ask about this folder or describe a change…" : snapshot.laneId === "current" ? "Ask about the repository, explore an idea, or describe a change…" : snapshot.mode === "prepare" ? "Ask Srgical to explore, plan, or implement…" : "Describe the next change or use an action…"}
               rows={2}
+              role="combobox"
+              aria-autocomplete="list"
+              aria-expanded={skillQuery !== null}
+              aria-controls={skillQuery !== null ? "skill-slash-menu" : undefined}
+              aria-activedescendant={skillQuery !== null && skillMenuItems.length ? `skill-slash-option-${activeSkillMenuIndex}` : undefined}
             />
-            <div className="composer-footer"><span>{snapshot.laneId === "current" ? "Primary checkout protected · create a worktree to edit" : `${snapshot.skills.effectiveSkillHashes.length} effective skills · Enter to send`}</span><button className="send-button" disabled={!input.trim() || sending} onClick={() => void send()}>↑</button></div>
+            <div className="composer-footer"><span>{skillQuery !== null ? "Choose a skill · ↑↓ navigate · Enter select · Esc close" : invokedSkill ? `${invokedSkill.name} active for this turn` : !snapshot.isGitRepository ? `Working directory enabled · ${snapshot.skills.effectiveSkillHashes.length} effective skills · type / for skills` : snapshot.laneId === "current" ? "Primary checkout protected · type / for skills" : `${snapshot.skills.effectiveSkillHashes.length} effective skills · type / for skills`}</span><button className="send-button" disabled={!input.trim() || sending} onClick={() => void send()}>↑</button></div>
           </div>
         </section>
       </main>
@@ -945,6 +1035,46 @@ function ProviderOptions(props: {
   </div>;
 }
 
+function SkillSlashMenu(props: {
+  skills: SkillRecord[];
+  activeIndex: number;
+  query: string;
+  onChoose(skill: SkillRecord): void;
+}) {
+  return <div className="skill-slash-menu" id="skill-slash-menu" role="listbox" aria-label="Available skills">
+    <div className="skill-slash-heading"><div><strong>Activate a skill</strong><span>{props.query ? `Matching “${props.query}”` : "Effective skills for this workspace"}</span></div><kbd>/</kbd></div>
+    {props.skills.length ? <div className="skill-slash-options">{props.skills.map((skill, index) => <button
+      id={`skill-slash-option-${index}`}
+      className={index === props.activeIndex ? "active" : ""}
+      type="button"
+      role="option"
+      aria-selected={index === props.activeIndex}
+      onMouseDown={(event) => event.preventDefault()}
+      onClick={() => props.onChoose(skill)}
+      key={`${skill.id}-${skill.source}`}
+    ><span className="skill-slash-mark">S</span><span><strong>/{skill.id}</strong><small>{skill.name} · {skill.scope}</small><p>{skill.description}</p></span><em>Use</em></button>)}</div> : <div className="skill-slash-empty"><strong>{props.query ? "No matching active skills" : "No active skills yet"}</strong><span>{props.query ? "Try another name or press Escape." : "Enable a trusted skill in the Skills inspector, then type / again."}</span></div>}
+  </div>;
+}
+
+function parseSkillMenuQuery(value: string): string | null {
+  const match = value.match(/^\/([^\s/]*)$/);
+  return match ? match[1].toLowerCase() : null;
+}
+
+function filterSkillMenuItems(skills: SkillRecord[], query: string): SkillRecord[] {
+  const needle = query.trim().toLowerCase();
+  return [...skills]
+    .filter((skill) => !needle || [skill.id, skill.name, skill.description].some((value) => value.toLowerCase().includes(needle)))
+    .sort((left, right) => left.name.localeCompare(right.name))
+    .slice(0, 8);
+}
+
+function resolveComposedSkill(value: string, skills: SkillRecord[]): SkillRecord | null {
+  const match = value.match(/^\/([^\s/]+)(?:\s|$)/);
+  if (!match) return null;
+  return skills.find((skill) => skill.id.toLowerCase() === match[1].toLowerCase()) ?? null;
+}
+
 function Activity({ event }: { event: AgentEvent }) {
   if (event.kind.startsWith("tool.")) {
     const payload = event.payload as { toolName?: string; message?: string; toolUseId: string };
@@ -1008,6 +1138,9 @@ function PromptActionBar({ snapshot, action }: { snapshot: StudioSnapshot; actio
 }
 
 function WorktreeInspector({ snapshot, action }: { snapshot: StudioSnapshot; action(request: StudioActionRequest): Promise<void> }) {
+  if (!snapshot.isGitRepository) {
+    return <><InspectorTitle title="Working directory" subtitle={snapshot.workspace} /><InfoRow label="Workspace" value="Folder" /><InfoRow label="Access" value="File changes enabled" /><InfoRow label="Session" value={snapshot.agentSession.status} /><InfoRow label="Provider session" value={snapshot.agentSession.providerSessionId?.slice(0, 12) ?? "not started"} /><div className="inspector-note"><strong>Folder-scoped session</strong><p>Srgical runs the agent in this directory. Git worktrees, branch diagnostics, and merge-conflict actions are unavailable unless you select a Git repository.</p></div></>;
+  }
   const repositoryChat = snapshot.laneId === "current";
   const diagnostics = snapshot.worktreeDiagnostics;
   const conflictActions = snapshot.promptActions.filter((item) => item.kind === "built-in" && (item.enabled || item.actionId.includes("conflict")));

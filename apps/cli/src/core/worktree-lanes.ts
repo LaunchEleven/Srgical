@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { ensurePreparePack } from "./prepare-pack";
 import {
@@ -73,6 +73,7 @@ export type CreateWorktreeLaneResult = {
 };
 
 export type WorktreeLaneRepoState = GitRepoContext & {
+  isGitRepository: boolean;
   lanes: WorktreeLaneSummary[];
 };
 
@@ -87,11 +88,62 @@ export async function resolveWorktreeLaneRepoState(
   workspaceRoot: string,
   options: WorktreeLaneOptions = {}
 ): Promise<WorktreeLaneRepoState> {
-  const context = await resolveGitRepoContext(workspaceRoot, options.gitRunner);
+  const resolvedWorkspace = path.resolve(workspaceRoot);
+  const context = await resolveGitRepoContext(resolvedWorkspace, options.gitRunner).catch(async () => {
+    const workspaceStat = await stat(resolvedWorkspace).catch(() => null);
+    if (!workspaceStat?.isDirectory()) {
+      throw new Error(`Working directory does not exist or is not a directory: ${resolvedWorkspace}`);
+    }
+    return null;
+  });
+  if (!context) {
+    return {
+      currentWorkspace: resolvedWorkspace,
+      repoRoot: resolvedWorkspace,
+      commonDir: resolvedWorkspace,
+      isGitRepository: false,
+      lanes: [createDirectoryWorkspaceLane(resolvedWorkspace)]
+    };
+  }
   const lanes = await listWorktreeLanes(context, options);
   return {
     ...context,
+    isGitRepository: true,
     lanes
+  };
+}
+
+function createDirectoryWorkspaceLane(workspace: string): WorktreeLaneSummary {
+  return {
+    laneId: "current",
+    planId: null,
+    branchName: null,
+    worktreePath: workspace,
+    workspaceLabel: path.basename(workspace) || workspace,
+    dirty: false,
+    archived: false,
+    removed: false,
+    isCurrentCheckout: true,
+    canRemove: false,
+    deleteLocked: true,
+    lastMode: null,
+    createdAt: null,
+    openedAt: null,
+    unlockedAt: null,
+    source: "current",
+    head: null,
+    lifecycle: "current",
+    baseRef: null,
+    mergeBase: null,
+    aheadCount: 0,
+    behindCount: 0,
+    stagedCount: 0,
+    unstagedCount: 0,
+    untrackedCount: 0,
+    conflictCount: 0,
+    gitLocked: false,
+    prunable: false,
+    nextAction: "Ready for a directory-scoped agent session. Git worktree actions are unavailable."
   };
 }
 

@@ -192,7 +192,7 @@ export function renderCommandSyntaxHelpText(mode: StudioMode): string {
       ? "- In prepare, plain text is normal chat with the planner."
       : "- In operate, plain text chat is disabled so commands stay explicit.",
     "- Examples: `:help`, `:import notes.md`, `:context`, `:slice --help`, `:wheel 3`, `:theme neon-command`, `:build`, `:run`, `:auto 3`.",
-    "- Old slash commands are retired. Use `:` commands instead. `/dice`, `/help`, `/read <path>`, and `/import <path>` still work as compatibility shortcuts."
+    "- Type `/` in the browser chat composer to activate an effective skill. Studio commands use `:` instead. `/dice`, `/help`, `/read <path>`, and `/import <path>` still work as compatibility shortcuts."
   ].join("\n");
 }
 

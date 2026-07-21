@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { randomBytes } from "node:crypto";
-import { cp, readFile } from "node:fs/promises";
+import { cp, readFile, stat } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import path from "node:path";
 import process from "node:process";
@@ -147,13 +147,14 @@ export async function launchWebStudio(options: LaunchWebStudioOptions = {}): Pro
 
 export async function createWebStudioHost(options: LaunchWebStudioOptions = {}): Promise<WebStudioHost> {
   const agentSessionStore = options.agentSessionStore ?? new AgentSessionStore();
-  let activeHost = await createRepositoryWebStudioHost({ ...options, agentSessionStore });
+  const initialWorkspace = await resolveInitialWorkspace(options.workspace, options.repositoryHistoryHomeDir);
+  let activeHost = await createRepositoryWebStudioHost({ ...options, workspace: initialWorkspace, agentSessionStore });
   let activeSnapshot = await activeHost.getRepoSnapshot();
-  await recordRecentRepository(activeSnapshot.repoRoot, options.repositoryHistoryHomeDir).catch(() => []);
+  await recordRecentRepository(activeSnapshot.currentWorkspace, options.repositoryHistoryHomeDir).catch(() => []);
 
   const decorateSnapshot = async (snapshot: RepoSnapshot): Promise<RepoSnapshot> => {
     const history = await loadRecentRepositories(options.repositoryHistoryHomeDir).catch(() => []);
-    const currentPath = path.resolve(snapshot.repoRoot);
+    const currentPath = path.resolve(snapshot.currentWorkspace);
     const currentKey = normalizeRepositoryPath(currentPath);
     const currentHistory = history.find((entry) => normalizeRepositoryPath(entry.path) === currentKey);
     const choices = [
@@ -180,7 +181,7 @@ export async function createWebStudioHost(options: LaunchWebStudioOptions = {}):
     getRepoSnapshot: () => withSnapshot(() => activeHost.getRepoSnapshot()),
     async selectRepository(workspace: string) {
       const requested = workspace.trim();
-      if (!requested) throw new Error("Choose a repository directory.");
+      if (!requested) throw new Error("Choose a working directory.");
       const nextHost = await createRepositoryWebStudioHost({
         ...options,
         workspace: path.resolve(requested),
@@ -192,7 +193,7 @@ export async function createWebStudioHost(options: LaunchWebStudioOptions = {}):
       await activeHost.close();
       activeHost = nextHost;
       activeSnapshot = nextSnapshot;
-      await recordRecentRepository(nextSnapshot.repoRoot, options.repositoryHistoryHomeDir).catch(() => []);
+      await recordRecentRepository(nextSnapshot.currentWorkspace, options.repositoryHistoryHomeDir).catch(() => []);
       return decorateSnapshot(nextSnapshot);
     },
     selectAuthOption: (authOptionId) => withSnapshot(() => activeHost.selectAuthOption(authOptionId)),
@@ -216,7 +217,8 @@ export async function createWebStudioHost(options: LaunchWebStudioOptions = {}):
 }
 
 async function createRepositoryWebStudioHost(options: LaunchWebStudioOptions): Promise<WebStudioHost> {
-  const repoState = await resolveWorktreeLaneRepoState(options.workspace ?? process.cwd());
+  const selectedWorkspace = path.resolve(options.workspace ?? process.cwd());
+  const repoState = await resolveWorktreeLaneRepoState(selectedWorkspace);
   const sessions = new Map<string, StudioSession>();
   const workspaceTokens = new Map<string, string>();
   const agentSessionStore = options.agentSessionStore ?? new AgentSessionStore();
@@ -230,8 +232,9 @@ async function createRepositoryWebStudioHost(options: LaunchWebStudioOptions): P
     const connectors = await loadConnectorRegistry(repoId);
     return {
       repoRoot: nextRepoState.repoRoot,
-      repoLabel: path.basename(nextRepoState.repoRoot) || nextRepoState.repoRoot,
-      currentWorkspace: nextRepoState.currentWorkspace,
+      repoLabel: path.basename(selectedWorkspace) || selectedWorkspace,
+      currentWorkspace: selectedWorkspace,
+      isGitRepository: nextRepoState.isGitRepository,
       repositories: [],
       requestedPlanId: options.planId ?? null,
       requestedMode: options.mode ?? null,
@@ -276,7 +279,9 @@ async function createRepositoryWebStudioHost(options: LaunchWebStudioOptions): P
     planIdOverride?: string,
     autoGatherOnStart = true
   ): Promise<LaneOpenResponse> => {
-    const workspace = await resolveLaneWorkspacePath(repoState.currentWorkspace, laneId);
+    const workspace = laneId === "current"
+      ? selectedWorkspace
+      : await resolveLaneWorkspacePath(repoState.currentWorkspace, laneId);
     if (!workspace) {
       throw new Error(`Unknown worktree lane \`${laneId}\`.`);
     }
@@ -313,6 +318,7 @@ async function createRepositoryWebStudioHost(options: LaunchWebStudioOptions): P
         planId,
         mode,
         repoRoot: snapshot.repoRoot,
+        isGitRepository: snapshot.isGitRepository,
         laneId,
         agentSessionId,
         agentProviderId: requestedAgentSession?.providerId,
@@ -343,7 +349,9 @@ async function createRepositoryWebStudioHost(options: LaunchWebStudioOptions): P
       throw new Error(`Failed to create a Studio session token for lane \`${laneId}\`.`);
     }
 
-    await markWorktreeLaneOpened(snapshot.repoRoot, laneId, mode).catch(() => null);
+    if (snapshot.isGitRepository) {
+      await markWorktreeLaneOpened(snapshot.repoRoot, laneId, mode).catch(() => null);
+    }
     return {
       laneId,
       studioToken,
@@ -356,6 +364,9 @@ async function createRepositoryWebStudioHost(options: LaunchWebStudioOptions): P
     if (!message) throw new Error("Write a message to start the conversation.");
     if (request.isolation !== "repository" && request.isolation !== "worktree") {
       throw new Error("Conversation isolation must be repository or worktree.");
+    }
+    if (!repoState.isGitRepository && request.isolation === "worktree") {
+      throw new Error("Worktree isolation requires a Git repository. Start in the selected directory instead.");
     }
     const planLabel = deriveConversationPlanLabel(message);
     const planId = createConversationPlanId(planLabel);
@@ -390,6 +401,7 @@ async function createRepositoryWebStudioHost(options: LaunchWebStudioOptions): P
   };
 
   const forkSessionIntoWorktree = async (sessionId: string): Promise<LaneOpenResponse> => {
+    if (!repoState.isGitRepository) throw new Error("Worktrees require a Git repository.");
     const parent = await agentSessionStore.load(repoId, sessionId);
     if (!parent || parent.lifecycle === "deleted") throw new Error("That session is no longer available.");
     if (!parent.planId) throw new Error("A session needs a plan id before it can create a worktree.");
@@ -420,6 +432,7 @@ async function createRepositoryWebStudioHost(options: LaunchWebStudioOptions): P
   };
 
   const createLane = async (request: LaneCreateRequest): Promise<LaneOpenResponse> => {
+    if (!repoState.isGitRepository) throw new Error("Worktrees require a Git repository.");
     if (!request.planId.trim()) {
       throw new Error("A plan id is required before creating a worktree lane.");
     }
@@ -606,10 +619,10 @@ async function routeRequest(
     return;
   }
 
-  if (request.method === "POST" && url.pathname === "/api/repositories/select") {
+  if (request.method === "POST" && (url.pathname === "/api/workspaces/select" || url.pathname === "/api/repositories/select")) {
     if (!isDashboardAuthorized) return respondUnauthorized(response);
     const body = await readJsonBody<{ path?: string }>(request);
-    if (!body.path?.trim()) throw new Error("Choose a repository directory.");
+    if (!body.path?.trim()) throw new Error("Choose a working directory.");
     response.statusCode = 200;
     response.setHeader("content-type", "application/json");
     response.end(JSON.stringify(await context.host.selectRepository(body.path)));
@@ -926,6 +939,23 @@ function contentTypeFor(filePath: string): string {
 function normalizeRepositoryPath(value: string): string {
   const resolved = path.resolve(value);
   return process.platform === "win32" ? resolved.toLowerCase() : resolved;
+}
+
+async function resolveInitialWorkspace(explicitWorkspace?: string, historyHomeDir?: string): Promise<string> {
+  if (explicitWorkspace?.trim()) {
+    const resolved = path.resolve(explicitWorkspace);
+    if (!await isDirectory(resolved)) throw new Error(`Working directory does not exist or is not a directory: ${resolved}`);
+    return resolved;
+  }
+  const history = await loadRecentRepositories(historyHomeDir).catch(() => []);
+  for (const entry of history) {
+    if (await isDirectory(entry.path)) return entry.path;
+  }
+  return process.cwd();
+}
+
+async function isDirectory(candidate: string): Promise<boolean> {
+  return stat(candidate).then((value) => value.isDirectory()).catch(() => false);
 }
 
 export function resolveStudioPort(explicitPort?: number, environmentPort?: string): number {

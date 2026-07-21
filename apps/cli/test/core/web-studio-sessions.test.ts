@@ -6,6 +6,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import test from "node:test";
 import { AgentSessionStore, deriveRepositoryId } from "@srgical/agent-runtime";
+import { recordRecentRepository } from "../../src/core/repository-history";
 import { createWorktreeLane, setWorktreeLaneDeleteLock } from "../../src/core/worktree-lanes";
 import { createConversationPlanId, createWebStudioHost, deriveConversationPlanLabel, resolveStudioPort } from "../../src/ui/web-studio";
 import { createTempWorkspace } from "../helpers/workspace";
@@ -97,6 +98,58 @@ test("web host starts a repository conversation and promotes it to a worktree", 
   assert.equal(path.resolve(switched.repoRoot), path.resolve(otherRepo));
   assert.deepEqual(switched.repositories.map((entry) => path.resolve(entry.path)), [path.resolve(otherRepo), path.resolve(repo)]);
   assert.equal(switched.repositories.filter((entry) => entry.selected).length, 1);
+
+  const nestedWorkspace = path.join(repo, "src");
+  const switchedNested = await host.selectRepository(nestedWorkspace);
+  assert.equal(path.resolve(switchedNested.currentWorkspace), path.resolve(nestedWorkspace));
+  assert.equal(path.resolve(switchedNested.repoRoot), path.resolve(repo));
+  assert.equal(switchedNested.isGitRepository, true);
+});
+
+test("web host uses a plain folder as a writable session working directory", async (t) => {
+  const sessionHome = await mkdtemp(path.join(os.tmpdir(), "srgical-folder-sessions-"));
+  const workspace = path.join(sessionHome, "notes-and-scripts");
+  await mkdir(workspace, { recursive: true });
+  await writeFile(path.join(workspace, "notes.txt"), "hello\n", "utf8");
+  t.after(() => rm(sessionHome, { recursive: true, force: true }));
+  const store = new AgentSessionStore({ homeDir: sessionHome });
+  const host = await createWebStudioHost({ workspace, agentSessionStore: store, repositoryHistoryHomeDir: sessionHome, openBrowser: false });
+  t.after(() => host.close());
+
+  const snapshot = await host.getRepoSnapshot();
+  assert.equal(snapshot.isGitRepository, false);
+  assert.equal(path.resolve(snapshot.currentWorkspace), path.resolve(workspace));
+  assert.deepEqual(snapshot.lanes.map((lane) => lane.laneId), ["current"]);
+
+  const opened = await host.startConversation({ message: "Update my notes", isolation: "repository" });
+  const studio = host.getStudioSession(opened.studioToken);
+  assert.ok(studio);
+  assert.equal(path.resolve(studio.workspace), path.resolve(workspace));
+  assert.equal(studio.controller.getSnapshot().isGitRepository, false);
+  assert.equal(studio.controller.getSnapshot().agentSession.permissionMode, "acceptEdits");
+  await assert.rejects(
+    host.startConversation({ message: "Use a worktree", isolation: "worktree" }),
+    /requires a Git repository/
+  );
+});
+
+test("web host defaults to the last used valid workspace", async (t) => {
+  const sessionHome = await mkdtemp(path.join(os.tmpdir(), "srgical-last-workspace-"));
+  const workspace = path.join(sessionHome, "last-used-folder");
+  await mkdir(workspace, { recursive: true });
+  await recordRecentRepository(workspace, sessionHome);
+  t.after(() => rm(sessionHome, { recursive: true, force: true }));
+
+  const host = await createWebStudioHost({
+    agentSessionStore: new AgentSessionStore({ homeDir: sessionHome }),
+    repositoryHistoryHomeDir: sessionHome,
+    openBrowser: false
+  });
+  t.after(() => host.close());
+
+  const snapshot = await host.getRepoSnapshot();
+  assert.equal(path.resolve(snapshot.currentWorkspace), path.resolve(workspace));
+  assert.equal(snapshot.repositories[0]?.selected, true);
 });
 
 test("internal plan ids are derived without turning the first prompt into a chat title", () => {
