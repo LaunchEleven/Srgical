@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { lstat, mkdir, readdir, readFile, realpath, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import type { SkillRecord, SkillRegistrySnapshot, SkillScope, SkillTrust } from "@srgical/studio-shared";
+import type { SkillPromptAction, SkillRecord, SkillRegistrySnapshot, SkillScope, SkillTrust } from "@srgical/studio-shared";
 
 export type SkillRegistryOptions = {
   homeDir?: string;
@@ -19,6 +19,23 @@ export type SkillRegistryConfig = {
   version: 1;
   directories: string[];
   overrides: Record<string, { enabled?: boolean; trust?: SkillTrust }>;
+  promptActions: StoredSkillPromptAction[];
+};
+
+export type StoredSkillPromptAction = {
+  actionId: string;
+  label: string;
+  description: string;
+  prompt: string;
+  skillId: string;
+};
+
+export type SkillPromptActionInput = {
+  actionId?: string;
+  label: string;
+  description?: string;
+  prompt: string;
+  skillId: string;
 };
 
 type DiscoveryRoot = {
@@ -123,12 +140,23 @@ export async function discoverSkills(
   }
 
   skills.sort((left, right) => Number(right.effective) - Number(left.effective) || left.name.localeCompare(right.name));
+  const effectiveSkills = new Map(skills.filter((skill) => skill.effective).map((skill) => [skill.id, skill]));
+  const promptActions: SkillPromptAction[] = config.promptActions.map((action) => {
+    const skill = effectiveSkills.get(action.skillId);
+    return {
+      ...action,
+      skillSource: skill?.source ?? null,
+      available: Boolean(skill),
+      blockedReason: skill ? null : `Enable a non-blocked \`${action.skillId}\` skill to use this button.`
+    };
+  });
   return {
     globalSkillsDirectory,
     discoveredDirectories: discovered.map((entry) => entry.root.path),
     configuredDirectories: config.directories,
     skills,
     effectiveSkillHashes: skills.filter((skill) => skill.effective).map((skill) => skill.hash),
+    promptActions,
     conflicts
   };
 }
@@ -139,7 +167,10 @@ export async function loadSkillRegistryConfig(repoId: string, homeDir = os.homed
     return {
       version: 1,
       directories: Array.isArray(parsed.directories) ? parsed.directories.filter((item): item is string => typeof item === "string") : [],
-      overrides: parsed.overrides && typeof parsed.overrides === "object" ? parsed.overrides : {}
+      overrides: parsed.overrides && typeof parsed.overrides === "object" ? parsed.overrides : {},
+      promptActions: Array.isArray(parsed.promptActions)
+        ? parsed.promptActions.map(normalizePromptAction).filter((item): item is StoredSkillPromptAction => item !== null)
+        : []
     };
   } catch {
     return emptyConfig();
@@ -168,6 +199,41 @@ export async function removeSkillDirectory(repoId: string, directory: string, ho
   const config = await loadSkillRegistryConfig(repoId, homeDir);
   const key = path.resolve(directory).toLowerCase();
   config.directories = config.directories.filter((item) => path.resolve(item).toLowerCase() !== key);
+  await saveConfig(repoId, config, homeDir);
+}
+
+export async function upsertSkillPromptAction(
+  repoId: string,
+  input: SkillPromptActionInput,
+  homeDir = os.homedir()
+): Promise<string> {
+  const label = input.label.trim();
+  const prompt = input.prompt.trim();
+  const skillId = sanitizeSkillId(input.skillId);
+  if (!label) throw new Error("A prompt button label is required.");
+  if (!prompt) throw new Error("A prompt button instruction is required.");
+  if (!skillId) throw new Error("Choose a skill for this prompt button.");
+  const config = await loadSkillRegistryConfig(repoId, homeDir);
+  const actionId = sanitizeSkillId(input.actionId || label);
+  if (!actionId) throw new Error("A prompt button id is required.");
+  const action: StoredSkillPromptAction = {
+    actionId,
+    label: label.slice(0, 48),
+    description: input.description?.trim().slice(0, 160) || `Run the ${skillId} skill.`,
+    prompt: prompt.slice(0, 4_000),
+    skillId
+  };
+  config.promptActions = [...config.promptActions.filter((item) => item.actionId !== actionId), action]
+    .sort((left, right) => left.label.localeCompare(right.label));
+  await saveConfig(repoId, config, homeDir);
+  return actionId;
+}
+
+export async function removeSkillPromptAction(repoId: string, actionId: string, homeDir = os.homedir()): Promise<void> {
+  const config = await loadSkillRegistryConfig(repoId, homeDir);
+  const next = config.promptActions.filter((item) => item.actionId !== actionId);
+  if (next.length === config.promptActions.length) throw new Error(`Unknown prompt button: ${actionId}`);
+  config.promptActions = next;
   await saveConfig(repoId, config, homeDir);
 }
 
@@ -318,7 +384,26 @@ function firstBodyLine(body: string): string {
 }
 
 function emptyConfig(): SkillRegistryConfig {
-  return { version: 1, directories: [], overrides: {} };
+  return { version: 1, directories: [], overrides: {}, promptActions: [] };
+}
+
+function normalizePromptAction(value: unknown): StoredSkillPromptAction | null {
+  if (!value || typeof value !== "object") return null;
+  const candidate = value as Partial<StoredSkillPromptAction>;
+  const actionId = typeof candidate.actionId === "string" ? sanitizeSkillId(candidate.actionId) : "";
+  const label = typeof candidate.label === "string" ? candidate.label.trim().slice(0, 48) : "";
+  const prompt = typeof candidate.prompt === "string" ? candidate.prompt.trim().slice(0, 4_000) : "";
+  const skillId = typeof candidate.skillId === "string" ? sanitizeSkillId(candidate.skillId) : "";
+  if (!actionId || !label || !prompt || !skillId) return null;
+  return {
+    actionId,
+    label,
+    description: typeof candidate.description === "string" && candidate.description.trim()
+      ? candidate.description.trim().slice(0, 160)
+      : `Run the ${skillId} skill.`,
+    prompt,
+    skillId
+  };
 }
 
 async function saveConfig(repoId: string, config: SkillRegistryConfig, homeDir: string): Promise<void> {

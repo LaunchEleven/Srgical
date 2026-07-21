@@ -2,7 +2,7 @@ import type { ChatMessage } from "../../../apps/cli/src/core/prompts";
 import type { PlanningPackState } from "../../../apps/cli/src/core/planning-pack-state";
 import type { StudioUiConfig } from "../../../apps/cli/src/core/studio-ui-config";
 import type { PlanDiceOptions } from "../../../apps/cli/src/core/plan-dicing";
-import type { AgentEvent, AgentSessionRecord, ConnectorRegistrySnapshot, McpServerDefinition, SkillRegistrySnapshot, StudioAuthOptionId, StudioAuthOptionStatus, StudioMode, StudioSettings, StudioTheme } from "@srgical/studio-shared";
+import type { AgentEvent, AgentSessionRecord, ConnectorRegistrySnapshot, McpServerDefinition, PromptActionRecord, SkillRegistrySnapshot, StudioAuthOptionId, StudioAuthOptionStatus, StudioMode, StudioSettings, StudioTheme, WorktreeDiagnosticsView } from "@srgical/studio-shared";
 import type { AgentProviderStatus } from "@srgical/agent-runtime";
 
 export type StudioActionId =
@@ -36,6 +36,9 @@ export type StudioActionId =
   | "skill-trust"
   | "skill-directory-add"
   | "skill-directory-remove"
+  | "prompt-action-run"
+  | "prompt-action-upsert"
+  | "prompt-action-remove"
   | "connector-install"
   | "connector-upsert"
   | "connector-import"
@@ -85,6 +88,11 @@ export type StudioActionRequest = {
   connectorDescription?: string;
   connectorDefinition?: McpServerDefinition;
   rawConfig?: string;
+  promptActionId?: string;
+  promptActionLabel?: string;
+  promptActionDescription?: string;
+  promptActionPrompt?: string;
+  promptActionSkillId?: string;
 };
 
 export type StudioActionState = {
@@ -168,6 +176,7 @@ export type RepoSnapshot = {
   repoRoot: string;
   repoLabel: string;
   currentWorkspace: string;
+  repositories: RepositoryChoice[];
   requestedPlanId: string | null;
   requestedMode: StudioMode | null;
   lanes: LaneSummary[];
@@ -175,6 +184,13 @@ export type RepoSnapshot = {
   settings: StudioSettings;
   authOptions: StudioAuthOptionStatus[];
   connectors: ConnectorRegistrySnapshot;
+};
+
+export type RepositoryChoice = {
+  path: string;
+  label: string;
+  selected: boolean;
+  lastOpenedAt: string;
 };
 
 export type { FinishWorkAssessment, FinishWorkRequest, FinishWorkResult } from "@srgical/studio-shared";
@@ -220,6 +236,8 @@ export type StudioSnapshot = {
   prepareClarity: PrepareClarityView | null;
   references: ReferenceView;
   skills: SkillRegistrySnapshot;
+  promptActions: PromptActionRecord[];
+  worktreeDiagnostics: WorktreeDiagnosticsView;
   connectors: ConnectorRegistrySnapshot;
   footerText: string;
 };

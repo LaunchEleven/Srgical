@@ -39,13 +39,16 @@ import {
 import { listReferenceDirectoryOptions } from "../core/reference-library";
 import { assessFinishWork } from "../core/finish-work";
 import { loadStudioSettings, saveStudioSettings } from "../core/studio-settings";
+import { loadRecentRepositories, recordRecentRepository } from "../core/repository-history";
 
 export type LaunchWebStudioOptions = {
   workspace?: string;
   planId?: string | null;
   mode?: StudioMode;
   openBrowser?: boolean;
+  port?: number;
   agentSessionStore?: AgentSessionStore;
+  repositoryHistoryHomeDir?: string;
 };
 
 type StudioSession = {
@@ -58,8 +61,9 @@ type StudioSession = {
   startPromise: Promise<void>;
 };
 
-type WebStudioHost = {
+export type WebStudioHost = {
   getRepoSnapshot(): Promise<RepoSnapshot>;
+  selectRepository(workspace: string): Promise<RepoSnapshot>;
   selectAuthOption(authOptionId: StudioAuthOptionId): Promise<RepoSnapshot>;
   installConnector(presetId: string): Promise<RepoSnapshot>;
   setConnectorEnabled(connectorId: string, enabled: boolean): Promise<RepoSnapshot>;
@@ -101,9 +105,14 @@ export async function launchWebStudio(options: LaunchWebStudioOptions = {}): Pro
     }
   });
 
+  const port = resolveStudioPort(options.port, process.env.SRGICAL_STUDIO_PORT);
   await new Promise<void>((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(0, "127.0.0.1", () => resolve());
+    server.once("error", (error: NodeJS.ErrnoException) => {
+      reject(error.code === "EADDRINUSE"
+        ? new Error(`Srgical Studio is already using http://127.0.0.1:${port}. Close the other instance or set SRGICAL_STUDIO_PORT.`)
+        : error);
+    });
+    server.listen(port, "127.0.0.1", () => resolve());
   });
 
   const address = server.address();
@@ -137,6 +146,76 @@ export async function launchWebStudio(options: LaunchWebStudioOptions = {}): Pro
 }
 
 export async function createWebStudioHost(options: LaunchWebStudioOptions = {}): Promise<WebStudioHost> {
+  const agentSessionStore = options.agentSessionStore ?? new AgentSessionStore();
+  let activeHost = await createRepositoryWebStudioHost({ ...options, agentSessionStore });
+  let activeSnapshot = await activeHost.getRepoSnapshot();
+  await recordRecentRepository(activeSnapshot.repoRoot, options.repositoryHistoryHomeDir).catch(() => []);
+
+  const decorateSnapshot = async (snapshot: RepoSnapshot): Promise<RepoSnapshot> => {
+    const history = await loadRecentRepositories(options.repositoryHistoryHomeDir).catch(() => []);
+    const currentPath = path.resolve(snapshot.repoRoot);
+    const currentKey = normalizeRepositoryPath(currentPath);
+    const currentHistory = history.find((entry) => normalizeRepositoryPath(entry.path) === currentKey);
+    const choices = [
+      { path: currentPath, lastOpenedAt: currentHistory?.lastOpenedAt ?? new Date().toISOString() },
+      ...history.filter((entry) => normalizeRepositoryPath(entry.path) !== currentKey)
+    ];
+    return {
+      ...snapshot,
+      repositories: choices.map((entry) => ({
+        path: entry.path,
+        label: path.basename(entry.path) || entry.path,
+        selected: normalizeRepositoryPath(entry.path) === currentKey,
+        lastOpenedAt: entry.lastOpenedAt
+      }))
+    };
+  };
+
+  const withSnapshot = async (operation: () => Promise<RepoSnapshot>): Promise<RepoSnapshot> => {
+    activeSnapshot = await operation();
+    return decorateSnapshot(activeSnapshot);
+  };
+
+  return {
+    getRepoSnapshot: () => withSnapshot(() => activeHost.getRepoSnapshot()),
+    async selectRepository(workspace: string) {
+      const requested = workspace.trim();
+      if (!requested) throw new Error("Choose a repository directory.");
+      const nextHost = await createRepositoryWebStudioHost({
+        ...options,
+        workspace: path.resolve(requested),
+        planId: null,
+        mode: undefined,
+        agentSessionStore
+      });
+      const nextSnapshot = await nextHost.getRepoSnapshot();
+      await activeHost.close();
+      activeHost = nextHost;
+      activeSnapshot = nextSnapshot;
+      await recordRecentRepository(nextSnapshot.repoRoot, options.repositoryHistoryHomeDir).catch(() => []);
+      return decorateSnapshot(nextSnapshot);
+    },
+    selectAuthOption: (authOptionId) => withSnapshot(() => activeHost.selectAuthOption(authOptionId)),
+    installConnector: (presetId) => withSnapshot(() => activeHost.installConnector(presetId)),
+    setConnectorEnabled: (connectorId, enabled) => withSnapshot(() => activeHost.setConnectorEnabled(connectorId, enabled)),
+    removeConnector: (connectorId) => withSnapshot(() => activeHost.removeConnector(connectorId)),
+    startConversation: (request) => activeHost.startConversation(request),
+    createLane: (request) => activeHost.createLane(request),
+    openLane: (laneId, mode, agentSessionId) => activeHost.openLane(laneId, mode, agentSessionId),
+    openSession: (sessionId) => activeHost.openSession(sessionId),
+    forkSessionIntoWorktree: (sessionId) => activeHost.forkSessionIntoWorktree(sessionId),
+    archiveLane: (laneId) => activeHost.archiveLane(laneId),
+    setLaneDeleteLock: (laneId, deleteLocked) => activeHost.setLaneDeleteLock(laneId, deleteLocked),
+    removeLane: (laneId) => activeHost.removeLane(laneId),
+    assessFinish: (laneId) => activeHost.assessFinish(laneId),
+    finishLane: (request) => activeHost.finishLane(request),
+    updateSession: (sessionId, action) => activeHost.updateSession(sessionId, action),
+    getStudioSession: (token) => activeHost.getStudioSession(token),
+    close: () => activeHost.close()
+  };
+}
+
+async function createRepositoryWebStudioHost(options: LaunchWebStudioOptions): Promise<WebStudioHost> {
   const repoState = await resolveWorktreeLaneRepoState(options.workspace ?? process.cwd());
   const sessions = new Map<string, StudioSession>();
   const workspaceTokens = new Map<string, string>();
@@ -153,6 +232,7 @@ export async function createWebStudioHost(options: LaunchWebStudioOptions = {}):
       repoRoot: nextRepoState.repoRoot,
       repoLabel: path.basename(nextRepoState.repoRoot) || nextRepoState.repoRoot,
       currentWorkspace: nextRepoState.currentWorkspace,
+      repositories: [],
       requestedPlanId: options.planId ?? null,
       requestedMode: options.mode ?? null,
       lanes: nextRepoState.lanes,
@@ -461,6 +541,9 @@ export async function createWebStudioHost(options: LaunchWebStudioOptions = {}):
 
   return {
     getRepoSnapshot,
+    async selectRepository() {
+      throw new Error("Repository selection is only available from the dashboard host.");
+    },
     selectAuthOption,
     installConnector,
     setConnectorEnabled,
@@ -520,6 +603,16 @@ async function routeRequest(
     response.statusCode = 200;
     response.setHeader("content-type", "application/json");
     response.end(JSON.stringify(await context.host.getRepoSnapshot()));
+    return;
+  }
+
+  if (request.method === "POST" && url.pathname === "/api/repositories/select") {
+    if (!isDashboardAuthorized) return respondUnauthorized(response);
+    const body = await readJsonBody<{ path?: string }>(request);
+    if (!body.path?.trim()) throw new Error("Choose a repository directory.");
+    response.statusCode = 200;
+    response.setHeader("content-type", "application/json");
+    response.end(JSON.stringify(await context.host.selectRepository(body.path)));
     return;
   }
 
@@ -821,7 +914,26 @@ function contentTypeFor(filePath: string): string {
   if (filePath.endsWith(".svg")) {
     return "image/svg+xml";
   }
+  if (filePath.endsWith(".png")) {
+    return "image/png";
+  }
+  if (filePath.endsWith(".webmanifest")) {
+    return "application/manifest+json; charset=utf-8";
+  }
   return "application/octet-stream";
+}
+
+function normalizeRepositoryPath(value: string): string {
+  const resolved = path.resolve(value);
+  return process.platform === "win32" ? resolved.toLowerCase() : resolved;
+}
+
+export function resolveStudioPort(explicitPort?: number, environmentPort?: string): number {
+  const candidate = explicitPort ?? (environmentPort?.trim() ? Number(environmentPort) : 43111);
+  if (!Number.isInteger(candidate) || candidate < 0 || candidate > 65_535) {
+    throw new Error("The Studio port must be an integer between 0 and 65535.");
+  }
+  return candidate;
 }
 
 function openUrl(url: string): void {

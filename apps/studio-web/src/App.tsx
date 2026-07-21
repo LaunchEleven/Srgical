@@ -13,7 +13,7 @@ import type {
   StudioSnapshot
 } from "@srgical/studio-core";
 import { STUDIO_THEMES } from "@srgical/studio-shared";
-import type { AgentEvent, AgentSessionRecord, ConnectorRecord, ConnectorRegistrySnapshot, McpServerDefinition, McpTransport, SkillRecord, StudioAuthOptionId, StudioAuthOptionStatus } from "@srgical/studio-shared";
+import type { AgentEvent, AgentSessionRecord, ConnectorPreset, ConnectorRecord, ConnectorRegistrySnapshot, McpServerDefinition, McpTransport, SkillRecord, StudioAuthOptionId, StudioAuthOptionStatus } from "@srgical/studio-shared";
 
 declare global {
   interface Window {
@@ -43,6 +43,8 @@ function RepositoryHome({ token }: { token: string }) {
   const [finishConfirmation, setFinishConfirmation] = useState("");
   const [removeAfterFinish, setRemoveAfterFinish] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [repositoryPickerOpen, setRepositoryPickerOpen] = useState(false);
+  const installApp = useInstallApp();
 
   const refresh = async () => setSnapshot(await getJson<RepoSnapshot>(`/api/repo?token=${encodeURIComponent(token)}`));
   useEffect(() => {
@@ -138,6 +140,23 @@ function RepositoryHome({ token }: { token: string }) {
     }
   };
 
+  const selectRepository = async (repositoryPath: string) => {
+    setBusy(true);
+    setError(null);
+    try {
+      const next = await postJson<RepoSnapshot, { path: string }>("/api/repositories/select", token, { path: repositoryPath });
+      setSnapshot(next);
+      setRepositoryPickerOpen(false);
+      setPrompt("");
+      setSessionQuery("");
+    } catch (reason) {
+      setError(errorText(reason));
+      throw reason;
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const mutateConnector = async (path: string, body: object) => {
     setBusy(true);
     setError(null);
@@ -201,7 +220,12 @@ function RepositoryHome({ token }: { token: string }) {
     <div className="home-page">
       <header className="home-header">
         <Brand />
-        <div className="home-header-actions"><div className="repo-path" title={snapshot.repoRoot}>{snapshot.repoRoot}</div><button className="quiet settings-trigger" onClick={() => setSettingsOpen(true)}>Settings</button></div>
+        <div className="home-header-actions">
+          <div className="repo-path" title={snapshot.repoRoot}>{snapshot.repoRoot}</div>
+          {installApp ? <button className="quiet settings-trigger" onClick={() => void installApp()}>Install app</button> : null}
+          <button className="quiet settings-trigger" onClick={() => setRepositoryPickerOpen(true)}>Switch repository</button>
+          <button className="quiet settings-trigger" onClick={() => setSettingsOpen(true)}>Settings</button>
+        </div>
       </header>
       <main className="home-main">
         <section className="home-intro">
@@ -316,6 +340,13 @@ function RepositoryHome({ token }: { token: string }) {
         onRemoveConnector={(connectorId) => mutateConnector("/api/settings/connectors/remove", { connectorId })}
         onClose={() => setSettingsOpen(false)}
       /> : null}
+      {repositoryPickerOpen ? <RepositoryPickerDialog
+        repositories={snapshot.repositories}
+        currentPath={snapshot.repoRoot}
+        busy={busy}
+        onSelect={selectRepository}
+        onClose={() => setRepositoryPickerOpen(false)}
+      /> : null}
     </div>
   );
 }
@@ -424,6 +455,52 @@ function FinishWorkDialog(props: {
         {removalBlocked && assessment.removalBlockers.length ? <Notice tone="neutral" title="Worktree removal unavailable" items={assessment.removalBlockers} /> : null}
         <label className="confirmation-field"><span>Type <strong>{assessment.laneId}</strong> to confirm</span><input value={props.confirmation} onChange={(event) => props.onConfirmation(event.target.value)} /></label>
         <footer><button onClick={props.onClose}>Cancel</button><button className="primary" disabled={props.busy || !assessment.canArchive || props.confirmation !== assessment.laneId} onClick={props.onFinish}>{props.removeWorktree ? "Archive sessions & remove worktree" : "Archive sessions & finish"}</button></footer>
+      </section>
+    </div>
+  );
+}
+
+function RepositoryPickerDialog(props: {
+  repositories: RepoSnapshot["repositories"];
+  currentPath: string;
+  busy: boolean;
+  onSelect(path: string): Promise<void>;
+  onClose(): void;
+}) {
+  const [repositoryPath, setRepositoryPath] = useState("");
+  const [localError, setLocalError] = useState<string | null>(null);
+  const choose = async (candidate: string) => {
+    const nextPath = candidate.trim();
+    if (!nextPath || props.busy) return;
+    setLocalError(null);
+    try {
+      await props.onSelect(nextPath);
+    } catch (reason) {
+      setLocalError(errorText(reason));
+    }
+  };
+  return (
+    <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) props.onClose(); }}>
+      <section className="repository-dialog" role="dialog" aria-modal="true" aria-labelledby="repository-dialog-title">
+        <header>
+          <div><div className="overline">Working repository</div><h2 id="repository-dialog-title">Choose where Srgical works</h2><p>Switching repositories closes live local sessions and loads that repository's worktrees, conversations, skills, and connectors.</p></div>
+          <button className="quiet" onClick={props.onClose}>Close</button>
+        </header>
+        <div className="repository-current"><span>Current</span><code>{props.currentPath}</code></div>
+        <form className="repository-path-form" onSubmit={(event) => { event.preventDefault(); void choose(repositoryPath); }}>
+          <label><span>Repository directory</span><input value={repositoryPath} onChange={(event) => setRepositoryPath(event.target.value)} placeholder="C:\\code\\my-repository" autoFocus /></label>
+          <button className="primary" disabled={props.busy || !repositoryPath.trim()}>{props.busy ? "Opening..." : "Open repository"}</button>
+        </form>
+        {localError ? <div className="error-banner">{localError}</div> : null}
+        <div className="repository-recents-heading">Recent repositories</div>
+        <div className="repository-recents">
+          {props.repositories.map((repository) => (
+            <button className={repository.selected ? "selected" : ""} disabled={props.busy || repository.selected} onClick={() => void choose(repository.path)} key={repository.path}>
+              <span><strong>{repository.label}</strong><code>{repository.path}</code></span>
+              <small>{repository.selected ? "Open" : "Switch"}</small>
+            </button>
+          ))}
+        </div>
       </section>
     </div>
   );
@@ -575,6 +652,7 @@ function Studio({ token, dashboardToken: homeToken }: { token: string; dashboard
         </section>
 
         <section className="composer-wrap">
+          <PromptActionBar snapshot={snapshot} action={action} />
           <div className="composer">
             <textarea
               value={input}
@@ -598,7 +676,7 @@ function Studio({ token, dashboardToken: homeToken }: { token: string; dashboard
           {(["worktree", "connectors", "skills", "plan", "settings"] as const).map((tab) => <button className={inspector === tab ? "active" : ""} onClick={() => setInspector(tab)} key={tab}>{tab === "connectors" ? "MCP" : tab}</button>)}
         </div>
         <div className="inspector-body">
-          {inspector === "worktree" ? <WorktreeInspector snapshot={snapshot} /> : null}
+          {inspector === "worktree" ? <WorktreeInspector snapshot={snapshot} action={action} /> : null}
           {inspector === "connectors" ? <ConnectorsInspector snapshot={snapshot} action={action} /> : null}
           {inspector === "skills" ? <SkillsInspector snapshot={snapshot} action={action} /> : null}
           {inspector === "plan" ? <PlanInspector snapshot={snapshot} action={action} /> : null}
@@ -626,14 +704,14 @@ function SettingsDialog(props: {
       <div className="settings-layout">
         <nav className="settings-nav" aria-label="Settings sections">
           <button className={section === "providers" ? "active" : ""} onClick={() => setSection("providers")}><strong>Models</strong><small>Providers and billing</small></button>
-          <button className={section === "connectors" ? "active" : ""} onClick={() => setSection("connectors")}><strong>Connectors</strong><small>Slack, Linear, Notion</small></button>
+          <button className={section === "connectors" ? "active" : ""} onClick={() => setSection("connectors")}><strong>Connectors</strong><small>GitHub, Slack, Linear and more</small></button>
         </nav>
         <div className="settings-content">
           {section === "providers" ? <>
             <div className="settings-page-heading"><h3>Provider & billing path</h3><p>Choose the authenticated route new conversations will use. Existing conversations keep the route they started with.</p></div>
             <ProviderOptions authOptions={props.authOptions} busy={props.busy} onSelect={props.onSelect} />
           </> : <>
-            <div className="settings-page-heading"><h3>Connected services</h3><p>Add trusted MCP services to this repository. OAuth opens when the selected agent first uses a configured service.</p></div>
+            <div className="settings-page-heading"><h3>Connected services</h3><p>Choose a service and Srgical will guide you through its secure setup. Access is scoped to this repository.</p></div>
             <ConnectorSettings
               connectors={props.connectors}
               busy={props.busy}
@@ -651,19 +729,36 @@ function SettingsDialog(props: {
 function SettingsInspector({ snapshot, action }: { snapshot: StudioSnapshot; action(request: StudioActionRequest): Promise<void> }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const run = async (request: StudioActionRequest) => {
+  const [promptSkillId, setPromptSkillId] = useState("");
+  const [promptLabel, setPromptLabel] = useState("");
+  const [promptText, setPromptText] = useState("");
+  const run = async (request: StudioActionRequest, done?: () => void) => {
     setBusy(true);
     setError(null);
     try {
       await action(request);
+      done?.();
     } catch (reason) {
       setError(errorText(reason));
     } finally {
       setBusy(false);
     }
   };
+  const effectiveSkills = snapshot.skills.skills.filter((skill) => skill.effective);
+  const addPromptButton = async () => {
+    await run({
+      type: "prompt-action-upsert",
+      promptActionLabel: promptLabel,
+      promptActionPrompt: promptText,
+      promptActionSkillId: promptSkillId
+    }, () => {
+      setPromptSkillId("");
+      setPromptLabel("");
+      setPromptText("");
+    });
+  };
   return <>
-    <InspectorTitle title="Settings" subtitle="Global Studio preferences" />
+    <InspectorTitle title="Settings" subtitle="Provider, connector, and repository preferences" />
     <div className="settings-section">
       <div className="settings-section-heading"><strong>Provider & billing path</strong><p>Selection applies to new conversations. This conversation remains on <b>{snapshot.agentProvider.label}</b>.</p></div>
       {error ? <div className="inline-error">{error}</div> : null}
@@ -676,7 +771,7 @@ function SettingsInspector({ snapshot, action }: { snapshot: StudioSnapshot; act
       />
     </div>
     <div className="settings-section">
-      <div className="settings-section-heading"><strong>Connected services</strong><p>Repository-scoped MCP access. Authentication completes when the agent first connects.</p></div>
+      <div className="settings-section-heading"><strong>Connected services</strong><p>Repository-scoped MCP access with guided authorization.</p></div>
       <ConnectorSettings
         connectors={snapshot.connectors}
         busy={busy}
@@ -687,13 +782,23 @@ function SettingsInspector({ snapshot, action }: { snapshot: StudioSnapshot; act
       />
     </div>
     <div className="settings-section">
+      <div className="settings-section-heading"><strong>Prompt buttons</strong><p>Turn an effective skill into a reusable action beside the chat composer. Buttons submit prompts; they never run shell commands directly.</p></div>
+      <div className="prompt-action-form">
+        <label><span>Skill</span><select value={promptSkillId} onChange={(event) => setPromptSkillId(event.target.value)}><option value="">Choose a skill</option>{effectiveSkills.map((skill) => <option value={skill.id} key={skill.id}>{skill.name}</option>)}</select></label>
+        <label><span>Button label</span><input value={promptLabel} maxLength={48} onChange={(event) => setPromptLabel(event.target.value)} placeholder="Review accessibility" /></label>
+        <label><span>Prompt</span><textarea rows={3} value={promptText} onChange={(event) => setPromptText(event.target.value)} placeholder="Review the current changes and fix clear accessibility problems." /></label>
+        <button className="primary" disabled={busy || !promptSkillId || !promptLabel.trim() || !promptText.trim()} onClick={() => void addPromptButton()}>Add prompt button</button>
+      </div>
+      {snapshot.skills.promptActions.length ? <div className="prompt-action-config-list">{snapshot.skills.promptActions.map((item) => <article key={item.actionId}><div><strong>{item.label}</strong><small>{item.skillId}</small></div><p>{item.prompt}</p><button className="danger" disabled={busy} onClick={() => void run({ type: "prompt-action-remove", promptActionId: item.actionId })}>Remove</button></article>)}</div> : <p className="settings-empty-note">No custom prompt buttons yet.</p>}
+    </div>
+    <div className="settings-section">
       <div className="settings-section-heading"><strong>Theme</strong><p>Applied immediately across Studio.</p></div>
       <div className="theme-options">{STUDIO_THEMES.map((theme) => <button className={snapshot.settings.themeId === theme.id ? "selected" : ""} disabled={busy} onClick={() => void run({ type: "theme", themeId: theme.id, announce: false })} key={theme.id}><strong>{theme.label}</strong><small>{theme.description}</small></button>)}</div>
     </div>
   </>;
 }
 
-const FEATURED_CONNECTOR_IDS = ["slack", "linear", "notion"];
+const FEATURED_CONNECTOR_IDS = ["github", "linear", "slack", "notion", "google-drive"];
 
 function ConnectorSettings(props: {
   connectors: ConnectorRegistrySnapshot;
@@ -703,6 +808,7 @@ function ConnectorSettings(props: {
   onToggle(connectorId: string, enabled: boolean): Promise<void>;
   onRemove(connectorId: string): Promise<void>;
 }) {
+  const [activePreset, setActivePreset] = useState<ConnectorPreset | null>(null);
   const presets = FEATURED_CONNECTOR_IDS.flatMap((presetId) => {
     const preset = props.connectors.catalog.find((item) => item.presetId === presetId);
     return preset ? [preset] : [];
@@ -712,19 +818,99 @@ function ConnectorSettings(props: {
       const connector = props.connectors.connectors.find((item) => item.presetId === preset.presetId);
       const connected = connector?.status === "connected";
       const configured = Boolean(connector?.enabled && ["ready", "needs-auth", "pending"].includes(connector.status));
-      const state = connected ? "Connected" : configured ? "Configured" : connector?.enabled === false ? "Disabled" : connector ? "Needs attention" : "Not connected";
+      const awaitingOAuth = configured && preset.authorization.method === "hosted-oauth";
+      const state = connected ? "Connected" : awaitingOAuth ? "Sign-in pending" : configured ? "Ready" : connector?.enabled === false ? "Disabled" : connector ? "Needs attention" : "Not connected";
       return <article className={`settings-connector ${connected ? "connected" : configured ? "configured" : "offline"}`} key={preset.presetId}>
         <div className="settings-connector-heading"><span className="connector-brand-mark">{preset.label.slice(0, 1)}</span><div><strong>{preset.label}</strong><small>{preset.category}</small></div><span className="settings-connector-state"><i />{state}</span></div>
         <p>{preset.description}</p>
-        <small>{connected ? connector?.statusDetail ?? "Authenticated and available to the current provider." : connector ? connector.statusDetail ?? "The OAuth window will open on the next agent turn that connects to this service." : preset.authDescription}</small>
+        <small>{connected ? connector?.statusDetail ?? "Authenticated and available to the current provider." : connector?.statusDetail ?? preset.authDescription}</small>
         <footer>
           <a href={preset.setupUrl} target="_blank" rel="noreferrer">Setup guide</a>
-          <div>{connector ? <><button disabled={props.busy} onClick={() => void props.onToggle(connector.connectorId, !connector.enabled)}>{connector.enabled ? "Disable" : "Enable"}</button><button className="quiet" disabled={props.busy} onClick={() => void props.onRemove(connector.connectorId)}>Remove</button></> : <button className="primary" disabled={props.busy} onClick={() => void props.onInstall(preset.presetId)}>Connect</button>}</div>
+          <div>{connector ? <><button className={!connected && connector.enabled ? "primary" : ""} disabled={props.busy} onClick={() => setActivePreset(preset)}>{connected ? "Details" : "Finish setup"}</button><button disabled={props.busy} onClick={() => void props.onToggle(connector.connectorId, !connector.enabled)}>{connector.enabled ? "Disable" : "Enable"}</button><button className="quiet" disabled={props.busy} onClick={() => void props.onRemove(connector.connectorId)}>Remove</button></> : <button className="primary" disabled={props.busy} onClick={() => setActivePreset(preset)}>Connect</button>}</div>
         </footer>
       </article>;
     })}
     <p className="connector-privacy-note">Connector definitions are stored outside the repository. OAuth credentials remain in the selected provider's credential store.</p>
+    {activePreset ? <ConnectorAuthorizationDialog
+      preset={activePreset}
+      connector={props.connectors.connectors.find((item) => item.presetId === activePreset.presetId) ?? null}
+      busy={props.busy}
+      onInstall={props.onInstall}
+      onClose={() => setActivePreset(null)}
+    /> : null}
   </div>;
+}
+
+function ConnectorAuthorizationDialog(props: {
+  preset: ConnectorPreset;
+  connector: ConnectorRecord | null;
+  busy: boolean;
+  onInstall(presetId: string): Promise<void>;
+  onClose(): void;
+}) {
+  const [stage, setStage] = useState<"review" | "complete">(props.connector ? "complete" : "review");
+  const [working, setWorking] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const authLabel = props.preset.authorization.method === "hosted-oauth"
+    ? "Hosted OAuth"
+    : props.preset.authorization.method === "personal-token"
+      ? "Personal access token"
+      : "OAuth client credentials";
+  const startConnection = async () => {
+    setWorking(true);
+    setError(null);
+    const setupWindow = window.open(props.preset.setupUrl, "_blank", "noopener,noreferrer");
+    try {
+      await props.onInstall(props.preset.presetId);
+      setStage("complete");
+    } catch (reason) {
+      setupWindow?.close();
+      setError(errorText(reason));
+    } finally {
+      setWorking(false);
+    }
+  };
+  const statusCopy = props.preset.authorization.method === "hosted-oauth"
+    ? "The connector is installed. Your selected agent provider will open the secure consent screen the first time it contacts this service."
+    : props.preset.authorization.method === "personal-token"
+      ? "The connector is installed. Set the token environment variable shown below and restart Srgical to make it available."
+      : "The connector is installed. Set both OAuth environment variables shown below and restart Srgical; provider consent follows on first use.";
+
+  return <div className="connector-auth-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !working) props.onClose(); }}>
+    <section className="connector-auth-dialog" role="dialog" aria-modal="true" aria-labelledby="connector-auth-title">
+      <header>
+        <span className="connector-auth-mark">{props.preset.label.slice(0, 1)}</span>
+        <div><span className="connector-auth-method">{authLabel}</span><h3 id="connector-auth-title">Connect {props.preset.label}</h3><p>{props.preset.description}</p></div>
+        <button className="quiet" disabled={working} onClick={props.onClose} aria-label="Close connector setup">Close</button>
+      </header>
+      {stage === "review" ? <>
+        <div className="connector-auth-summary"><strong>What happens next</strong><ol>{props.preset.authorization.steps.map((step) => <li key={step}>{step}</li>)}</ol></div>
+        {props.preset.authorization.environmentVariables?.length ? <ConnectorEnvironmentVariables names={props.preset.authorization.environmentVariables} /> : null}
+        <div className="connector-auth-privacy"><strong>Your credentials stay private</strong><p>Srgical stores the connector definition outside the repository. OAuth tokens stay in the selected model provider's credential store; environment variable values are never written to connector configuration.</p></div>
+        {error ? <div className="inline-error">{error}</div> : null}
+        <footer><button disabled={working} onClick={props.onClose}>Cancel</button><button className="primary" disabled={props.busy || working} onClick={() => void startConnection()}>{working ? "Adding connector…" : props.preset.authorization.actionLabel}</button></footer>
+      </> : <>
+        <div className="connector-auth-complete"><span aria-hidden="true">✓</span><div><strong>{props.preset.label} is added</strong><p>{statusCopy}</p></div></div>
+        {props.preset.authorization.environmentVariables?.length ? <ConnectorEnvironmentVariables names={props.preset.authorization.environmentVariables} /> : null}
+        <div className="connector-auth-next"><strong>{props.preset.authorization.method === "hosted-oauth" ? "Authorization handoff" : "Finish setup"}</strong><p>{props.preset.authorization.method === "hosted-oauth" ? `Ask the agent to use ${props.preset.label}. The browser authorization window will open automatically and this card will update after the provider connects.` : "After restarting Srgical, return here and check that the connector reports Ready."}</p></div>
+        <footer><a href={props.preset.setupUrl} target="_blank" rel="noreferrer">Open setup guide</a><button className="primary" onClick={props.onClose}>Done</button></footer>
+      </>}
+    </section>
+  </div>;
+}
+
+function ConnectorEnvironmentVariables({ names }: { names: string[] }) {
+  const [copied, setCopied] = useState<string | null>(null);
+  const copy = async (name: string) => {
+    try {
+      await navigator.clipboard.writeText(name);
+      setCopied(name);
+      window.setTimeout(() => setCopied((current) => current === name ? null : current), 1500);
+    } catch {
+      setCopied(null);
+    }
+  };
+  return <div className="connector-auth-environment"><strong>Required environment {names.length === 1 ? "variable" : "variables"}</strong>{names.map((name) => <button title={`Copy ${name}`} onClick={() => void copy(name)} key={name}><code>{name}</code><span>{copied === name ? "Copied" : "Copy"}</span></button>)}</div>;
 }
 
 function ProviderOptions(props: {
@@ -798,9 +984,34 @@ function QuestionPrompt({ event, action }: { event: AgentEvent; action(request: 
   );
 }
 
-function WorktreeInspector({ snapshot }: { snapshot: StudioSnapshot }) {
+function PromptActionBar({ snapshot, action }: { snapshot: StudioSnapshot; action(request: StudioActionRequest): Promise<void> }) {
+  const [running, setRunning] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const visible = snapshot.promptActions.filter((item) => item.enabled || item.kind === "skill");
+  if (visible.length === 0) return null;
+  const run = async (actionId: string) => {
+    setRunning(actionId);
+    setError(null);
+    try {
+      await action({ type: "prompt-action-run", promptActionId: actionId });
+    } catch (reason) {
+      setError(errorText(reason));
+    } finally {
+      setRunning(null);
+    }
+  };
+  return <div className="prompt-action-bar">
+    <div><strong>{snapshot.worktreeDiagnostics.conflictCount > 0 ? `${snapshot.worktreeDiagnostics.conflictCount} conflicted file${snapshot.worktreeDiagnostics.conflictCount === 1 ? "" : "s"}` : "Quick actions"}</strong><span>Skill-backed prompts</span></div>
+    <div className="prompt-action-buttons">{visible.map((item) => <button className={item.emphasis === "warning" ? "warning" : ""} disabled={snapshot.busy || running !== null || !item.enabled} title={item.blockedReason ?? item.description} onClick={() => void run(item.actionId)} key={item.actionId}>{running === item.actionId ? "Running…" : item.label}{item.kind === "skill" ? <small>skill</small> : null}</button>)}</div>
+    {error ? <div className="inline-error">{error}</div> : null}
+  </div>;
+}
+
+function WorktreeInspector({ snapshot, action }: { snapshot: StudioSnapshot; action(request: StudioActionRequest): Promise<void> }) {
   const repositoryChat = snapshot.laneId === "current";
-  return <><InspectorTitle title={repositoryChat ? "Repository context" : "Worktree"} subtitle={snapshot.workspace} /><InfoRow label="Branch" value={snapshot.branchName ?? "detached"} /><InfoRow label="Workspace" value={repositoryChat ? "Primary checkout (protected)" : snapshot.laneId} /><InfoRow label="Session" value={snapshot.agentSession.status} /><InfoRow label="Provider session" value={snapshot.agentSession.providerSessionId?.slice(0, 12) ?? "not started"} /><div className="inspector-note"><strong>{repositoryChat ? "Conversation first" : "Isolation boundary"}</strong><p>{repositoryChat ? "This conversation can inspect and plan against the repository. Promote it to a worktree before making file changes." : "This lane owns its worktree, branch, plan, durable agent session, and effective skill hashes."}</p></div></>;
+  const diagnostics = snapshot.worktreeDiagnostics;
+  const conflictActions = snapshot.promptActions.filter((item) => item.kind === "built-in" && (item.enabled || item.actionId.includes("conflict")));
+  return <><InspectorTitle title={repositoryChat ? "Repository context" : "Worktree"} subtitle={snapshot.workspace} /><InfoRow label="Branch" value={snapshot.branchName ?? "detached"} /><InfoRow label="Workspace" value={repositoryChat ? "Primary checkout (protected)" : snapshot.laneId} /><InfoRow label="Base" value={diagnostics.baseRef ?? "not detected"} /><InfoRow label="Divergence" value={`${diagnostics.aheadCount} ahead · ${diagnostics.behindCount} behind`} /><InfoRow label="Conflicts" value={String(diagnostics.conflictCount)} /><InfoRow label="Changes" value={`${diagnostics.stagedCount} staged · ${diagnostics.unstagedCount} unstaged · ${diagnostics.untrackedCount} untracked`} /><InfoRow label="Session" value={snapshot.agentSession.status} /><InfoRow label="Provider session" value={snapshot.agentSession.providerSessionId?.slice(0, 12) ?? "not started"} />{diagnostics.conflictCount > 0 ? <div className="worktree-conflict-alert"><strong>Merge conflicts need attention</strong><p>Inspect both sides before resolving. Srgical will not reset, abort, rebase, or commit as part of the built-in flow.</p><div>{conflictActions.map((item) => <button className={item.emphasis === "warning" ? "warning" : ""} disabled={snapshot.busy || !item.enabled} title={item.blockedReason ?? item.description} onClick={() => void action({ type: "prompt-action-run", promptActionId: item.actionId })} key={item.actionId}>{item.label}</button>)}</div></div> : <div className="inspector-note"><strong>{repositoryChat ? "Conversation first" : "Isolation boundary"}</strong><p>{repositoryChat ? "This conversation can inspect and plan against the repository. Promote it to a worktree before making file changes." : "This lane owns its worktree, branch, plan, durable agent session, and effective skill hashes."}</p></div>}</>;
 }
 
 function ConnectorsInspector({ snapshot, action }: { snapshot: StudioSnapshot; action(request: StudioActionRequest): Promise<void> }) {
@@ -1047,6 +1258,29 @@ async function responseError(response: Response): Promise<string> {
   try { return ((await response.json()) as { error?: string }).error ?? `Request failed (${response.status})`; } catch { return `Request failed (${response.status})`; }
 }
 function errorText(reason: unknown): string { return reason instanceof Error ? reason.message : String(reason); }
+
+type InstallPromptEvent = Event & {
+  prompt(): Promise<void>;
+  userChoice: Promise<{ outcome: "accepted" | "dismissed"; platform: string }>;
+};
+
+function useInstallApp(): (() => Promise<void>) | null {
+  const [installPrompt, setInstallPrompt] = useState<InstallPromptEvent | null>(null);
+  useEffect(() => {
+    const capturePrompt = (event: Event) => {
+      event.preventDefault();
+      setInstallPrompt(event as InstallPromptEvent);
+    };
+    window.addEventListener("beforeinstallprompt", capturePrompt);
+    return () => window.removeEventListener("beforeinstallprompt", capturePrompt);
+  }, []);
+  if (!installPrompt) return null;
+  return async () => {
+    await installPrompt.prompt();
+    await installPrompt.userChoice;
+    setInstallPrompt(null);
+  };
+}
 
 function storeInitialMessage(token: string, message: string): void {
   window.sessionStorage.setItem(`srgical.initial-message.${token}`, message);

@@ -15,14 +15,21 @@ import { completeCliValues, renderCompletionScript } from "./core/completion";
 import { readInstalledPackageInfo } from "./core/package-info";
 import { resolveUpgradeNotice } from "./core/update-notice";
 import { runVersionCommand } from "./commands/version";
+import { launchWebStudio } from "./ui/web-studio";
 
 const program = new Command();
 const packageInfo = readInstalledPackageInfo();
 
 program
   .name("srgical")
-  .description("A polished local-first CLI for AI-assisted prepare and operate workflows.")
-  .version(packageInfo.version, "-V, --version", "Show installed version and release info.");
+  .description("A browser-first local workspace for AI-assisted repository planning and delivery.")
+  .version(packageInfo.version, "-V, --version", "Show installed version and release info.")
+  .argument("[workspace]", "Git repository to open", process.cwd())
+  .option("--port <number>", "Stable localhost port for the browser Studio", Number)
+  .option("--no-open", "Start the browser Studio without opening a browser")
+  .action(async (workspace: string, options: { open?: boolean; port?: number }) => {
+    await launchWebStudio({ workspace, port: options.port, openBrowser: options.open !== false });
+  });
 
 program.command("version").description("Show installed version and release info.").action(() => { runVersionCommand(); });
 program.command("about").description("Show package, release, and supported-agent information.").action(() => { runAboutCommand(); });
@@ -38,12 +45,12 @@ program.command("prepare").description("Open the immersive prepare flow for a na
   .option("--web", "Launch the browser-based Studio renderer")
   .option("--terminal", "Force the terminal Studio renderer")
   .option("--no-open", "Start the web Studio without opening a browser")
-  .action(async (planArg, workspaceArg, options: { plan?: string; web?: boolean; terminal?: boolean; noOpen?: boolean }) => {
+  .action(async (planArg, workspaceArg, options: { plan?: string; web?: boolean; terminal?: boolean; open?: boolean }) => {
     const planId = options.plan ?? planArg;
     await runPrepareCommand(workspaceArg, {
       planId,
       renderer: options.terminal ? "terminal" : options.web ? "web" : null,
-      openBrowser: options.noOpen ? false : true
+      openBrowser: options.open !== false
     });
   });
 
@@ -59,7 +66,7 @@ program.command("operate").description("Open the immersive operate flow or run t
   .option("--web", "Launch the browser-based Studio renderer")
   .option("--terminal", "Force the terminal Studio renderer")
   .option("--no-open", "Start the web Studio without opening a browser")
-  .action(async (planArg, workspaceArg, options: { plan?: string; dryRun?: boolean; auto?: boolean; maxSteps?: number; checkpoint?: boolean; agent?: string; web?: boolean; terminal?: boolean; noOpen?: boolean }) => {
+  .action(async (planArg, workspaceArg, options: { plan?: string; dryRun?: boolean; auto?: boolean; maxSteps?: number; checkpoint?: boolean; agent?: string; web?: boolean; terminal?: boolean; open?: boolean }) => {
     const planId = options.plan ?? planArg;
     await runOperateCommand(workspaceArg, {
       planId,
@@ -69,7 +76,7 @@ program.command("operate").description("Open the immersive operate flow or run t
       checkpoint: Boolean(options.checkpoint),
       agent: options.agent,
       renderer: options.terminal ? "terminal" : options.web ? "web" : null,
-      openBrowser: options.noOpen ? false : true
+      openBrowser: options.open !== false
     });
   });
 

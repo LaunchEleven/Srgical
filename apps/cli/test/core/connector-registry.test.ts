@@ -22,6 +22,7 @@ test("connector registry installs verified presets outside the repository", asyn
   assert.equal(snapshot.connectors[0].definition.url, "https://mcp.linear.app/mcp");
   assert.equal(snapshot.connectors[0].status, "ready");
   assert.equal(snapshot.configPath, getConnectorRegistryPath("repo-1", home));
+  assert.equal(snapshot.catalog.find((preset) => preset.presetId === "linear")?.authorization.method, "hosted-oauth");
 
   const stored = JSON.parse(await readFile(snapshot.configPath, "utf8")) as { version: number };
   assert.equal(stored.version, 1);
@@ -36,6 +37,25 @@ test("connector catalog includes the hosted Notion OAuth service", async () => {
   assert.equal(notion?.definition.transport, "http");
   assert.equal(notion?.definition.url, "https://mcp.notion.com/mcp");
   assert.equal(notion?.status, "ready");
+});
+
+test("connector catalog includes GitHub's official hosted MCP server", async () => {
+  const home = await createTempHome();
+  await installConnectorPreset("repo-github", "github", home);
+
+  const missing = await loadConnectorRegistry("repo-github", { homeDir: home, env: {} });
+  const github = missing.connectors.find((connector) => connector.presetId === "github");
+  assert.equal(github?.definition.transport, "http");
+  assert.equal(github?.definition.url, "https://api.githubcopilot.com/mcp/");
+  assert.deepEqual(github?.missingEnvironmentVariables, ["GITHUB_PERSONAL_ACCESS_TOKEN"]);
+  const githubPreset = missing.catalog.find((preset) => preset.presetId === "github");
+  assert.equal(githubPreset?.authorization.method, "personal-token");
+  assert.deepEqual(githubPreset?.authorization.environmentVariables, ["GITHUB_PERSONAL_ACCESS_TOKEN"]);
+  assert.equal(githubPreset?.setupUrl, "https://github.com/settings/personal-access-tokens/new");
+
+  const ready = await loadConnectorRegistry("repo-github", { homeDir: home, env: { GITHUB_PERSONAL_ACCESS_TOKEN: "test-token" } });
+  const resolved = resolveConnectorRegistry(ready, { GITHUB_PERSONAL_ACCESS_TOKEN: "test-token" });
+  assert.equal(resolved.servers.github.headers?.Authorization, "Bearer test-token");
 });
 
 test("connector registry resolves environment references without persisting resolved secrets", async () => {

@@ -18,6 +18,15 @@ export type McpServerDefinition = {
   alwaysLoad?: boolean;
 };
 
+export type ConnectorAuthMethod = "hosted-oauth" | "personal-token" | "oauth-client";
+
+export type ConnectorAuthorizationGuide = {
+  method: ConnectorAuthMethod;
+  actionLabel: string;
+  steps: string[];
+  environmentVariables?: string[];
+};
+
 export type ConnectorPreset = {
   presetId: string;
   label: string;
@@ -25,6 +34,7 @@ export type ConnectorPreset = {
   category: string;
   authDescription: string;
   setupUrl: string;
+  authorization: ConnectorAuthorizationGuide;
   definition: McpServerDefinition;
 };
 

@@ -35,12 +35,44 @@ export type ResolvedConnectorRegistry = {
 
 export const CONNECTOR_CATALOG: ConnectorPreset[] = [
   {
+    presetId: "github",
+    label: "GitHub",
+    description: "Browse repositories and code, manage issues and pull requests, and inspect Actions workflows.",
+    category: "Source control",
+    authDescription: "Set GITHUB_PERSONAL_ACCESS_TOKEN to a least-privilege GitHub token. OAuth can be added later when Srgical has its own registered GitHub App.",
+    setupUrl: "https://github.com/settings/personal-access-tokens/new",
+    authorization: {
+      method: "personal-token",
+      actionLabel: "Create GitHub token",
+      environmentVariables: ["GITHUB_PERSONAL_ACCESS_TOKEN"],
+      steps: [
+        "Create a fine-grained token in GitHub with access only to the repositories this workspace needs.",
+        "Expose the token to Srgical as GITHUB_PERSONAL_ACCESS_TOKEN, then restart Srgical.",
+        "Return to Settings to confirm the connector reports Ready."
+      ]
+    },
+    definition: {
+      transport: "http",
+      url: "https://api.githubcopilot.com/mcp/",
+      headers: { Authorization: "Bearer ${GITHUB_PERSONAL_ACCESS_TOKEN}" }
+    }
+  },
+  {
     presetId: "linear",
     label: "Linear",
     description: "Search, create, and update Linear issues, projects, and comments.",
     category: "Project management",
     authDescription: "OAuth opens when Claude first connects. Linear also accepts a bearer token via a custom configuration.",
     setupUrl: "https://linear.app/docs/mcp",
+    authorization: {
+      method: "hosted-oauth",
+      actionLabel: "Continue with Linear",
+      steps: [
+        "Add Linear's hosted MCP endpoint to this repository.",
+        "Your selected agent provider opens Linear's secure OAuth consent screen when it first connects.",
+        "Approve the workspace and permissions in Linear, then return to Srgical."
+      ]
+    },
     definition: { transport: "http", url: "https://mcp.linear.app/mcp" }
   },
   {
@@ -50,6 +82,15 @@ export const CONNECTOR_CATALOG: ConnectorPreset[] = [
     category: "Communication",
     authDescription: "Requires workspace approval and Slack OAuth. A browser window opens when Claude first connects.",
     setupUrl: "https://docs.slack.dev/ai/slack-mcp-server/connect-to-claude/",
+    authorization: {
+      method: "hosted-oauth",
+      actionLabel: "Continue with Slack",
+      steps: [
+        "Add Slack's hosted MCP endpoint to this repository.",
+        "Your selected agent provider opens Slack OAuth when it first connects.",
+        "Choose an approved workspace and review the requested access in Slack."
+      ]
+    },
     definition: {
       transport: "http",
       url: "https://mcp.slack.com/mcp",
@@ -63,6 +104,15 @@ export const CONNECTOR_CATALOG: ConnectorPreset[] = [
     category: "Files and knowledge",
     authDescription: "Uses Notion's hosted OAuth flow. Authentication opens when the selected agent first connects.",
     setupUrl: "https://developers.notion.com/guides/mcp/get-started-with-mcp",
+    authorization: {
+      method: "hosted-oauth",
+      actionLabel: "Continue with Notion",
+      steps: [
+        "Add Notion's hosted MCP endpoint to this repository.",
+        "Your selected agent provider opens Notion's secure OAuth consent screen when it first connects.",
+        "Choose the workspace and pages to share, then return to Srgical."
+      ]
+    },
     definition: { transport: "http", url: "https://mcp.notion.com/mcp" }
   },
   {
@@ -72,6 +122,16 @@ export const CONNECTOR_CATALOG: ConnectorPreset[] = [
     category: "Files and knowledge",
     authDescription: "Developer Preview. Set GOOGLE_DRIVE_MCP_CLIENT_ID and GOOGLE_DRIVE_MCP_CLIENT_SECRET after configuring Google OAuth.",
     setupUrl: "https://developers.google.com/workspace/drive/api/guides/configure-mcp-server",
+    authorization: {
+      method: "oauth-client",
+      actionLabel: "Configure Google OAuth",
+      environmentVariables: ["GOOGLE_DRIVE_MCP_CLIENT_ID", "GOOGLE_DRIVE_MCP_CLIENT_SECRET"],
+      steps: [
+        "Configure the Google Drive MCP server and OAuth consent screen in Google Cloud.",
+        "Expose the client ID and client secret to Srgical, then restart Srgical.",
+        "Your selected agent provider completes Google consent when it first connects."
+      ]
+    },
     definition: {
       transport: "http",
       url: "https://drivemcp.googleapis.com/mcp/v1",
@@ -331,7 +391,17 @@ function mapValues(values: Record<string, string> | undefined, map: (value: stri
 }
 
 function clonePreset(preset: ConnectorPreset): ConnectorPreset {
-  return { ...preset, definition: cloneDefinition(preset.definition) };
+  return {
+    ...preset,
+    authorization: {
+      ...preset.authorization,
+      steps: [...preset.authorization.steps],
+      environmentVariables: preset.authorization.environmentVariables
+        ? [...preset.authorization.environmentVariables]
+        : undefined
+    },
+    definition: cloneDefinition(preset.definition)
+  };
 }
 
 function cloneDefinition(definition: McpServerDefinition): McpServerDefinition {

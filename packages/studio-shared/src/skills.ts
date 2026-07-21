@@ -20,12 +20,24 @@ export type SkillRecord = {
   warnings: string[];
 };
 
+export type SkillPromptAction = {
+  actionId: string;
+  label: string;
+  description: string;
+  prompt: string;
+  skillId: string;
+  skillSource: string | null;
+  available: boolean;
+  blockedReason: string | null;
+};
+
 export type SkillRegistrySnapshot = {
   globalSkillsDirectory: string;
   discoveredDirectories: string[];
   configuredDirectories: string[];
   skills: SkillRecord[];
   effectiveSkillHashes: string[];
+  promptActions: SkillPromptAction[];
   conflicts: Array<{
     skillId: string;
     sources: string[];

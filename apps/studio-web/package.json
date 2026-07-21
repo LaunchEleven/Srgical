@@ -3,6 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "scripts": {
+    "prebuild": "node scripts/generate-pwa-icons.mjs",
     "build": "vite build"
   },
   "dependencies": {

@@ -2,6 +2,7 @@ export * from "./agent-events";
 export * from "./skills";
 export * from "./finish-work";
 export * from "./connectors";
+export * from "./prompt-actions";
 
 export type StudioMode = "prepare" | "operate";
 

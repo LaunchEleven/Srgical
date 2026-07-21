@@ -7,7 +7,7 @@ import { promisify } from "node:util";
 import test from "node:test";
 import { AgentSessionStore, deriveRepositoryId } from "@srgical/agent-runtime";
 import { createWorktreeLane, setWorktreeLaneDeleteLock } from "../../src/core/worktree-lanes";
-import { createConversationPlanId, createWebStudioHost, deriveConversationPlanLabel } from "../../src/ui/web-studio";
+import { createConversationPlanId, createWebStudioHost, deriveConversationPlanLabel, resolveStudioPort } from "../../src/ui/web-studio";
 import { createTempWorkspace } from "../helpers/workspace";
 
 const execFileAsync = promisify(execFile);
@@ -36,7 +36,7 @@ test("web host finishes a lane by archiving sessions before safely removing its 
     branchName: created.lane.branchName,
     startingCommit: created.lane.mergeBase
   });
-  const host = await createWebStudioHost({ workspace: repo, agentSessionStore: store, openBrowser: false });
+  const host = await createWebStudioHost({ workspace: repo, agentSessionStore: store, repositoryHistoryHomeDir: sessionHome, openBrowser: false });
   t.after(() => host.close());
 
   const assessment = await host.assessFinish(created.lane.laneId);
@@ -65,10 +65,11 @@ test("web host finishes a lane by archiving sessions before safely removing its 
 
 test("web host starts a repository conversation and promotes it to a worktree", async (t) => {
   const repo = await initGitRepo();
+  const otherRepo = await initGitRepo();
   const sessionHome = await mkdtemp(path.join(os.tmpdir(), "srgical-conversation-sessions-"));
   t.after(() => rm(sessionHome, { recursive: true, force: true }));
   const store = new AgentSessionStore({ homeDir: sessionHome });
-  const host = await createWebStudioHost({ workspace: repo, agentSessionStore: store, openBrowser: false });
+  const host = await createWebStudioHost({ workspace: repo, agentSessionStore: store, repositoryHistoryHomeDir: sessionHome, openBrowser: false });
   t.after(() => host.close());
 
   const opened = await host.startConversation({
@@ -91,11 +92,23 @@ test("web host starts a repository conversation and promotes it to a worktree", 
 
   await setWorktreeLaneDeleteLock(repo, promoted.laneId, false);
   await host.removeLane(promoted.laneId);
+
+  const switched = await host.selectRepository(otherRepo);
+  assert.equal(path.resolve(switched.repoRoot), path.resolve(otherRepo));
+  assert.deepEqual(switched.repositories.map((entry) => path.resolve(entry.path)), [path.resolve(otherRepo), path.resolve(repo)]);
+  assert.equal(switched.repositories.filter((entry) => entry.selected).length, 1);
 });
 
 test("internal plan ids are derived without turning the first prompt into a chat title", () => {
   assert.equal(deriveConversationPlanLabel("  Investigate the flaky test\nThen propose a fix  "), "Investigate the flaky test");
   assert.match(createConversationPlanId("Investigate the flaky test"), /^investigate-the-flaky-test-[a-f0-9]{6}$/);
+});
+
+test("browser Studio uses a stable installable-app origin unless its port is overridden", () => {
+  assert.equal(resolveStudioPort(undefined, undefined), 43111);
+  assert.equal(resolveStudioPort(undefined, "44000"), 44000);
+  assert.equal(resolveStudioPort(0, "44000"), 0);
+  assert.throws(() => resolveStudioPort(undefined, "not-a-port"), /integer between 0 and 65535/);
 });
 
 async function initGitRepo(): Promise<string> {

@@ -24,8 +24,12 @@ npm install -g @launch11/srgical
 After install:
 
 ```bash
-srgical about
+srgical
 ```
+
+Running `srgical` opens the browser-first Studio for the current Git repository. Pass another repository path directly, or use **Switch repository** in the Studio to choose from recent repositories. Without a global install, use `npx @launch11/srgical`.
+
+Chrome and other compatible browsers can install the local Studio as a standalone app from the **Install app** action. Srgical uses stable local origin `http://127.0.0.1:43111` by default so the installed app can reconnect on later runs. The local `srgical` process still provides the repository and agent backend while the app is open; set `SRGICAL_STUDIO_PORT` or pass `--port` if that port is unavailable.
 
 ## Quick Start
 
@@ -83,6 +87,8 @@ Use **Finish Work** on a lane for post-operation cleanup. Studio assesses active
 
 Each lane maps one worktree and branch to one plan, a set of durable sessions, and an effective skill set. Studio reports dirty/conflict counts, ahead/behind state, stale or prunable worktrees, locks, and a recommended safe next action.
 
+The browser Studio also turns live Git diagnostics into safe prompt tools. **Inspect conflicts** explains every unmerged path without changing Git state, **Resolve conflicts** is enabled only in an isolated conflicted worktree, **Update from base** performs a merge-oriented update without history rewriting, and **Integration check** reviews readiness before a lane is combined. These are agent prompts with explicit safety boundaries—not hidden shell scripts—and they never commit, push, reset, abort, or remove a worktree automatically.
+
 The global skills directory is created automatically at `~/.srgical/skills`. Studio also discovers:
 
 - `.srgical/skills`
@@ -94,9 +100,11 @@ The global skills directory is created automatically at `~/.srgical/skills`. Stu
 
 Skills are hashed with their supporting files and tracked by source, scope, trust, compatibility, precedence, and conflicts. They can be enabled, disabled, trusted, reviewed, or blocked per repository.
 
+Effective skills can also become custom buttons. In Studio **Settings → Prompt buttons**, choose a skill, give the button a short label, and define the task prompt. The resulting action appears beside the chat composer, resolves the current effective skill at click time, and asks the agent to read its complete `SKILL.md` before acting. Button configuration is repository-scoped under `~/.srgical/repos/<repo-id>/skills.json`; blocked or disabled skills make their buttons unavailable.
+
 ## Connectors and MCP servers
 
-Studio Settings includes guided connection cards for Slack, Linear, and Notion. Installing a card adds the official hosted MCP endpoint to the repository; its OAuth flow opens when the selected native Codex or Claude provider first connects. The advanced **MCP** inspector also includes Google Drive, custom Streamable HTTP, SSE, and local stdio servers. Existing Claude-style JSON can be imported directly:
+Studio Settings includes guided connection cards for GitHub, Linear, Slack, Notion, and Google Drive. **Connect** opens a service-specific walkthrough, hands off to the official setup page, and clearly separates hosted OAuth from token or OAuth-client configuration. Installing a hosted connector adds its official MCP endpoint to the repository; its secure consent flow opens when the selected native Codex or Claude provider first connects. The advanced **MCP** inspector also supports custom Streamable HTTP, SSE, and local stdio servers. Existing Claude-style JSON can be imported directly:
 
 ```json
 {

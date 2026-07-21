@@ -56,6 +56,7 @@ import {
 } from "../../../apps/cli/src/core/studio-ui-config";
 import { unblockTrackerStep } from "../../../apps/cli/src/core/tracker-unblock";
 import { getPlanningPackPaths, readText, resolvePlanId, resolveWorkspace, saveActivePlanId } from "../../../apps/cli/src/core/workspace";
+import { getGitWorktreeDiagnostics, type GitWorktreeDiagnostics } from "../../../apps/cli/src/core/git-worktree";
 import { getWorkspaceBranchName } from "../../../apps/cli/src/core/worktree-lanes";
 import {
   addReferenceRoot,
@@ -66,7 +67,7 @@ import {
   saveSelectedReferenceIds,
   toggleReferenceSelection
 } from "../../../apps/cli/src/core/reference-library";
-import { getStudioTheme, type AgentEventDraft, type AgentSessionRecord, type StudioAuthOptionStatus, type StudioMode } from "@srgical/studio-shared";
+import { getStudioTheme, type AgentEventDraft, type AgentSessionRecord, type PromptActionRecord, type SkillPromptAction, type StudioAuthOptionStatus, type StudioMode } from "@srgical/studio-shared";
 import {
   importMcpJson,
   installConnectorPreset,
@@ -80,7 +81,9 @@ import {
   addSkillDirectory,
   discoverSkills,
   removeSkillDirectory,
-  setSkillOverride
+  removeSkillPromptAction,
+  setSkillOverride,
+  upsertSkillPromptAction
 } from "@srgical/skill-registry";
 import {
   delayStudioStream,
@@ -231,6 +234,7 @@ export async function createStudioController(options: StudioControllerOptions = 
   let unsubscribeAgentEvents: () => void = () => undefined;
   let uiConfig = await loadStudioUiConfig(workspace, { planId });
   let branchName = await getWorkspaceBranchName(workspace).catch(() => null);
+  let worktreeDiagnostics = await loadWorktreeDiagnostics(workspace);
   let prepareClarity = await loadPrepareClarityView(workspace, planId, state, messages);
   let references = await loadReferenceView(workspace, planId, state, messages);
   let busy = false;
@@ -266,6 +270,8 @@ export async function createStudioController(options: StudioControllerOptions = 
     prepareClarity,
     references,
     skills,
+    promptActions: buildWorktreePromptActions(options.laneId ?? "current", worktreeDiagnostics, skills.promptActions),
+    worktreeDiagnostics,
     connectors,
     footerText:
       busy
@@ -340,6 +346,7 @@ export async function createStudioController(options: StudioControllerOptions = 
     });
     agentSessions = await listLaneSessions(agentSessionStore, repoId, workspace, options.laneId ?? "current", activeProviderStatus.providerId);
     branchName = await getWorkspaceBranchName(workspace).catch(() => branchName);
+    worktreeDiagnostics = await loadWorktreeDiagnostics(workspace);
     prepareClarity = await loadPrepareClarityView(workspace, planId, state, messages);
     references = await loadReferenceView(workspace, planId, state, messages);
     publishSnapshot();
@@ -1185,6 +1192,71 @@ export async function createStudioController(options: StudioControllerOptions = 
     }
   };
 
+  const runPromptAction = async (actionId: string) => {
+    if (busy) throw new Error("Wait for the active agent turn to finish before running another action.");
+    const action = buildWorktreePromptActions(options.laneId ?? "current", worktreeDiagnostics, skills.promptActions)
+      .find((item) => item.actionId === actionId);
+    if (!action) throw new Error(`Unknown prompt action: ${actionId}`);
+    if (!action.enabled) throw new Error(action.blockedReason ?? `${action.label} is not available right now.`);
+    const skill = action.skillId
+      ? skills.skills.find((item) => item.id === action.skillId && item.effective)
+      : null;
+    if (action.skillId && !skill) throw new Error(`Enable a non-blocked \`${action.skillId}\` skill before running this action.`);
+    const prompt = [
+      `You are running the Srgical action: ${action.label}.`,
+      action.description,
+      skill ? `Use the \`${skill.name}\` skill. Read and follow its complete instructions at: ${skill.manifestPath}` : null,
+      "",
+      "Task:",
+      action.prompt,
+      "",
+      action.permissionMode === "plan"
+        ? "This is an inspection-only action. Do not modify files, the index, commits, branches, or worktree metadata."
+        : "Work only in the current isolated worktree. Do not reset, abort, rebase, commit, push, remove a worktree, or discard either side of a conflict unless the user explicitly asks."
+    ].filter((line): line is string => line !== null).join("\n");
+    setBusyState(true, `${action.label.toLowerCase()}...`);
+    let liveReply: LiveStudioMessage | null = null;
+    try {
+      if (agentSession.lifecycle === "archived") {
+        agentSession = await agentSessionStore.setArchived(repoId, agentSession.sessionId, false);
+      }
+      const visibleRequest = `Run action: ${action.label}${skill ? ` · ${skill.name}` : ""}`;
+      await push({ role: "user", content: visibleRequest });
+      const userMessageId = randomUUID();
+      await agentSessionStore.append(repoId, agentSession.sessionId, {
+        kind: "message.started",
+        payload: { messageId: userMessageId, role: "user" }
+      });
+      await agentSessionStore.append(repoId, agentSession.sessionId, {
+        kind: "message.completed",
+        payload: { messageId: userMessageId, text: visibleRequest }
+      });
+      const activeLiveReply = (liveReply = startLiveMessage("assistant"));
+      if (nativeProviderEnabled) {
+        const completedText = await runNativeProviderTurn(prompt, activeLiveReply, action.permissionMode);
+        await activeLiveReply.finalize(completedText);
+      } else if (action.permissionMode === "acceptEdits") {
+        const result = await runNextPrompt(workspace, prompt, {
+          planId,
+          onOutputChunk: (chunk) => activeLiveReply.append(chunk)
+        });
+        await activeLiveReply.finalize(result.trim());
+      } else {
+        const reply = await requestPlanner(workspace, [...messages, { role: "user", content: prompt }], {
+          planId,
+          onOutputChunk: (chunk) => activeLiveReply.append(chunk)
+        });
+        await activeLiveReply.finalize(reply.trim());
+      }
+      await refresh();
+    } catch (error) {
+      await liveReply?.discard();
+      await system(`${action.label} failed: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setBusyState(false);
+    }
+  };
+
   const dispatch = async (request: StudioActionRequest) => {
     emit({
       type: "action",
@@ -1339,6 +1411,28 @@ export async function createStudioController(options: StudioControllerOptions = 
         case "skill-directory-remove":
           if (!request.directoryPath?.trim()) throw new Error("A skills directory is required.");
           await removeSkillDirectory(repoId, request.directoryPath);
+          await refresh();
+          break;
+        case "prompt-action-run":
+          if (!request.promptActionId) throw new Error("A prompt action is required.");
+          await runPromptAction(request.promptActionId);
+          break;
+        case "prompt-action-upsert":
+          if (!request.promptActionLabel?.trim() || !request.promptActionPrompt?.trim() || !request.promptActionSkillId?.trim()) {
+            throw new Error("A button label, skill, and prompt are required.");
+          }
+          await upsertSkillPromptAction(repoId, {
+            actionId: request.promptActionId,
+            label: request.promptActionLabel,
+            description: request.promptActionDescription,
+            prompt: request.promptActionPrompt,
+            skillId: request.promptActionSkillId
+          });
+          await refresh();
+          break;
+        case "prompt-action-remove":
+          if (!request.promptActionId) throw new Error("A prompt action is required.");
+          await removeSkillPromptAction(repoId, request.promptActionId);
           await refresh();
           break;
         case "connector-install":
@@ -1541,6 +1635,103 @@ function isStudioStartMessage(message: ChatMessage): boolean {
   return STUDIO_START_MESSAGE_PREFIXES.some((prefix) => message.content.startsWith(prefix));
 }
 
+async function loadWorktreeDiagnostics(workspace: string): Promise<GitWorktreeDiagnostics> {
+  return getGitWorktreeDiagnostics(workspace).catch(() => ({
+    baseRef: null,
+    mergeBase: null,
+    aheadCount: 0,
+    behindCount: 0,
+    stagedCount: 0,
+    unstagedCount: 0,
+    untrackedCount: 0,
+    conflictCount: 0
+  }));
+}
+
+export function buildWorktreePromptActions(
+  laneId: string,
+  diagnostics: GitWorktreeDiagnostics,
+  skillActions: SkillPromptAction[]
+): PromptActionRecord[] {
+  const isolated = laneId !== "current";
+  const conflicts = diagnostics.conflictCount;
+  const baseLabel = diagnostics.baseRef ?? "the base branch";
+  const builtIns: PromptActionRecord[] = [
+    {
+      actionId: "builtin-inspect-conflicts",
+      kind: "built-in",
+      label: "Inspect conflicts",
+      description: "Explain every unmerged file and the intent on both sides before anything is edited.",
+      prompt: "Inspect the current Git conflict state. List every unmerged path, examine the base/ours/theirs stages where available, explain the competing intent, identify generated or lock files, and propose a safe resolution order. Do not edit or stage anything.",
+      skillId: null,
+      skillSource: null,
+      permissionMode: "plan",
+      enabled: conflicts > 0,
+      blockedReason: conflicts > 0 ? null : "No unresolved Git conflicts were detected.",
+      emphasis: conflicts > 0 ? "warning" : "normal"
+    },
+    {
+      actionId: "builtin-resolve-conflicts",
+      kind: "built-in",
+      label: "Resolve conflicts",
+      description: "Resolve the current worktree's conflicts conservatively and verify the result without committing.",
+      prompt: "Resolve every current Git conflict conservatively. Inspect base, ours, and theirs before editing; preserve compatible intent from both sides; regenerate derived files only with the repository's normal tooling; remove all conflict markers; run focused validation; and stage only files whose conflicts are fully resolved. Stop and explain any ambiguous product decision instead of guessing. Do not commit.",
+      skillId: null,
+      skillSource: null,
+      permissionMode: "acceptEdits",
+      enabled: isolated && conflicts > 0,
+      blockedReason: !isolated ? "Conflict resolution requires an isolated worktree." : conflicts === 0 ? "No unresolved Git conflicts were detected." : null,
+      emphasis: "warning"
+    },
+    {
+      actionId: "builtin-update-from-base",
+      kind: "built-in",
+      label: `Update from ${baseLabel}`,
+      description: "Merge the local base branch into this worktree and handle resulting conflicts without rewriting history.",
+      prompt: `Update this isolated worktree from the local base ref \`${baseLabel}\`. First inspect status and divergence. If the tree is safe to update, merge the base ref without rebasing or rewriting history, resolve any resulting conflicts conservatively, and run focused validation. Do not fetch, commit, push, reset, or discard local changes. If pre-existing changes make the merge unsafe, stop and explain the exact preparation needed.`,
+      skillId: null,
+      skillSource: null,
+      permissionMode: "acceptEdits",
+      enabled: isolated && conflicts === 0 && diagnostics.behindCount > 0 && Boolean(diagnostics.baseRef),
+      blockedReason: !isolated
+        ? "Updating from base requires an isolated worktree."
+        : conflicts > 0
+          ? "Resolve existing conflicts before updating from base."
+          : diagnostics.behindCount === 0
+            ? "This worktree is not behind its local base ref."
+            : diagnostics.baseRef ? null : "No local base ref could be detected.",
+      emphasis: "normal"
+    },
+    {
+      actionId: "builtin-integration-check",
+      kind: "built-in",
+      label: "Integration check",
+      description: "Review divergence, dirty state, conflict risk, and validation before this lane is integrated.",
+      prompt: `Assess whether this worktree is ready to integrate into \`${baseLabel}\`. Inspect Git status, divergence, changed files, likely overlap hotspots, and relevant test coverage. Report blockers and a safe integration sequence. Do not modify files or Git state.`,
+      skillId: null,
+      skillSource: null,
+      permissionMode: "plan",
+      enabled: isolated,
+      blockedReason: isolated ? null : "Integration checks apply to isolated worktrees.",
+      emphasis: "normal"
+    }
+  ];
+  const custom: PromptActionRecord[] = skillActions.map((action) => ({
+    actionId: `skill-${action.actionId}`,
+    kind: "skill",
+    label: action.label,
+    description: action.description,
+    prompt: action.prompt,
+    skillId: action.skillId,
+    skillSource: action.skillSource,
+    permissionMode: isolated ? "acceptEdits" : "plan",
+    enabled: action.available,
+    blockedReason: action.blockedReason,
+    emphasis: "normal"
+  }));
+  return [...builtIns, ...custom];
+}
+
 function buildActionStates(mode: StudioMode, state: PlanningPackState): Record<StudioActionId, { enabled: boolean; blockedReason: string | null }> {
   const prepareOnly = mode === "prepare";
   const runReady = hasQueuedNextStep(state.currentPosition.nextRecommended) && state.approvalStatus === "approved";
@@ -1598,6 +1789,9 @@ function buildActionStates(mode: StudioMode, state: PlanningPackState): Record<S
     "skill-trust": { enabled: true, blockedReason: null },
     "skill-directory-add": { enabled: true, blockedReason: null },
     "skill-directory-remove": { enabled: true, blockedReason: null },
+    "prompt-action-run": { enabled: true, blockedReason: null },
+    "prompt-action-upsert": { enabled: true, blockedReason: null },
+    "prompt-action-remove": { enabled: true, blockedReason: null },
     "connector-install": { enabled: true, blockedReason: null },
     "connector-upsert": { enabled: true, blockedReason: null },
     "connector-import": { enabled: true, blockedReason: null },

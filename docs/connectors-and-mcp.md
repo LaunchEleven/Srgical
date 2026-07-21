@@ -18,7 +18,9 @@ That location keeps a branch or untrusted checkout from silently enabling a conn
 - Per-server timeout and always-load behavior
 - Claude-style `{ "mcpServers": { ... } }` JSON import
 
-The built-in catalog currently includes Linear, Slack, and Google Drive using their official hosted endpoints. The catalog is only a convenience layer; any compatible MCP can be added through the custom form or JSON import.
+The built-in catalog currently includes GitHub, Linear, Slack, Notion, and Google Drive using their official hosted endpoints. GitHub uses `GITHUB_PERSONAL_ACCESS_TOKEN` because the remote GitHub MCP server requires its host application to obtain an access token; Srgical does not yet ship a registered GitHub OAuth App. The catalog is only a convenience layer; any compatible MCP can be added through the custom form or JSON import.
+
+The browser Settings page presents every catalog service as a connection card. Selecting **Connect** opens a guided review of the authorization method and next steps, continues to the service's official setup page, and returns to a completion state. Hosted OAuth credentials remain in the selected agent provider's credential store. Token and OAuth-client flows show the exact required environment variable names without asking the browser to retain the secret.
 
 ## Secrets and environment references
 

@@ -7,7 +7,9 @@ import {
   addSkillDirectory,
   discoverSkills,
   parseSkillFrontmatter,
-  setSkillOverride
+  removeSkillPromptAction,
+  setSkillOverride,
+  upsertSkillPromptAction
 } from "@srgical/skill-registry";
 
 test("skill registry creates the global directory and resolves project precedence", async (t) => {
@@ -54,6 +56,35 @@ test("skill registry persists directory, enablement, and trust management per re
   const updated = await discoverSkills(workspace, { homeDir, repoId: "repo-1" });
   assert.equal(updated.skills.find((skill) => skill.id === "deploy")?.effective, false);
   assert.equal(updated.skills.find((skill) => skill.id === "deploy")?.trust, "blocked");
+});
+
+test("skill prompt buttons resolve only against effective skills", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "srgical-skill-actions-"));
+  const homeDir = path.join(root, "home");
+  const workspace = path.join(root, "repo");
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await writeSkill(path.join(workspace, ".srgical", "skills", "conflict-review"), "Conflict Review", "Review conflict intent");
+
+  const actionId = await upsertSkillPromptAction("repo-actions", {
+    label: "Review conflict intent",
+    prompt: "Compare both sides and explain the intended behavior.",
+    skillId: "conflict-review"
+  }, homeDir);
+  assert.equal(actionId, "review-conflict-intent");
+
+  const ready = await discoverSkills(workspace, { homeDir, repoId: "repo-actions" });
+  assert.equal(ready.promptActions[0]?.available, true);
+  assert.match(ready.promptActions[0]?.skillSource ?? "", /SKILL\.md$/);
+
+  const skill = ready.skills.find((item) => item.id === "conflict-review" && item.effective)!;
+  await setSkillOverride("repo-actions", skill.source, { enabled: false }, homeDir);
+  const blocked = await discoverSkills(workspace, { homeDir, repoId: "repo-actions" });
+  assert.equal(blocked.promptActions[0]?.available, false);
+  assert.match(blocked.promptActions[0]?.blockedReason ?? "", /Enable a non-blocked/);
+
+  await removeSkillPromptAction("repo-actions", actionId, homeDir);
+  const removed = await discoverSkills(workspace, { homeDir, repoId: "repo-actions" });
+  assert.deepEqual(removed.promptActions, []);
 });
 
 async function writeSkill(directory: string, name: string, description: string): Promise<void> {
