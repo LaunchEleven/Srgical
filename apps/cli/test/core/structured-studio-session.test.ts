@@ -6,6 +6,7 @@ import test from "node:test";
 import { AgentSessionStore, deriveRepositoryId } from "@srgical/agent-runtime";
 import { createStudioController } from "../../../../packages/studio-core/src/controller";
 import type { AgentAdapter } from "../../src/core/agent";
+import { loadStudioSession, saveStudioSession } from "../../src/core/studio-session";
 import { createTempWorkspace } from "../helpers/workspace";
 
 test("studio reopens the same structured session and replays its event history", async (t) => {
@@ -39,6 +40,8 @@ test("studio reopens the same structured session and replays its event history",
     refreshAdvice,
     agentProvider: unavailableNativeProvider
   });
+  await first.start();
+  assert.equal(countStudioStartMessages(first.getSnapshot().messages), 1);
   const sessionId = first.getSnapshot().agentSession.sessionId;
   await first.submitInput("Build the session kernel");
   await first.dispatch({ type: "session-rename", title: "Kernel conversation" });
@@ -47,7 +50,11 @@ test("studio reopens the same structured session and replays its event history",
   assert.equal(first.getSnapshot().agentSessions.length, 2);
   assert.equal(first.getSnapshot().agentSession.title, "Second conversation");
   await first.dispatch({ type: "session-switch", sessionId });
+  const persistedMessages = first.getSnapshot().messages;
+  const startMessage = persistedMessages.find((message) => countStudioStartMessages([message]) === 1);
+  assert.ok(startMessage);
   await first.close();
+  await saveStudioSession(workspace, [...persistedMessages, startMessage, startMessage], { planId: "native-studio" });
 
   const reopened = await createStudioController({
     workspace,
@@ -59,7 +66,10 @@ test("studio reopens the same structured session and replays its event history",
     refreshAdvice,
     agentProvider: unavailableNativeProvider
   });
+  await reopened.start();
   assert.equal(reopened.getSnapshot().agentSession.sessionId, sessionId);
+  assert.equal(countStudioStartMessages(reopened.getSnapshot().messages), 1);
+  assert.equal(countStudioStartMessages(await loadStudioSession(workspace, { planId: "native-studio" })), 1);
   assert.equal(reopened.getSnapshot().recentAgentEvents.length, 8);
   const events = await store.readEvents(deriveRepositoryId(workspace), sessionId);
   assert.deepEqual(events.map((event) => event.kind), [
@@ -76,6 +86,13 @@ test("studio reopens the same structured session and replays its event history",
   assert.equal(events[6]?.kind === "message.completed" ? events[6].payload.text : null, "Structured reply");
   await reopened.close();
 });
+
+function countStudioStartMessages(messages: Array<{ role: string; content: string }>): number {
+  return messages.filter((message) =>
+    message.role === "system"
+    && message.content.startsWith("Repository conversation is active against the primary checkout.")
+  ).length;
+}
 
 function createStreamingTestAdapter(): AgentAdapter {
   return {

@@ -112,6 +112,12 @@ import type {
 
 const GATHER_SOURCE_LIMIT = 6000;
 
+const STUDIO_START_MESSAGE_PREFIXES = [
+  "Repository conversation is active against the primary checkout.",
+  "Prepare mode gathers context, keeps `context.md` current, builds the draft,",
+  "Operate mode is execution-only."
+] as const;
+
 type LiveStudioMessage = {
   append(chunk: string): void;
   finalize(content: string): Promise<void>;
@@ -152,7 +158,9 @@ export async function createStudioController(options: StudioControllerOptions = 
     await ensurePreparePack(workspace, { planId });
   }
 
-  let messages = await loadStudioSession(workspace, { planId });
+  const storedMessages = await loadStudioSession(workspace, { planId });
+  const compactedMessages = compactStudioStartMessages(storedMessages);
+  let messages = compactedMessages.messages;
   let state = await readPlanningPackState(workspace, { planId });
   let agent = await resolveAgent(workspace, { planId });
   let settings = await loadStudioSettings();
@@ -1469,11 +1477,14 @@ export async function createStudioController(options: StudioControllerOptions = 
         return;
       }
       started = true;
-      await system(
-        `${(options.laneId ?? "current") === "current" ? "Repository conversation is active against the primary checkout. Use it to inspect, discuss, and plan; create a worktree before changing files.\n\n" : ""}${mode === "prepare"
-          ? `Prepare mode gathers context, keeps \`context.md\` current, builds the draft, slices it into steps, and gets the plan ready to operate.\nType normal text to chat with the planner.\nUse \`:\` to run a studio command such as \`:import <path>\`, \`:context\`, \`:build\`, \`:slice --help\`, or \`:operate\`.\nStage: ${state.mode}\nNext action: ${state.nextAction}`
-          : `Operate mode is execution-only.\nUse \`:\` to run studio commands such as \`:run\`, \`:auto 3\`, \`:checkpoint\`, or \`:prepare\`.\nStage: ${state.mode}\nNext action: ${state.nextAction}`}`
-      );
+      const startMessage = buildStudioStartMessage(options.laneId ?? "current", mode, state);
+      const existingStartMessageIndex = messages.findIndex(isStudioStartMessage);
+      if (existingStartMessageIndex < 0) {
+        await system(startMessage);
+      } else if (compactedMessages.removed > 0 || messages[existingStartMessageIndex]?.content !== startMessage) {
+        messages[existingStartMessageIndex] = { role: "system", content: startMessage };
+        await persistMessages();
+      }
       await refresh();
       if (mode === "prepare" && options.autoGatherOnStart !== false) {
         await autoGather("boot");
@@ -1502,6 +1513,32 @@ export async function createStudioController(options: StudioControllerOptions = 
     submitInput,
     dispatch
   };
+}
+
+function buildStudioStartMessage(laneId: string, mode: StudioMode, state: PlanningPackState): string {
+  return `${laneId === "current" ? "Repository conversation is active against the primary checkout. Use it to inspect, discuss, and plan; create a worktree before changing files.\n\n" : ""}${mode === "prepare"
+    ? `Prepare mode gathers context, keeps \`context.md\` current, builds the draft, slices it into steps, and gets the plan ready to operate.\nType normal text to chat with the planner.\nUse \`:\` to run a studio command such as \`:import <path>\`, \`:context\`, \`:build\`, \`:slice --help\`, or \`:operate\`.\nStage: ${state.mode}\nNext action: ${state.nextAction}`
+    : `Operate mode is execution-only.\nUse \`:\` to run studio commands such as \`:run\`, \`:auto 3\`, \`:checkpoint\`, or \`:prepare\`.\nStage: ${state.mode}\nNext action: ${state.nextAction}`}`;
+}
+
+function compactStudioStartMessages(messages: ChatMessage[]): { messages: ChatMessage[]; removed: number } {
+  let found = false;
+  let removed = 0;
+  const compacted = messages.filter((message) => {
+    if (!isStudioStartMessage(message)) return true;
+    if (!found) {
+      found = true;
+      return true;
+    }
+    removed += 1;
+    return false;
+  });
+  return { messages: compacted, removed };
+}
+
+function isStudioStartMessage(message: ChatMessage): boolean {
+  if (message.role !== "system") return false;
+  return STUDIO_START_MESSAGE_PREFIXES.some((prefix) => message.content.startsWith(prefix));
 }
 
 function buildActionStates(mode: StudioMode, state: PlanningPackState): Record<StudioActionId, { enabled: boolean; blockedReason: string | null }> {
